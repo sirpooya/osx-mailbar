@@ -95,8 +95,8 @@ private let credential = EWSCredential(username: "someone", password: "not-a-rea
         #expect(messages.count == MockFixtures.workInbox.count)
 
         let first = try #require(messages.first)
-        #expect(first.id == "AAMkItem0")
-        #expect(first.changeKey == "CQAAAB0")
+        #expect(first.id == "item-0")
+        #expect(first.changeKey == "ck-0")
         #expect(first.senderName == "People Operations")
         #expect(first.senderAddress == "people@example.com")
         #expect(first.subject.hasPrefix("یادآوری"))

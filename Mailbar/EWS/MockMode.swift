@@ -40,8 +40,21 @@ enum MockMode: String, Sendable {
     }
 }
 
-struct MockTransport: EWSTransport {
+/// A pretend Exchange server with a memory. Reads, flags, deletes and archives stick across
+/// polls for the life of the process, so every action can be exercised end to end without a
+/// mailbox. The second account starts with no Archive folder, to exercise the "create one?" ask.
+final class MockTransport: EWSTransport, @unchecked Sendable {
     let mode: MockMode
+
+    private let lock = NSLock()
+    private var removed: Set<String> = []
+    private var readOverrides: [String: Bool] = [:]
+    private var flagOverrides: [String: Bool] = [:]
+    private var teamHasArchive = false
+
+    init(mode: MockMode) {
+        self.mode = mode
+    }
 
     func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> (Data, Int) {
         let request = String(decoding: body, as: UTF8.self)
@@ -59,25 +72,79 @@ struct MockTransport: EWSTransport {
             try await Task.sleep(nanoseconds: 250_000_000)
         }
 
-        let isSecondAccount = url.host?.hasSuffix("example.org") == true
-        if request.contains("<m:GetFolder>") {
-            let unread = mode == .empty ? 0 : (isSecondAccount ? 1 : 3)
-            return (Data(MockFixtures.getFolder(unread: unread).utf8), 200)
-        }
-        if request.contains("<m:FindItem") {
-            let messages: [MockFixtures.Message]
-            switch mode {
-            case .empty: messages = []
-            default: messages = isSecondAccount ? MockFixtures.teamInbox : MockFixtures.workInbox
+        let isTeam = url.host?.hasSuffix("example.org") == true
+        let prefix = isTeam ? "team" : "work"
+        let itemID = Self.firstMatch(#"ItemId Id="([^"]+)""#, in: request)
+
+        return lock.withLock {
+            if request.contains("<m:GetFolder>") {
+                return ok(MockFixtures.getFolder(unread: mode == .empty ? 0 : inbox(prefix).filter { !$0.isRead }.count))
             }
-            return (Data(MockFixtures.findItem(messages).utf8), 200)
+            if request.contains("<m:FindItem") {
+                return ok(MockFixtures.findItem(mode == .empty ? [] : inbox(prefix)))
+            }
+            if request.contains("<m:GetItem>"), let itemID,
+               let message = inbox(prefix).first(where: { $0.id == itemID }) {
+                return ok(MockFixtures.getItem(message))
+            }
+            if request.contains("<m:GetAttachment>") {
+                return ok(MockFixtures.attachment)
+            }
+            if request.contains("<m:UpdateItem"), let itemID {
+                if let read = Self.firstMatch("<t:IsRead>(true|false)</t:IsRead>", in: request) {
+                    readOverrides[itemID] = read == "true"
+                }
+                if let flag = Self.firstMatch("<t:FlagStatus>(\\w+)</t:FlagStatus>", in: request) {
+                    flagOverrides[itemID] = flag == "Flagged"
+                }
+                return ok(MockFixtures.success("UpdateItem"))
+            }
+            if request.contains("<m:DeleteItem"), let itemID {
+                removed.insert(itemID)
+                return ok(MockFixtures.success("DeleteItem"))
+            }
+            if request.contains("<m:FindFolder") {
+                let has = !isTeam || teamHasArchive
+                return ok(MockFixtures.findFolder(found: has ? "\(prefix)-archive" : nil))
+            }
+            if request.contains("<m:CreateFolder>") {
+                teamHasArchive = true
+                return ok(MockFixtures.createFolder(id: "\(prefix)-archive"))
+            }
+            if request.contains("<m:MoveItem>"), let itemID {
+                removed.insert(itemID)
+                return ok(MockFixtures.success("MoveItem"))
+            }
+            return (Data(MockFixtures.fault.utf8), 500)
         }
-        return (Data(MockFixtures.fault.utf8), 500)
+    }
+
+    /// The fixture inbox with every change made so far applied. Call with the lock held.
+    private func inbox(_ prefix: String) -> [MockFixtures.Message] {
+        let base = prefix == "team" ? MockFixtures.teamInbox : MockFixtures.workInbox
+        return base.enumerated().compactMap { index, message in
+            var message = message
+            message.id = "\(prefix)-\(index)"
+            guard !removed.contains(message.id) else { return nil }
+            if let read = readOverrides[message.id] { message.isRead = read }
+            if let flag = flagOverrides[message.id] { message.isFlagged = flag }
+            return message
+        }
+    }
+
+    private func ok(_ xml: String) -> (Data, Int) { (Data(xml.utf8), 200) }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
     }
 }
 
 enum MockFixtures {
     struct Message {
+        var id = ""
         let sender: String
         let address: String
         let subject: String
@@ -166,7 +233,7 @@ enum MockFixtures {
         let items = messages.enumerated().map { index, message in
             """
                       <t:Message>
-                        <t:ItemId Id="AAMkItem\(index)" ChangeKey="CQAAAB\(index)"/>
+                        <t:ItemId Id="\(message.id.isEmpty ? "item-\(index)" : message.id)" ChangeKey="ck-\(index)"/>
                         <t:Subject>\(SOAP.escape(message.subject))</t:Subject>
                         <t:HasAttachments>\(message.hasAttachments)</t:HasAttachments>
                         <t:DateTimeReceived>\(formatter.string(from: now.addingTimeInterval(-message.hoursAgo * 3600)))</t:DateTimeReceived>
@@ -199,6 +266,147 @@ enum MockFixtures {
                 </m:FindItemResponseMessage>
               </m:ResponseMessages>
             </m:FindItemResponse>
+          </s:Body>
+        </s:Envelope>
+        """
+    }
+
+    /// The body a mock message opens to: its preview as the first paragraph, a second paragraph,
+    /// an inline image by `cid:` and a remote 1x1 tracking pixel, so the reader shows both the
+    /// inlined image and the "remote images are blocked" line.
+    static func getItem(_ message: Message, now: Date = Date()) -> String {
+        let received = ISO8601DateFormatter().string(from: now.addingTimeInterval(-message.hoursAgo * 3600))
+        let rtl = TextDirection.firstStrong(in: message.preview) == .rightToLeft
+        let html = """
+        <html><head><style>p { margin: 0 0 10px; }</style></head>
+        <body dir="\(rtl ? "rtl" : "ltr")">
+        <p>\(message.preview)</p>
+        <p>\(rtl ? "با سپاس،" : "Thanks,")<br>\(message.sender)</p>
+        <p><img src="cid:logo@mock" alt="logo" width="120" height="24"></p>
+        <img src="\(pixelURL)?id=\(message.id)" width="1" height="1">
+        </body></html>
+        """
+        return """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+          <s:Body>
+            <m:GetItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" \
+        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+              <m:ResponseMessages>
+                <m:GetItemResponseMessage ResponseClass="Success">
+                  <m:ResponseCode>NoError</m:ResponseCode>
+                  <m:Items>
+                    <t:Message>
+                      <t:ItemId Id="\(message.id)" ChangeKey="ck"/>
+                      <t:Subject>\(SOAP.escape(message.subject))</t:Subject>
+                      <t:Body BodyType="HTML">\(SOAP.escape(html))</t:Body>
+                      <t:Attachments>
+                        <t:FileAttachment>
+                          <t:AttachmentId Id="att-logo"/>
+                          <t:Name>logo.png</t:Name>
+                          <t:ContentType>image/png</t:ContentType>
+                          <t:ContentId>logo@mock</t:ContentId>
+                          <t:IsInline>true</t:IsInline>
+                        </t:FileAttachment>
+                      </t:Attachments>
+                      <t:DateTimeReceived>\(received)</t:DateTimeReceived>
+                      <t:ToRecipients><t:Mailbox><t:Name>Sample User</t:Name><t:EmailAddress>sample.user@example.com</t:EmailAddress></t:Mailbox></t:ToRecipients>
+                      <t:From><t:Mailbox><t:Name>\(SOAP.escape(message.sender))</t:Name><t:EmailAddress>\(message.address)</t:EmailAddress></t:Mailbox></t:From>
+                    </t:Message>
+                  </m:Items>
+                </m:GetItemResponseMessage>
+              </m:ResponseMessages>
+            </m:GetItemResponse>
+          </s:Body>
+        </s:Envelope>
+        """
+    }
+
+    /// Where the mock tracking pixel points. `MAILBAR_MOCK_PIXEL=http://127.0.0.1:8765/open.gif`
+    /// aims it at a local server, which is how the block is proven: that server must log nothing
+    /// until "Load images" is pressed.
+    static var pixelURL: String {
+        ProcessInfo.processInfo.environment["MAILBAR_MOCK_PIXEL"] ?? "https://tracker.example.net/open.gif"
+    }
+
+    static let logoPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAHgAAAAYCAIAAAC+8q7fAAAAW0lEQVR42u3ZMREAEACFYU1E0EcJLQQRSgmbBBpwFoP77v75Dd/6QixdDwoIQP8Fneo4lts8ZmcfaNCgQYMGDRoQaNCgQYMGDQg0aNCgQYMGBPonaCeTzxC07ltJ8elfIzIdLgAAAABJRU5ErkJggg=="
+
+    static let attachment = """
+    <?xml version="1.0" encoding="utf-8"?>
+    <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+      <s:Body>
+        <m:GetAttachmentResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" \
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+          <m:ResponseMessages>
+            <m:GetAttachmentResponseMessage ResponseClass="Success">
+              <m:ResponseCode>NoError</m:ResponseCode>
+              <m:Attachments>
+                <t:FileAttachment>
+                  <t:AttachmentId Id="att-logo"/>
+                  <t:Name>logo.png</t:Name>
+                  <t:ContentType>image/png</t:ContentType>
+                  <t:ContentId>logo@mock</t:ContentId>
+                  <t:Content>\(logoPNGBase64)</t:Content>
+                </t:FileAttachment>
+              </m:Attachments>
+            </m:GetAttachmentResponseMessage>
+          </m:ResponseMessages>
+        </m:GetAttachmentResponse>
+      </s:Body>
+    </s:Envelope>
+    """
+
+    static func success(_ operation: String) -> String {
+        """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+          <s:Body>
+            <m:\(operation)Response xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+              <m:ResponseMessages>
+                <m:\(operation)ResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode></m:\(operation)ResponseMessage>
+              </m:ResponseMessages>
+            </m:\(operation)Response>
+          </s:Body>
+        </s:Envelope>
+        """
+    }
+
+    static func findFolder(found id: String?) -> String {
+        let folders = id.map { #"<t:Folder><t:FolderId Id="\#($0)" ChangeKey="f"/><t:DisplayName>Archive</t:DisplayName></t:Folder>"# } ?? ""
+        return """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+          <s:Body>
+            <m:FindFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" \
+        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+              <m:ResponseMessages>
+                <m:FindFolderResponseMessage ResponseClass="Success">
+                  <m:ResponseCode>NoError</m:ResponseCode>
+                  <m:RootFolder TotalItemsInView="\(id == nil ? 0 : 1)" IncludesLastItemInRange="true">
+                    <t:Folders>\(folders)</t:Folders>
+                  </m:RootFolder>
+                </m:FindFolderResponseMessage>
+              </m:ResponseMessages>
+            </m:FindFolderResponse>
+          </s:Body>
+        </s:Envelope>
+        """
+    }
+
+    static func createFolder(id: String) -> String {
+        """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+          <s:Body>
+            <m:CreateFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" \
+        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+              <m:ResponseMessages>
+                <m:CreateFolderResponseMessage ResponseClass="Success">
+                  <m:ResponseCode>NoError</m:ResponseCode>
+                  <m:Folders><t:Folder><t:FolderId Id="\(id)" ChangeKey="f"/></t:Folder></m:Folders>
+                </m:CreateFolderResponseMessage>
+              </m:ResponseMessages>
+            </m:CreateFolderResponse>
           </s:Body>
         </s:Envelope>
         """

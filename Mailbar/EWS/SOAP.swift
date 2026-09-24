@@ -93,6 +93,146 @@ enum SOAP {
         """
     }
 
+    // MARK: - Reading one message (M4)
+
+    /// Everything the reader shows. The body as HTML: Exchange converts plain text and RTF mail
+    /// to HTML itself, so the reader has one path.
+    static func getMessage(id: String) -> String {
+        """
+            <m:GetItem>
+              <m:ItemShape>
+                <t:BaseShape>IdOnly</t:BaseShape>
+                <t:BodyType>HTML</t:BodyType>
+                <t:AdditionalProperties>
+                  <t:FieldURI FieldURI="item:Subject"/>
+                  <t:FieldURI FieldURI="message:From"/>
+                  <t:FieldURI FieldURI="message:ToRecipients"/>
+                  <t:FieldURI FieldURI="message:CcRecipients"/>
+                  <t:FieldURI FieldURI="item:DateTimeReceived"/>
+                  <t:FieldURI FieldURI="item:Body"/>
+                  <t:FieldURI FieldURI="item:Attachments"/>
+                </t:AdditionalProperties>
+              </m:ItemShape>
+              <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
+            </m:GetItem>
+        """
+    }
+
+    /// The bytes of the inline images a body refers to by `cid:`. Held in memory for the life of
+    /// the reader and never written anywhere.
+    static func getAttachments(ids: [String]) -> String {
+        let idElements = ids.map { "      <t:AttachmentId Id=\"\(escape($0))\"/>" }.joined(separator: "\n")
+        return """
+            <m:GetAttachment>
+              <m:AttachmentIds>
+        \(idElements)
+              </m:AttachmentIds>
+            </m:GetAttachment>
+        """
+    }
+
+    // MARK: - Acting on a message (M5)
+
+    /// Read state. No `ChangeKey` and `AlwaysOverwrite`: setting one boolean is idempotent, so
+    /// there is nothing to conflict with, and leaving the change key out removes the refetch and
+    /// retry dance entirely. `SuppressReadReceipts` needs Exchange 2013; on an older server a
+    /// read receipt request is answered however the server's own policy says.
+    static func setRead(id: String, read: Bool, modern: Bool) -> String {
+        let suppress = modern ? #" SuppressReadReceipts="true""# : ""
+        return updateItem(id: id, suppress: suppress, change: """
+                      <t:SetItemField>
+                        <t:FieldURI FieldURI="message:IsRead"/>
+                        <t:Message><t:IsRead>\(read)</t:IsRead></t:Message>
+                      </t:SetItemField>
+        """)
+    }
+
+    /// `item:Flag` on 2013 and later; the MAPI flag status (2 is flagged) on older servers.
+    static func setFlag(id: String, flagged: Bool, modern: Bool) -> String {
+        let change: String
+        if modern {
+            change = """
+                          <t:SetItemField>
+                            <t:FieldURI FieldURI="item:Flag"/>
+                            <t:Message><t:Flag><t:FlagStatus>\(flagged ? "Flagged" : "NotFlagged")</t:FlagStatus></t:Flag></t:Message>
+                          </t:SetItemField>
+            """
+        } else if flagged {
+            change = """
+                          <t:SetItemField>
+                            <t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/>
+                            <t:Message><t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/><t:Value>2</t:Value></t:ExtendedProperty></t:Message>
+                          </t:SetItemField>
+            """
+        } else {
+            change = """
+                          <t:DeleteItemField><t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/></t:DeleteItemField>
+            """
+        }
+        return updateItem(id: id, suppress: "", change: change)
+    }
+
+    private static func updateItem(id: String, suppress: String, change: String) -> String {
+        """
+            <m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite"\(suppress)>
+              <m:ItemChanges>
+                <t:ItemChange>
+                  <t:ItemId Id="\(escape(id))"/>
+                  <t:Updates>
+        \(change)
+                  </t:Updates>
+                </t:ItemChange>
+              </m:ItemChanges>
+            </m:UpdateItem>
+        """
+    }
+
+    /// To Deleted Items, where Outlook's own Delete puts it and where it can be recovered.
+    /// Never `HardDelete` or `SoftDelete`.
+    static func moveToDeletedItems(id: String) -> String {
+        """
+            <m:DeleteItem DeleteType="MoveToDeletedItems">
+              <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
+            </m:DeleteItem>
+        """
+    }
+
+    /// The top-level folder Outlook for Mac's Archive button moves mail into.
+    static let archiveFolderName = "Archive"
+
+    static let findArchiveFolder = """
+        <m:FindFolder Traversal="Shallow">
+          <m:FolderShape>
+            <t:BaseShape>IdOnly</t:BaseShape>
+            <t:AdditionalProperties><t:FieldURI FieldURI="folder:DisplayName"/></t:AdditionalProperties>
+          </m:FolderShape>
+          <m:Restriction>
+            <t:IsEqualTo>
+              <t:FieldURI FieldURI="folder:DisplayName"/>
+              <t:FieldURIOrConstant><t:Constant Value="\(archiveFolderName)"/></t:FieldURIOrConstant>
+            </t:IsEqualTo>
+          </m:Restriction>
+          <m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>
+        </m:FindFolder>
+    """
+
+    /// Only ever sent after the user confirms, in the popover, that the folder should be made.
+    static let createArchiveFolder = """
+        <m:CreateFolder>
+          <m:ParentFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderId>
+          <m:Folders><t:Folder><t:DisplayName>\(archiveFolderName)</t:DisplayName></t:Folder></m:Folders>
+        </m:CreateFolder>
+    """
+
+    static func move(id: String, toFolder folderID: String) -> String {
+        """
+            <m:MoveItem>
+              <m:ToFolderId><t:FolderId Id="\(escape(folderID))"/></m:ToFolderId>
+              <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
+            </m:MoveItem>
+        """
+    }
+
     static func escape(_ text: String) -> String {
         var out = ""
         out.reserveCapacity(text.count)

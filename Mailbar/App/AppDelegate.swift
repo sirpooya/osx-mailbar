@@ -60,6 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.statusItemController.show()
             }
+            if QCFlags.openMessage {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, let account = self.store.selectedAccount,
+                          let first = self.store.state(for: account.id).messages.first else { return }
+                    self.store.openMessage = .init(accountID: account.id, messageID: first.id)
+                }
+            }
         }
     }
 

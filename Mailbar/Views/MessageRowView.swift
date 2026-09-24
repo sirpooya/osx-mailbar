@@ -11,8 +11,20 @@ import SwiftUI
 /// what Outlook does with the same mail.
 struct MessageRowView: View {
     let message: MailMessage
+    let accountID: UUID
+    @Bindable var store: MailStore
+    let onOpen: () -> Void
 
-    @State private var isHovering = false
+    @State private var isHovering: Bool
+
+    init(message: MailMessage, accountID: UUID, store: MailStore,
+         startsHovered: Bool = false, onOpen: @escaping () -> Void) {
+        self.message = message
+        self.accountID = accountID
+        self.store = store
+        self.onOpen = onOpen
+        _isHovering = State(initialValue: startsHovered)
+    }
 
     /// Shared with `SkeletonListView`, which draws the same three lines at the same pitch so a
     /// row does not jump when the real one replaces the placeholder.
@@ -24,6 +36,49 @@ struct MessageRowView: View {
     }
 
     var body: some View {
+        Button(action: onOpen) { rowContent }
+            .buttonStyle(.plain)
+            .onHover { isHovering = $0 }
+            // The four actions over the sender line while the pointer is on the row, the way
+            // Outlook shows them. Over the sender rather than the time, so the time never hides.
+            .overlay(alignment: .topTrailing) {
+                if isHovering {
+                    MessageActionButtons(message: message, accountID: accountID, store: store, size: 11)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color(nsColor: .windowBackgroundColor)))
+                        .padding(.top, Metrics.verticalPadding - 3)
+                        .padding(.trailing, Metrics.horizontalPadding - 4)
+                }
+            }
+            .contextMenu { contextMenu }
+            .help(message.received.formatted(date: .complete, time: .shortened))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityDescription)
+            .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private var contextMenu: some View {
+        Button(message.isRead ? "Mark as Unread" : "Mark as Read") {
+            Task { await store.setRead(!message.isRead, message: message.id, in: accountID) }
+        }
+        Button(message.isFlagged ? "Clear Flag" : "Flag") {
+            Task { await store.setFlag(!message.isFlagged, message: message.id, in: accountID) }
+        }
+        Divider()
+        Button("Archive") {
+            Task { await store.archive(message: message.id, in: accountID) }
+        }
+        Button("Delete") {
+            Task { await store.delete(message: message.id, in: accountID) }
+        }
+    }
+
+    private var rowContent: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             unreadDot
 
@@ -52,10 +107,6 @@ struct MessageRowView: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(isHovering ? 0.06 : 0)))
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
-        .help(message.received.formatted(date: .complete, time: .shortened))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityDescription)
     }
 
     /// Outlook's unread marker. The column is always reserved, so read and unread rows keep their

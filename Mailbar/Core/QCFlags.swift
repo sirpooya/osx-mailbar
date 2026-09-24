@@ -6,10 +6,19 @@ import Foundation
 ///     Mailbar.app/Contents/MacOS/Mailbar --open-settings
 ///     Mailbar.app/Contents/MacOS/Mailbar --open-popover
 ///     Mailbar.app/Contents/MacOS/Mailbar --open-editor      (Settings plus the add sheet)
+///     Mailbar.app/Contents/MacOS/Mailbar --open-message     (the popover, first message open)
+///     Mailbar.app/Contents/MacOS/Mailbar --load-images      (remote images allowed from the start)
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
-    static var openPopover: Bool { has("--open-popover") }
+    static var openPopover: Bool { has("--open-popover") || openMessage }
+    static var openMessage: Bool { has("--open-message") }
     static var openEditor: Bool { has("--open-editor") }
+    /// Opens messages with remote images already allowed: the positive control for the pixel
+    /// test (a blocked load only proves something if an allowed one is seen to arrive).
+    static var loadImages: Bool { has("--load-images") }
+    /// Draws the first inbox row as hovered, since a synthetic pointer cannot reach the app
+    /// without the Accessibility grant.
+    static var hoverFirstRow: Bool { has("--hover-first-row") }
 
     private static func has(_ flag: String) -> Bool {
         #if DEBUG

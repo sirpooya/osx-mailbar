@@ -115,6 +115,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         close()
     }
 
+    /// Closing the popover closes the message too, so its body and images are released rather
+    /// than kept in a hidden view until the next open.
+    func popoverDidClose(_ notification: Notification) {
+        store.openMessage = nil
+        store.pendingArchive = nil
+    }
+
     // MARK: - Icon
 
     /// `withObservationTracking` fires once per change, so it re-arms itself.

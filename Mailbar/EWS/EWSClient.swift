@@ -39,6 +39,68 @@ struct EWSClient: Sendable {
         return try EWSResponse.previews(from: data)
     }
 
+    // MARK: - Reader
+
+    func message(id: String, at url: URL, credential: EWSCredential) async throws -> MessageBody {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.getMessage(id: id)),
+                                  to: url, credential: credential)
+        return try EWSResponse.body(from: data)
+    }
+
+    /// Inline image bytes by attachment id. Capped, so a message with forty embedded photos does
+    /// not pull tens of megabytes into memory for a popover.
+    func inlineImages(_ images: [MessageBody.InlineImage],
+                      at url: URL,
+                      credential: EWSCredential) async throws -> [String: Data] {
+        let ids = images.prefix(Self.maxInlineImages).map(\.attachmentID)
+        guard !ids.isEmpty else { return [:] }
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.getAttachments(ids: Array(ids))),
+                                  to: url, credential: credential)
+        return try EWSResponse.attachmentContents(from: data)
+    }
+
+    static let maxInlineImages = 20
+
+    // MARK: - Actions
+
+    func setRead(_ read: Bool, id: String, modern: Bool, at url: URL, credential: EWSCredential) async throws {
+        try await perform(SOAP.setRead(id: id, read: read, modern: modern), modern: modern, url: url, credential: credential)
+    }
+
+    func setFlag(_ flagged: Bool, id: String, modern: Bool, at url: URL, credential: EWSCredential) async throws {
+        try await perform(SOAP.setFlag(id: id, flagged: flagged, modern: modern), modern: modern, url: url, credential: credential)
+    }
+
+    func moveToDeletedItems(id: String, at url: URL, credential: EWSCredential) async throws {
+        try await perform(SOAP.moveToDeletedItems(id: id), modern: false, url: url, credential: credential)
+    }
+
+    /// Nil when the mailbox has no top-level Archive folder.
+    func archiveFolderID(at url: URL, credential: EWSCredential) async throws -> String? {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.findArchiveFolder),
+                                  to: url, credential: credential)
+        return try EWSResponse.folderID(from: data)
+    }
+
+    func createArchiveFolder(at url: URL, credential: EWSCredential) async throws -> String {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.createArchiveFolder),
+                                  to: url, credential: credential)
+        guard let id = try EWSResponse.folderID(from: data) else {
+            throw EWSError.invalidResponse("Exchange did not return the new Archive folder.")
+        }
+        return id
+    }
+
+    func move(id: String, toFolder folderID: String, at url: URL, credential: EWSCredential) async throws {
+        try await perform(SOAP.move(id: id, toFolder: folderID), modern: false, url: url, credential: credential)
+    }
+
+    private func perform(_ body: String, modern: Bool, url: URL, credential: EWSCredential) async throws {
+        let data = try await send(SOAP.envelope(modern ? .exchange2013 : .exchange2010SP2, body: body),
+                                  to: url, credential: credential)
+        try EWSResponse.checkSuccess(data)
+    }
+
     private func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> Data {
         let data: Data
         let status: Int

@@ -63,6 +63,12 @@ targets:
         # Menu-bar only: no Dock tile, ever.
         LSUIElement: true
         NSHumanReadableCopyright: ""
+        # Web content only, never the app's own requests (EWS stays HTTPS-only, enforced in
+        # Account.normalizedEndpoint). A message's remote images load only after "Load images",
+        # and a lot of mail still links them over plain http, which ATS would silently refuse.
+        # The reader's Content-Security-Policy still governs everything the page may fetch.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
     entitlements:
       path: Mailbar/Mailbar.entitlements
       properties:

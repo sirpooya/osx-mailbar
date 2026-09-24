@@ -37,9 +37,36 @@ struct MailMessage: Identifiable, Equatable, Sendable {
     let subject: String
     var preview: String
     let received: Date
-    let isRead: Bool
-    let isFlagged: Bool
+    var isRead: Bool
+    var isFlagged: Bool
     let hasAttachments: Bool
+}
+
+/// One opened message. Lives in the reader's state while it is open and nowhere else: when the
+/// reader closes, this goes, and so does every image decoded from it.
+struct MessageBody: Equatable, Sendable {
+    struct Person: Equatable, Sendable {
+        let name: String
+        let address: String
+
+        var display: String { name.isEmpty ? address : name }
+    }
+
+    /// An image the HTML refers to as `cid:<contentID>`.
+    struct InlineImage: Equatable, Sendable {
+        let attachmentID: String
+        let contentID: String
+        let contentType: String
+    }
+
+    let id: String
+    let subject: String
+    let from: Person?
+    let to: [Person]
+    let cc: [Person]
+    let received: Date
+    let html: String
+    let inlineImages: [InlineImage]
 }
 
 /// Reads EWS responses into the models above.
@@ -108,6 +135,70 @@ enum EWSResponse {
         return result
     }
 
+    static func body(from data: Data) throws -> MessageBody {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        guard let item = responses.first?.child("Items")?.children.first,
+              let id = item.child("ItemId")?.attributes["Id"] else {
+            throw EWSError.invalidResponse("The reply did not include the message.")
+        }
+
+        func people(_ field: String) -> [MessageBody.Person] {
+            item.child(field)?.children.filter { $0.name == "Mailbox" }.map(person) ?? []
+        }
+
+        let inline: [MessageBody.InlineImage] = (item.child("Attachments")?.children ?? []).compactMap { attachment in
+            guard attachment.name == "FileAttachment",
+                  let attachmentID = attachment.child("AttachmentId")?.attributes["Id"],
+                  let contentID = attachment.child("ContentId")?.trimmedText, !contentID.isEmpty else { return nil }
+            let type = attachment.child("ContentType")?.trimmedText ?? ""
+            // Only images can be drawn inline; anything else waits for attachments support.
+            guard type.lowercased().hasPrefix("image/") else { return nil }
+            return MessageBody.InlineImage(attachmentID: attachmentID, contentID: contentID, contentType: type)
+        }
+
+        return MessageBody(
+            id: id,
+            subject: item.child("Subject")?.trimmedText.nonEmpty ?? "(No subject)",
+            from: item.path("From", "Mailbox").map(person),
+            to: people("ToRecipients"),
+            cc: people("CcRecipients"),
+            received: item.child("DateTimeReceived").flatMap { parseDate($0.trimmedText) } ?? .distantPast,
+            html: item.child("Body")?.text ?? "",
+            inlineImages: inline)
+    }
+
+    private static func person(_ mailbox: XMLTreeNode) -> MessageBody.Person {
+        MessageBody.Person(name: mailbox.child("Name")?.trimmedText ?? "",
+                           address: mailbox.child("EmailAddress")?.trimmedText ?? "")
+    }
+
+    /// Attachment id to its decoded bytes, from a `GetAttachment` reply.
+    static func attachmentContents(from data: Data) throws -> [String: Data] {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        var result: [String: Data] = [:]
+        for attachment in responses.flatMap({ $0.child("Attachments")?.children ?? [] }) {
+            guard let id = attachment.child("AttachmentId")?.attributes["Id"],
+                  let base64 = attachment.child("Content")?.text,
+                  let bytes = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else { continue }
+            result[id] = bytes
+        }
+        return result
+    }
+
+    /// The first folder id in a `FindFolder` or `CreateFolder` reply, or nil when none matched.
+    static func folderID(from data: Data) throws -> String? {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        return responses.first?.first("FolderId")?.attributes["Id"]
+    }
+
+    /// For replies that carry nothing but success or failure.
+    static func checkSuccess(_ data: Data) throws {
+        _ = try responseMessages(in: try parse(data))
+    }
+
     static func message(from item: XMLTreeNode) -> MailMessage? {
         guard let itemID = item.child("ItemId"), let id = itemID.attributes["Id"] else { return nil }
         let mailbox = item.path("From", "Mailbox")
@@ -174,4 +265,8 @@ enum EWSResponse {
             throw EWSError.invalidResponse(error.message)
         }
     }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
 }

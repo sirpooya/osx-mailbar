@@ -27,8 +27,43 @@ struct PopoverRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             if MockMode.current != nil { sampleDataBanner }
+            if let open = store.openMessage,
+               let message = store.message(open.messageID, in: open.accountID) {
+                banners
+                MessageReaderView(accountID: open.accountID, summary: message, store: store,
+                                  onBack: back)
+                    // Pushed in from the trailing edge, the list leaving to the leading one, as
+                    // in osx-jirabar. Going back runs it the other way.
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                list
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .clipped()
+        .animation(reduceMotion ? nil : .snappy(duration: store.openMessage == nil ? 0.3 : 0.22),
+                   value: store.openMessage)
+        .frame(width: Self.width)
+        // An opaque surface, not the popover's glass. On macOS 26 the popover glass adapts to the
+        // LUMINANCE of whatever is behind it, independent of the light or dark appearance, so over
+        // a dark wallpaper in Light mode it went dark while the text stayed light-mode dark:
+        // primary text read dim grey and secondary read brighter than it (measured 2026-09-24).
+        // The window background follows the appearance itself, so the text always matches it.
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { installSwipe() }
+        .onDisappear { removeSwipe() }
+    }
+
+    private func back() {
+        store.openMessage = nil
+    }
+
+    /// The list screen: header, banners, the selected account's inbox, footer.
+    private var list: some View {
+        VStack(spacing: 0) {
             header
             Divider().opacity(0.5)
+            banners
             ZStack {
                 content
                     .id(store.selectedAccount?.id)
@@ -41,15 +76,41 @@ struct PopoverRootView: View {
             Divider().opacity(0.5)
             footer
         }
-        .frame(width: Self.width)
-        // An opaque surface, not the popover's glass. On macOS 26 the popover glass adapts to the
-        // LUMINANCE of whatever is behind it, independent of the light or dark appearance, so over
-        // a dark wallpaper in Light mode it went dark while the text stayed light-mode dark:
-        // primary text read dim grey and secondary read brighter than it (measured 2026-09-24).
-        // The window background follows the appearance itself, so the text always matches it.
-        .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { installSwipe() }
-        .onDisappear { removeSwipe() }
+    }
+
+    // MARK: - Banners
+
+    /// A failed action, and the one question the app ever asks about the mailbox: whether to
+    /// create an Archive folder. Inline rather than an alert, which an `NSPopover` presents badly.
+    @ViewBuilder
+    private var banners: some View {
+        if let pending = store.pendingArchive {
+            banner(symbol: "archivebox", tint: .accentColor,
+                   text: "\(store.accounts.account(pending.accountID)?.displayName ?? "This mailbox") has no Archive folder yet.") {
+                Button("Create and Archive") { Task { await store.createArchiveFolderAndArchive() } }
+                    .buttonStyle(.borderedProminent)
+                Button("Cancel") { store.pendingArchive = nil }
+            }
+        }
+        if let error = store.actionError {
+            banner(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error) {
+                Button("Dismiss") { store.actionError = nil }
+            }
+        }
+    }
+
+    private func banner<Actions: View>(symbol: String, tint: Color, text: String,
+                                       @ViewBuilder actions: () -> Actions) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: symbol).foregroundStyle(tint)
+            Text(text).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            HStack(spacing: 6) { actions() }.controlSize(.small)
+        }
+        .font(.caption)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(tint.opacity(0.10))
     }
 
     /// Loud on purpose: fixture mail looks exactly like real mail.
@@ -171,7 +232,7 @@ struct PopoverRootView: View {
             case .loading:
                 SkeletonListView()
             case .messages(let messages):
-                InboxListView(messages: messages)
+                InboxListView(messages: messages, accountID: account.id, store: store)
             case .empty:
                 EmptyInboxView(onRefresh: onRefresh)
             case .needsPassword:
@@ -249,6 +310,17 @@ struct PopoverRootView: View {
     }
 
     private func handleSwipe(_ event: NSEvent) {
+        // Inside a message the only swipe is back, fingers moving right, as in Safari.
+        if store.openMessage != nil {
+            if event.phase.contains(.began) {
+                swipe.began()
+            } else if event.phase.contains(.changed) {
+                swipe.moved(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
+            } else if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+                if swipe.ended(threshold: Self.swipeThreshold) == .right { back() }
+            }
+            return
+        }
         guard accounts.count > 1 else { return }
         if event.phase.contains(.began) {
             swipe.began()
@@ -265,6 +337,8 @@ struct PopoverRootView: View {
 
 struct InboxListView: View {
     let messages: [MailMessage]
+    let accountID: UUID
+    @Bindable var store: MailStore
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -279,7 +353,14 @@ struct InboxListView: View {
                             .padding(.leading, 24)
                             .padding(.trailing, 10)
                     }
-                    MessageRowView(message: message)
+                    MessageRowView(message: message, accountID: accountID, store: store,
+                                   startsHovered: index == 0 && QCFlags.hoverFirstRow) {
+                        store.actionError = nil
+                        store.openMessage = .init(accountID: accountID, messageID: message.id)
+                    }
+                    // A row that leaves (archived, deleted) fades and gives up its height, so the
+                    // rows below are seen to close the gap rather than teleporting up.
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                 }
             }
             .padding(.horizontal, 5)
