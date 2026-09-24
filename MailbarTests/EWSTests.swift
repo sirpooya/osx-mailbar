@@ -200,3 +200,44 @@ private let credential = EWSCredential(username: "someone", password: "not-a-rea
         #expect(!transport.lastBody.contains(credential.password))
     }
 }
+
+@Suite struct AutodiscoverTests {
+    @Test func triesTheAutodiscoverHostThenTheDomain() {
+        #expect(Autodiscover.endpoints(for: "someone@Example.com").map(\.absoluteString) == [
+            "https://autodiscover.example.com/autodiscover/autodiscover.xml",
+            "https://example.com/autodiscover/autodiscover.xml",
+        ])
+    }
+
+    @Test func triesTheShortNameThenTheFullAddress() {
+        #expect(Autodiscover.usernames(for: "some.one@example.com") == ["some.one", "some.one@example.com"])
+    }
+
+    @Test func rejectsWhatIsNotAnAddress() {
+        #expect(Autodiscover.domain(of: "someone") == nil)
+        #expect(Autodiscover.domain(of: "someone@localhost") == nil)
+        #expect(Autodiscover.domain(of: "someone@evil.example/x") == nil)
+    }
+
+    @Test func prefersTheExternalEWSAddress() throws {
+        let (url, name) = try Autodiscover.parse(Data(MockFixtures.autodiscover.utf8))
+        #expect(url.absoluteString == "https://mail.example.com/EWS/Exchange.asmx")
+        #expect(name == "Sample User")
+    }
+
+    @Test func findsTheServerAndTheUserNameTheServerAccepts() async throws {
+        let found = try await Autodiscover(transport: MockTransport(mode: .inbox))
+            .discover(email: "sample.user@example.com", password: "x")
+        #expect(found == Autodiscover.Result(
+            ewsURL: URL(string: "https://mail.example.com/EWS/Exchange.asmx")!,
+            displayName: "Sample User",
+            username: "sample.user"))
+    }
+
+    @Test func anUnknownDomainIsNotFoundNotARejection() async {
+        await #expect(throws: Autodiscover.Failure.self) {
+            _ = try await Autodiscover(transport: MockTransport(mode: .inbox))
+                .discover(email: "someone@nowhere.example.net", password: "x")
+        }
+    }
+}

@@ -189,6 +189,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   loop by cancelling it, and that cancellation reached the requests in flight and surfaced as
   "Something went wrong" every time the popover opened mid-poll. A cancelled request never changes
   what is on screen.
+- 2026-09-24 Adding an account asks for email and password only; Sign In runs Autodiscover (user's
+  request) to find the EWS URL and display name, guesses the user name (short name, then the full
+  address, keeping whichever the server accepts), and tests the connection. Server Details then
+  opens, filled and editable; when Autodiscover is not available it opens empty, as before.
 - 2026-09-24 Remote images: blocked by a Content-Security-Policy written before the message's own
   markup (`ReaderHTML`), plus JS off and a non-persistent data store in the web view.
   `NSAllowsArbitraryLoadsInWebContent` is on so that "Load images" also works for plain-http
@@ -203,7 +207,11 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 
 ## Privacy (local-first)
 No telemetry, no analytics. Network calls, exhaustively:
-- Each configured account's EWS URL, and nothing else.
+- Each configured account's EWS URL.
+- While adding an account, and only when the user presses Sign In: Autodiscover at
+  `https://autodiscover.<email domain>/autodiscover/autodiscover.xml`, then
+  `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and
+  no DNS SRV lookup.
 - Remote images inside a message, only when the user clicks "Load images" for that message.
 
 Passwords live only in the Keychain. Never log a password, an `Authorization` header or a message

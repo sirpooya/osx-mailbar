@@ -1,7 +1,15 @@
 import SwiftUI
 
-/// The add and edit sheet. Same fields as Outlook for Mac's Exchange account sheet, nothing
-/// prefilled: every value is the user's to type.
+/// The add and edit sheet.
+///
+/// Adding asks for two things, the email address and the password, and Sign In finds the rest
+/// with Autodiscover: the server, the display name, and which form of user name the server takes.
+/// Everything it found then appears under Server Details, editable, and the connection has
+/// already been tested. When Autodiscover is not available the same fields open empty to be
+/// typed, as in Outlook for Mac's own sheet. Nothing is ever prefilled from anything but the
+/// user's own server.
+///
+/// Editing an existing account shows every field straight away.
 struct AccountEditorView: View {
     let isNew: Bool
     let hasSavedPassword: Bool
@@ -13,12 +21,15 @@ struct AccountEditorView: View {
     @State private var draft: Account
     /// Never loaded from the Keychain. Empty while editing means "keep the saved one".
     @State private var password = ""
-    @State private var isTesting = false
+    @State private var isWorking = false
     @State private var result: TestResult?
+    /// Whether Server Details is open. Always, when editing; after Sign In, when adding.
+    @State private var showsDetails: Bool
 
     private enum TestResult: Equatable {
         case success(String)
         case failure(String)
+        case progress(String)
     }
 
     init(account: Account,
@@ -35,6 +46,7 @@ struct AccountEditorView: View {
         self.onSave = onSave
         self.onCancel = onCancel
         _draft = State(initialValue: account)
+        _showsDetails = State(initialValue: !isNew)
     }
 
     var body: some View {
@@ -43,22 +55,11 @@ struct AccountEditorView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .padding(.leading, SettingsMetrics.rowHPadding)
 
-            SettingsSection("Account") {
-                SettingsFieldRow(title: "Account description", placeholder: "Work", text: $draft.label)
-                SettingsDivider()
-                SettingsFieldRow(title: "Full name", placeholder: "Your name", text: $draft.fullName)
-                SettingsDivider()
+            SettingsSection(isNew && !showsDetails ? nil : "Account",
+                            footnote: isNew && !showsDetails
+                                ? "Mailbar asks your company's Exchange server for the rest, the way Outlook does."
+                                : nil) {
                 SettingsFieldRow(title: "E-mail address", placeholder: "name@company.com", text: $draft.email)
-            }
-
-            SettingsSection("Server",
-                            footnote: "The EWS address from Outlook: Preferences, Accounts, Advanced, Server. A bare host name works too.") {
-                SettingsFieldRow(title: "Exchange server",
-                                 placeholder: "mail.company.com",
-                                 text: $draft.serverURL,
-                                 monospaced: true)
-                SettingsDivider()
-                SettingsFieldRow(title: "User name", placeholder: "name or DOMAIN\\name", text: $draft.username)
                 SettingsDivider()
                 SettingsFieldRow(title: "Password",
                                  placeholder: hasSavedPassword ? "Saved in Keychain" : "Required",
@@ -66,34 +67,81 @@ struct AccountEditorView: View {
                                  secure: true)
             }
 
+            if showsDetails { details }
+
             if let result {
                 resultLine(result)
                     .padding(.horizontal, SettingsMetrics.rowHPadding)
             }
 
-            HStack(spacing: 8) {
-                Button(isTesting ? "Testing..." : "Test Connection") {
-                    Task { await test() }
-                }
-                .disabled(isTesting || validationProblem != nil)
+            buttons
 
-                Spacer(minLength: 0)
-
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(validationProblem != nil)
-            }
-            .controlSize(.regular)
-
-            if let problem = validationProblem {
+            if showsDetails, let problem = validationProblem {
                 SettingsFootnote(problem)
             }
         }
         .padding(SettingsMetrics.bodyHPadding)
         .frame(width: SettingsMetrics.windowWidth + 40)
+        .animation(.snappy(duration: 0.25), value: showsDetails)
+        .task {
+            guard isNew, QCFlags.editorSignIn else { return }
+            draft.email = MockMode.accounts[0].email
+            password = "mock"
+            await signIn()
+        }
+    }
+
+    private var details: some View {
+        SettingsSection("Server Details",
+                        footnote: isNew
+                            ? "Filled in from your server. Change anything that is not right."
+                            : "The EWS address from Outlook: Preferences, Accounts, Advanced, Server. A bare host name works too.") {
+            SettingsFieldRow(title: "Exchange server", placeholder: "mail.company.com",
+                             text: $draft.serverURL, monospaced: true)
+            SettingsDivider()
+            SettingsFieldRow(title: "User name", placeholder: "name or DOMAIN\\name", text: $draft.username)
+            SettingsDivider()
+            SettingsFieldRow(title: "Full name", placeholder: "Your name", text: $draft.fullName)
+            SettingsDivider()
+            SettingsFieldRow(title: "Account description", placeholder: "Work", text: $draft.label)
+        }
+        .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
+        HStack(spacing: 8) {
+            if showsDetails {
+                Button(isWorking ? "Testing..." : "Test Connection") {
+                    Task { await test() }
+                }
+                .disabled(isWorking || validationProblem != nil)
+            } else {
+                Button("Enter Server Details Manually") { showsDetails = true }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Cancel", role: .cancel, action: onCancel)
+                .keyboardShortcut(.cancelAction)
+
+            if showsDetails {
+                Button("Save") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isWorking || validationProblem != nil)
+            } else {
+                Button(isWorking ? "Signing In..." : "Sign In") {
+                    Task { await signIn() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(isWorking || Autodiscover.domain(of: draft.email) == nil || password.isEmpty)
+            }
+        }
+        .controlSize(.regular)
     }
 
     @ViewBuilder
@@ -108,6 +156,13 @@ struct AccountEditorView: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
+        case .progress(let text):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+                Text(text)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -133,27 +188,59 @@ struct AccountEditorView: View {
         return nil
     }
 
-    private var credential: EWSCredential? {
-        let typed = password
-        let secret = typed.isEmpty ? passwords.password(for: draft.id) : typed
-        guard let secret, !secret.isEmpty else { return nil }
-        return EWSCredential(username: draft.username.trimmingCharacters(in: .whitespaces),
-                             password: secret)
+    private var secret: String? {
+        let value = password.isEmpty ? passwords.password(for: draft.id) : password
+        return (value?.isEmpty ?? true) ? nil : value
     }
 
     // MARK: - Actions
 
-    private func test() async {
-        guard let endpoint, let credential else { return }
-        isTesting = true
-        defer { isTesting = false }
+    /// Autodiscover, then the same test as Test Connection, so a found account is also a working
+    /// one before the user ever presses Save.
+    private func signIn() async {
+        guard let secret else { return }
+        isWorking = true
+        defer { isWorking = false }
+        result = .progress("Looking up your server...")
+
         do {
-            let status = try await client.inboxStatus(at: endpoint, credential: credential)
+            let found = try await Autodiscover(transport: client.transport)
+                .discover(email: draft.email, password: secret)
+            draft.serverURL = found.ewsURL.absoluteString
+            draft.username = found.username
+            if draft.fullName.isEmpty { draft.fullName = found.displayName }
+            if draft.label.isEmpty { draft.label = draft.email.trimmingCharacters(in: .whitespaces) }
+            showsDetails = true
+            await runTest(url: found.ewsURL, username: found.username, password: secret)
+        } catch Autodiscover.Failure.passwordRejected {
+            result = .failure("The server did not accept that password. Check it and try again.")
+        } catch Autodiscover.Failure.notFound(let reason) {
+            if draft.username.isEmpty, let local = Autodiscover.usernames(for: draft.email).first {
+                draft.username = local
+            }
+            showsDetails = true
+            result = .failure("\(reason) Enter the server below; Outlook shows it under Preferences, Accounts, Advanced.")
+        } catch {
+            result = .failure("That does not look like an email address.")
+        }
+    }
+
+    private func test() async {
+        guard let endpoint, let secret else { return }
+        isWorking = true
+        defer { isWorking = false }
+        await runTest(url: endpoint, username: draft.username.trimmingCharacters(in: .whitespaces), password: secret)
+    }
+
+    private func runTest(url: URL, username: String, password: String) async {
+        result = .progress("Connecting...")
+        do {
+            let status = try await client.inboxStatus(at: url, credential: EWSCredential(username: username, password: password))
             let unread = status.unreadCount == 1 ? "1 unread message" : "\(status.unreadCount) unread messages"
             let version = status.version.map { ", \($0.label)" } ?? ""
             result = .success("Connected. Inbox has \(unread)\(version).")
         } catch let error as EWSError {
-            result = .failure(error.message(host: endpoint.host ?? "The server"))
+            result = .failure(error.message(host: url.host ?? "The server"))
         } catch {
             result = .failure(error.localizedDescription)
         }

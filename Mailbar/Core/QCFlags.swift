@@ -7,12 +7,16 @@ import Foundation
 ///     Mailbar.app/Contents/MacOS/Mailbar --open-popover
 ///     Mailbar.app/Contents/MacOS/Mailbar --open-editor      (Settings plus the add sheet)
 ///     Mailbar.app/Contents/MacOS/Mailbar --open-message     (the popover, first message open)
+///     Mailbar.app/Contents/MacOS/Mailbar --editor-signin    (the add sheet, signed in, mock only)
 ///     Mailbar.app/Contents/MacOS/Mailbar --load-images      (remote images allowed from the start)
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
     static var openPopover: Bool { has("--open-popover") || openMessage }
     static var openMessage: Bool { has("--open-message") }
-    static var openEditor: Bool { has("--open-editor") }
+    static var openEditor: Bool { has("--open-editor") || editorSignIn }
+    /// The add sheet, filled with the mock account's address and signed in, to photograph what
+    /// Autodiscover fills in. Mock mode only.
+    static var editorSignIn: Bool { has("--editor-signin") && MockMode.current != nil }
     /// Opens messages with remote images already allowed: the positive control for the pixel
     /// test (a blocked load only proves something if an allowed one is seen to arrive).
     static var loadImages: Bool { has("--load-images") }

@@ -76,6 +76,13 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         let prefix = isTeam ? "team" : "work"
         let itemID = Self.firstMatch(#"ItemId Id="([^"]+)""#, in: request)
 
+        // Autodiscover for the invented domains only; anything else does not resolve.
+        if request.contains("<Autodiscover") {
+            guard url.host == "autodiscover.example.com" else { throw URLError(.cannotFindHost) }
+            guard credential.username == "sample.user" else { return (Data(), 401) }
+            return ok(MockFixtures.autodiscover)
+        }
+
         return lock.withLock {
             if request.contains("<m:GetFolder>") {
                 return ok(MockFixtures.getFolder(unread: mode == .empty ? 0 : inbox(prefix).filter { !$0.isRead }.count))
@@ -411,6 +418,32 @@ enum MockFixtures {
         </s:Envelope>
         """
     }
+
+    static let autodiscover = """
+    <?xml version="1.0" encoding="utf-8"?>
+    <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006">
+      <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a">
+        <User>
+          <DisplayName>Sample User</DisplayName>
+          <EMailAddress>sample.user@example.com</EMailAddress>
+        </User>
+        <Account>
+          <AccountType>email</AccountType>
+          <Action>settings</Action>
+          <Protocol>
+            <Type>EXCH</Type>
+            <Server>internal.example.com</Server>
+            <EwsUrl>https://internal.example.com/EWS/Exchange.asmx</EwsUrl>
+          </Protocol>
+          <Protocol>
+            <Type>EXPR</Type>
+            <Server>mail.example.com</Server>
+            <EwsUrl>https://mail.example.com/EWS/Exchange.asmx</EwsUrl>
+          </Protocol>
+        </Account>
+      </Response>
+    </Autodiscover>
+    """
 
     static let fault = """
     <?xml version="1.0" encoding="utf-8"?>
