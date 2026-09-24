@@ -25,6 +25,8 @@ struct AccountEditorView: View {
     @State private var result: TestResult?
     /// Whether Server Details is open. Always, when editing; after Sign In, when adding.
     @State private var showsDetails: Bool
+    /// Whether Autodiscover filled Server Details, so the footnote never claims it did otherwise.
+    @State private var discovered = false
 
     private enum TestResult: Equatable {
         case success(String)
@@ -93,7 +95,7 @@ struct AccountEditorView: View {
 
     private var details: some View {
         SettingsSection("Server Details",
-                        footnote: isNew
+                        footnote: discovered
                             ? "Filled in from your server. Change anything that is not right."
                             : "The EWS address from Outlook: Preferences, Accounts, Advanced, Server. A bare host name works too.") {
             SettingsFieldRow(title: "Exchange server", placeholder: "mail.company.com",
@@ -210,6 +212,7 @@ struct AccountEditorView: View {
             draft.username = found.username
             if draft.fullName.isEmpty { draft.fullName = found.displayName }
             if draft.label.isEmpty { draft.label = draft.email.trimmingCharacters(in: .whitespaces) }
+            discovered = true
             showsDetails = true
             await runTest(url: found.ewsURL, username: found.username, password: secret)
         } catch Autodiscover.Failure.passwordRejected {
@@ -218,8 +221,9 @@ struct AccountEditorView: View {
             if draft.username.isEmpty, let local = Autodiscover.usernames(for: draft.email).first {
                 draft.username = local
             }
+            discovered = false
             showsDetails = true
-            result = .failure("\(reason) Enter the server below; Outlook shows it under Preferences, Accounts, Advanced.")
+            result = .failure("\(reason) Enter the server below.")
         } catch {
             result = .failure("That does not look like an email address.")
         }

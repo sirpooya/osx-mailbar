@@ -234,10 +234,77 @@ private let credential = EWSCredential(username: "someone", password: "not-a-rea
             username: "sample.user"))
     }
 
+    /// Answers per host, so each endpoint can fail its own way.
+    private final class HostTransport: EWSTransport, @unchecked Sendable {
+        let answers: [String: Result<(Int, String), URLError>]
+        private(set) var hosts: [String] = []
+        init(_ answers: [String: Result<(Int, String), URLError>]) { self.answers = answers }
+        func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> (Data, Int) {
+            hosts.append(url.host ?? "")
+            let (status, text) = try answers[url.host ?? "", default: .failure(URLError(.timedOut))].get()
+            return (Data(text.utf8), status)
+        }
+    }
+
+    @Test func aLaterTimeoutDoesNotHideTheFirstRealAnswer() async {
+        let transport = HostTransport(["autodiscover.example.com": .success((500, ""))])
+        await #expect(throws: Autodiscover.Failure.notFound("autodiscover.example.com answered 500.")) {
+            _ = try await Autodiscover(transport: transport).discover(email: "a.b@example.com", password: "x")
+        }
+    }
+
+    @Test func aRejectedPasswordStopsAtTheFirstEndpoint() async {
+        let transport = HostTransport(["autodiscover.example.com": .success((401, "")),
+                                       "example.com": .success((401, ""))])
+        await #expect(throws: Autodiscover.Failure.passwordRejected) {
+            _ = try await Autodiscover(transport: transport).discover(email: "a.b@example.com", password: "x")
+        }
+        // Two user names, one endpoint: two logon attempts, not four.
+        #expect(transport.hosts == ["autodiscover.example.com", "autodiscover.example.com"])
+    }
+
     @Test func anUnknownDomainIsNotFoundNotARejection() async {
         await #expect(throws: Autodiscover.Failure.self) {
             _ = try await Autodiscover(transport: MockTransport(mode: .inbox))
                 .discover(email: "someone@nowhere.example.net", password: "x")
         }
+    }
+}
+
+@Suite struct ChallengePolicyTests {
+    @Test func ntlmGetsThePasswordAfterNegotiateIsPassedOver() {
+        // Exchange 2019's order. The old responder cancelled NTLM here, because
+        // previousFailureCount had already been raised by Negotiate.
+        var policy = ChallengePolicy()
+        let a1 = policy.shouldAnswer(NSURLAuthenticationMethodNegotiate)
+        #expect(!a1)
+        let a2 = policy.shouldAnswer(NSURLAuthenticationMethodNTLM)
+        #expect(a2)
+    }
+
+    @Test func onePasswordAttemptPerRequest() {
+        var policy = ChallengePolicy()
+        _ = policy.shouldAnswer(NSURLAuthenticationMethodNegotiate)
+        _ = policy.shouldAnswer(NSURLAuthenticationMethodNTLM)
+        let a3 = policy.shouldAnswer(NSURLAuthenticationMethodHTTPBasic)
+        #expect(!a3)
+        let a4 = policy.shouldAnswer(NSURLAuthenticationMethodNegotiate)
+        #expect(!a4)
+        let a5 = policy.shouldAnswer(NSURLAuthenticationMethodNTLM)
+        #expect(!a5)
+    }
+
+    @Test func basicAloneIsAnswered() {
+        var policy = ChallengePolicy()
+        let a6 = policy.shouldAnswer(NSURLAuthenticationMethodHTTPBasic)
+        #expect(a6)
+    }
+
+    @Test func negotiateAloneIsAnsweredTheSecondTimeAround() {
+        var policy = ChallengePolicy()
+        let a7 = policy.shouldAnswer(NSURLAuthenticationMethodNegotiate)
+        #expect(!a7)
+        let a8 = policy.shouldAnswer(NSURLAuthenticationMethodNegotiate)
+        #expect(a8)
     }
 }

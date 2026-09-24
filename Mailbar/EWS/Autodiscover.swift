@@ -56,10 +56,18 @@ struct Autodiscover: Sendable {
         let endpoints = Self.endpoints(for: trimmed)
         guard !endpoints.isEmpty else { throw Failure.invalidEmail }
 
-        var sawRejection = false
-        var lastProblem = "No Autodiscover service answered for \(Self.domain(of: trimmed) ?? "this domain")."
+        // The first real answer is the one worth showing. A later endpoint that merely does not
+        // answer (the bare domain usually runs a website, or nothing) must not replace it.
+        var problem: (text: String, unreachable: Bool)?
+        func note(_ text: String, unreachable: Bool = false) {
+            if problem == nil || (problem!.unreachable && !unreachable) {
+                problem = (text, unreachable)
+            }
+        }
 
         for endpoint in endpoints {
+            let host = endpoint.host ?? "The server"
+            var sawRejection = false
             for username in Self.usernames(for: trimmed) {
                 let credential = EWSCredential(username: username, password: password)
                 do {
@@ -67,7 +75,7 @@ struct Autodiscover: Sendable {
                                                                   to: endpoint, credential: credential)
                     if status == 401 { sawRejection = true; continue }
                     guard status == 200 else {
-                        lastProblem = "\(endpoint.host ?? "The server") answered \(status)."
+                        note("\(host) answered \(status).")
                         break
                     }
                     let (url, name) = try Self.parse(data)
@@ -76,19 +84,28 @@ struct Autodiscover: Sendable {
                     sawRejection = true
                     continue
                 } catch let error as URLError {
-                    lastProblem = EWSError.from(urlError: error).message(host: endpoint.host ?? "The server")
+                    let mapped = EWSError.from(urlError: error)
+                    if case .unreachable = mapped {
+                        note(mapped.message(host: host), unreachable: true)
+                    } else {
+                        note(mapped.message(host: host))
+                    }
                     // Nothing listens here; the next user name will not change that.
                     break
                 } catch let error as EWSError {
-                    lastProblem = error.message(host: endpoint.host ?? "The server")
+                    note(error.message(host: host))
                     break
                 } catch {
-                    lastProblem = error.localizedDescription
+                    note(error.localizedDescription)
                     break
                 }
             }
+            // This endpoint is Autodiscover and refused the password under every user name.
+            // Stop here: each further try is another failed logon toward the domain's lockout.
+            if sawRejection { throw Failure.passwordRejected }
         }
-        throw sawRejection ? Failure.passwordRejected : Failure.notFound(lastProblem)
+        throw Failure.notFound(problem?.text
+            ?? "No Autodiscover service answered for \(Self.domain(of: trimmed) ?? "this domain").")
     }
 
     static func request(email: String) -> Data {
