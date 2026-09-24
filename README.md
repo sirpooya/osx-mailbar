@@ -7,9 +7,9 @@ laid out like Outlook's message list. Open a message, mark it read or unread, fl
 delete it. Nothing else. It exists so you can stop keeping a 2 GB mail client open all day just to
 glance at your inbox.
 
-> **Status: early development.** Accounts, Keychain storage, the EWS client, the Settings window,
-> the menu bar unread count and the inbox list are in place. The reader and actions are next. See [PLAN.md](PLAN.md) for the
-> milestone order.
+> **Status: v1 built.** Accounts (email and password, the rest found by Autodiscover), the menu
+> bar unread count, the inbox list, the reader and the actions are in place, tested against mock
+> data. Scope and decisions live in [AGENTS.md](AGENTS.md).
 
 ## Features (v1)
 

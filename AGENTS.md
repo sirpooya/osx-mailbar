@@ -10,7 +10,47 @@ It replaces keeping `/Applications/Microsoft Outlook.app` (about 2 GB, always ru
 so the user can delete Outlook.
 
 **Read only, v1.** No sending, no reply, no forward, no compose, no calendar, no contacts.
-`PLAN.md` holds the exact in-scope and out-of-scope lists; it wins over anything vaguer here.
+The Scope section below holds the exact in-scope and out-of-scope lists; it wins over anything
+vaguer here.
+
+## Scope
+v1 is built (M0 to M6, 2026-09-24). `PLAN.md`, which held the milestone order, was retired once
+every milestone landed; its history is in git.
+
+### Wanted (v1, built)
+- **Accounts in Settings**: add, edit, test, delete; several allowed. Adding needs only email and
+  password (Autodiscover finds the rest); every field stays editable. Nothing prefilled from
+  anywhere but the user's own server.
+- **Menu bar**: the user's icon plus the total inbox unread count.
+- **One view, the Inbox.** No other folders. One view per account when there are several.
+- **Outlook-style rows**: sender (bold while unread), subject with the relative time on the right
+  (`14:32`, `Yesterday`, `2 days ago`, then a short date), one line of preview.
+- **Read a message** in the popover: HTML rendered safely, no JavaScript, remote images off until
+  "Load images". Opening marks it read.
+- **Actions**: mark read or unread, flag or unflag, archive, delete (to Deleted Items).
+- **Right-to-left** handled per string, for Persian mail.
+- **Honest failure states**: unreachable, password rejected and empty inbox are different screens.
+- **No cache**: nothing from the mailbox on disk, images cached nowhere.
+
+### Not wanted (do not build)
+- Sending of any kind: compose, reply, reply all, forward, drafts.
+- Move to folder, folder list, folder picker.
+- Follow up, categories, rules, junk, snooze, pin.
+- Calendar, contacts, tasks, notes, directory (LDAP) lookup.
+- Offline mode, local search index, any disk cache.
+
+### Maybe later (not v1, ask before starting)
+- New-mail notification, click to open that message.
+- Search within the inbox.
+- Opening or saving attachments.
+- Launch at login.
+- EWS streaming notifications instead of polling.
+
+### Still open (the user's steps)
+- Add the real account and press Sign In. This settles the user name format and the Exchange
+  version, both unproven; record them here.
+- Any action against real mail, on a message the user names.
+- Uninstall Outlook.
 
 Keep it minimal and dependency-light. No cloud sync, no analytics.
 
@@ -70,7 +110,7 @@ user types every value into Settings when adding an account.
 - The host may be internal-only. Treat "cannot reach server" as its own state ("Are you on the
   VPN?"), never as an empty inbox.
 - Exchange version: unknown. Read `ServerVersionInfo` from the first SOAP response header. `Preview`
-  and `Flag` need Exchange 2013 or later; `PLAN.md` M1 has the fallback if it is older.
+  and `Flag` need Exchange 2013 or later; older servers get the preview from text bodies and the flag from `PidTagFlagStatus` (0x1090).
 
 ## EWS operations, exhaustively
 SOAP 1.1 POSTs to the account's EWS URL, `Content-Type: text/xml; charset=utf-8`, with a
@@ -260,7 +300,7 @@ release notes, not a commit message. Skip pure refactors, formatting, and doc-on
 Releases are cut with the `release` skill.
 
 ## Working style
-- Read this file and `PLAN.md` first. Follow the milestone order in `PLAN.md`.
+- Read this file first, the Scope section above all.
 - Never hardcode the user's data: no server URL, user name, email or name in code, fixtures,
   placeholders or defaults. Mock fixtures use invented names and `example.com`.
 - Never delete, archive, flag or change the read state of real mail during testing without
