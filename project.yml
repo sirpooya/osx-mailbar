@@ -1,0 +1,87 @@
+# XcodeGen spec. This file is the source of truth; Mailbar.xcodeproj is generated with
+# `xcodegen generate` and gitignored.
+name: Mailbar
+options:
+  bundleIdPrefix: in.pooya
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+schemes:
+  Mailbar:
+    build:
+      targets:
+        Mailbar: all
+        MailbarTests: [test]
+    test:
+      targets:
+        - MailbarTests
+
+targets:
+  Mailbar:
+    type: application
+    platform: macOS
+    sources:
+      - path: Mailbar
+    settings:
+      base:
+        PRODUCT_NAME: Mailbar
+        PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        # Signed with the real development certificate, never ad-hoc. A Keychain item's ACL trusts
+        # the app's designated requirement; ad-hoc makes that a cdhash of one exact build, so every
+        # rebuild would re-prompt for the login password before reading a stored mail password.
+        # Same identity and the same three settings osx-jirabar needed (see its project.yml):
+        # Manual style, the identity by SHA-1 hash, and the team id from the certificate's OU.
+        # The hash is this Mac's "Apple Development: pooyak@live.com" certificate, from
+        # `security find-identity -v -p codesigning`. On a different Mac it must be replaced.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ADF79CA48A71BB7E096865C8778307573FC201B7
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        DEVELOPMENT_TEAM: 37MA269X54
+        ENABLE_HARDENED_RUNTIME: YES
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+      configs:
+        Debug:
+          # A dev build and the installed release coexist, each with its own defaults and its own
+          # Keychain items, so testing never touches the real accounts.
+          PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar.debug
+    info:
+      path: Mailbar/Info.plist
+      properties:
+        CFBundleDisplayName: Mailbar
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menu-bar only: no Dock tile, ever.
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+    entitlements:
+      path: Mailbar/Mailbar.entitlements
+      properties:
+        # Off. The app talks to a mail server and writes Keychain items; the sandbox buys nothing
+        # here and complicates the Keychain ACL across rebuilds.
+        com.apple.security.app-sandbox: false
+
+  MailbarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MailbarTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Mailbar.app/Contents/MacOS/Mailbar"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ADF79CA48A71BB7E096865C8778307573FC201B7
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        # Must match the app target's team, or the test bundle fails to load into its host.
+        DEVELOPMENT_TEAM: 37MA269X54
+    dependencies:
+      - target: Mailbar
