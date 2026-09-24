@@ -7,14 +7,14 @@ laid out like Outlook's message list. Open a message, mark it read or unread, fl
 delete it. Nothing else. It exists so you can stop keeping a 2 GB mail client open all day just to
 glance at your inbox.
 
-> **Status: early development.** Accounts, Keychain storage, the EWS client and the Settings window
-> are in place. The inbox list, reader and actions are being built. See [PLAN.md](PLAN.md) for the
+> **Status: early development.** Accounts, Keychain storage, the EWS client, the Settings window,
+> the menu bar unread count and the inbox list are in place. The reader and actions are next. See [PLAN.md](PLAN.md) for the
 > milestone order.
 
 ## Features (v1)
 
-- **Menu bar unread count**, refreshed by polling (`SyncFolderItems`) every couple of minutes and
-  whenever the popover opens.
+- **Menu bar unread count**, refreshed by polling every couple of minutes, whenever the
+  popover opens, and once after the Mac wakes.
 - **Outlook-style rows**: sender (bold while unread), subject with relative time (`14:32`,
   `Yesterday`, `2 days ago`, then a short date), one line of preview.
 - **Safe reader**: HTML bodies render in a `WKWebView` with JavaScript off and remote images blocked
