@@ -17,4 +17,10 @@ section when a release is cut.
 - Inbox list in the popover, laid out like Outlook: sender, subject with the time (today's time, Yesterday, 2 days ago, then the date), and a one-line preview. Persian mail reads right to left.
 - Clear screens for a password that is not accepted, a server that cannot be reached, and a genuinely empty inbox.
 - Several accounts: pick one from the title menu or swipe between them.
+- Click a message to read it in the popover. Opening it marks it read. Remote images stay blocked until you click Load images, so tracking pixels cannot report that you opened it.
+- Mark as read or unread, flag, archive and delete, from the message toolbar, from buttons that appear when you hover a row, or by right-clicking. Delete moves mail to Deleted Items.
+- If your mailbox has no Archive folder yet, Mailbar asks before creating one.
+
+### Changed
+- The new menu bar and app icons.
 

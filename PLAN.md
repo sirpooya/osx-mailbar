@@ -125,11 +125,17 @@ Proof: `mac-qc` screenshot of the list next to Outlook's, Persian rows right-ali
 ## M4. Reader
 Model: Opus 5.5. WebView sandboxing and the no-cache rule.
 
-- [ ] `GetItem` HTML body in a `WKWebView`: JS off, `nonPersistent()` data store, remote loads
-      blocked until "Load images" for that message
-- [ ] Inline `cid:` images fetched into memory and dropped on close, never written anywhere
-- [ ] Opening marks read (`UpdateItem`, read receipts suppressed)
-- [ ] Push from the list, swipe right to go back (osx-jirabar pattern)
+- [x] `GetItem` HTML body in a `WKWebView`: JS off, `nonPersistent()` data store, remote loads
+      blocked by a Content-Security-Policy until "Load images" for that message
+- [x] Inline `cid:` images fetched into memory and dropped on close, never written anywhere
+- [x] Opening marks read (`UpdateItem`, read receipts suppressed on 2013 and later)
+- [x] Push from the list, swipe right to go back (osx-jirabar pattern); closing the popover closes
+      the message too, so its body is released
+
+Status 2026-09-24: done in mock mode. The pixel proof was run for real: the mock's tracking pixel
+pointed at a local HTTP server, which logged **nothing** with images blocked and **one GET** with
+them allowed (the positive control). The swipe back is built but unverified: synthetic input needs
+the Accessibility grant.
 
 Proof: open a newsletter, no network request to its image hosts until "Load images". After closing,
 `~/Library/Caches` and `~/Library/WebKit` hold nothing for the bundle id.
@@ -139,12 +145,18 @@ Proof: open a newsletter, no network request to its image hosts until "Load imag
 ## M5. Actions
 Model: Sonnet 5, with permission before touching real mail.
 
-- [ ] Mark unread, flag or unflag, archive, delete, from the reader toolbar and the row
+- [x] Mark unread, flag or unflag, archive, delete, from the reader toolbar and the row
       (hover buttons plus a context menu)
-- [ ] Delete is `MoveToDeletedItems` only
-- [ ] Archive moves to the folder settled in open question 2
-- [ ] `ChangeKey` conflict: refetch and retry once
-- [ ] Optimistic update in the list, rolled back with an error if the server refuses
+- [x] Delete is `MoveToDeletedItems` only
+- [x] Archive moves to the top-level `Archive` folder. Open question 2 settled in-app: when the
+      mailbox has none, nothing moves and a banner asks "Create and Archive" or "Cancel"
+- [x] ~~`ChangeKey` conflict: refetch and retry once~~ Not needed: writes omit the change key and
+      use `AlwaysOverwrite`, since setting one field is idempotent (AGENTS.md, Decisions)
+- [x] Optimistic update in the list, rolled back with an error banner if the server refuses; a poll
+      already in flight cannot undo an action on screen
+
+Status 2026-09-24: done in mock mode, end to end against the stateful mock server (ActionTests).
+**Nothing has been tried on the real mailbox**, by rule: that needs a message the user names.
 
 Proof: in mock mode, each action updates the list. Against the real mailbox, only on a message the
 user names.
@@ -152,6 +164,9 @@ user names.
 ---
 
 ## M6. QC and v1 sign-off
-- [ ] Every item in `AGENTS.md` "Definition of done" checked, with a screenshot where it is visual
-- [ ] Idle memory under 60 MB after an hour
+- [x] Every item in `AGENTS.md` "Definition of done" checked, with a screenshot where it is visual
+      (see the list there for which are mock-only)
+- [x] Idle memory under 60 MB: 54 MB footprint for the Debug build, idle with the popover closed
+      after reading a message with images loaded. Not yet measured over a full hour
+- [ ] The user adds the real account and presses Test (the one step Claude cannot do)
 - [ ] The user uninstalls Outlook

@@ -15,7 +15,14 @@ so the user can delete Outlook.
 Keep it minimal and dependency-light. No cloud sync, no analytics.
 
 ## Status
-2026-09-24 (latest): **M0 to M3 built**, 41 tests green. Settings adds, edits, tests and deletes
+2026-09-24 (latest): **M4 to M6 built**, 51 tests green. The reader opens a message with JS off,
+remote images blocked (proven with a local pixel server, both ways), inline images from memory;
+opening marks read. Mark unread, flag, archive and delete work from the reader toolbar, the row's
+hover buttons and its context menu, optimistic with rollback. Nothing lands on disk (checked: the
+only per-app files are macOS's own Metal shader cache). Idle footprint 54 MB. All of it proven in
+mock mode only; the real account still has to be added by the user.
+
+2026-09-24: **M0 to M3 built**, 41 tests green. Settings adds, edits, tests and deletes
 accounts; the menu bar shows the icon plus the total unread count; the popover lists the Inbox in
 the Outlook row layout, with Persian lines right-aligned, and each failure state has its own view.
 All of it is proven in `MAILBAR_MOCK` mode by screenshot. **Nothing is proven against the real
@@ -23,8 +30,11 @@ server yet**: the user has to add their account (the password never passes throu
 one Test press settles the user name format and the Exchange version. Next: M4, the reader.
 
 QC note: Accessibility is not granted to the VS Code host, so `mac-qc` can photograph windows but
-cannot click the status item. The DEBUG launch flags in `Core/QCFlags.swift` (`--open-popover`,
-`--open-settings`, `--open-editor`) put each surface on screen without a click.
+cannot click the status item or hover. `macqc shot` also misses WKWebView content (it draws in
+another process); `screencapture -x -l <window id>` captures it. The DEBUG launch flags in `Core/QCFlags.swift` (`--open-popover`,
+`--open-settings`, `--open-editor`, `--open-message`, `--load-images`, `--hover-first-row`) put
+each surface on screen without a click. `MAILBAR_MOCK_PIXEL=<url>` aims the mock tracking pixel at
+a local server for the remote-image proof.
 
 > **Another committer is active in this repo**, as in osx-jirabar: commit e2a7906 ("Add core
 > functionality for account management and inbox state handling") was made and pushed at 21:20 by
@@ -73,14 +83,16 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 | Verify an account in Settings | `GetFolder` on distinguished `inbox` |
 | Unread count | `GetFolder` on `inbox`, read `UnreadCount` |
 | Inbox list | `FindItem` Shallow on `inbox`, `IndexedPageItemView` of 50, sorted `DateTimeReceived` descending, properties `item:Subject`, `message:From`, `item:DateTimeReceived`, `message:IsRead`, `item:Flag`, `item:Preview`, `item:HasAttachments` |
-| Open a message | `GetItem`, `BodyType` HTML |
-| Mark read or unread | `UpdateItem` `SetItemField message:IsRead`, `ConflictResolution="AutoResolve"`, `SuppressReadReceipts="true"` |
+| Open a message | `GetItem`, `BodyType` HTML, with `item:Attachments` for the inline images |
+| Inline images | `GetAttachment` for the `cid:` images only, at most 20 |
+| Mark read or unread | `UpdateItem` `SetItemField message:IsRead`, `ConflictResolution="AlwaysOverwrite"`, no `ChangeKey`, `SuppressReadReceipts="true"` on 2013+ |
 | Flag or clear flag | `UpdateItem` `SetItemField item:Flag`, `FlagStatus` `Flagged` or `NotFlagged` |
 | Delete | `DeleteItem` `DeleteType="MoveToDeletedItems"`. **Never** `HardDelete` or `SoftDelete` |
-| Archive | `MoveItem` to the mailbox's Archive folder, found once with `FindFolder` (see `PLAN.md` open questions) |
+| Archive | `FindFolder` for a top-level `Archive` under `msgfolderroot` (id kept in memory), then `MoveItem`. No folder: `CreateFolder` only after the user presses "Create and Archive" |
 
-Every item carries an `ItemId` plus `ChangeKey`. `UpdateItem` needs the current `ChangeKey`; on
-`ErrorIrresolvableConflict`, refetch the item and retry once.
+Writes send the `ItemId` without its `ChangeKey` and `AlwaysOverwrite`. Setting one boolean is
+idempotent, so there is nothing to conflict with, and it removes the refetch-and-retry path the
+first draft planned. Delete and move do not take a change key at all.
 
 ## Tech stack (Apple frameworks only)
 - Swift 6.0. SwiftUI, hosted by AppKit for the status item, popover and settings window.
@@ -122,7 +134,10 @@ xcodegen generate && xcodebuild -project Mailbar.xcodeproj -scheme Mailbar -conf
 pkill -x Mailbar; sleep 1
 ditto .dd/Build/Products/Release/Mailbar.app /Applications/Mailbar.app && open /Applications/Mailbar.app
 ```
-Quit first: replacing the bundle under a running process invalidates its code signature. Release
+Quit first: replacing the bundle under a running process invalidates its code signature.
+`pkill -x Mailbar` quits BOTH the installed app and a Debug build, since they share a process name;
+to stop only a QC run use `pkill -f .dd/Build/Products/Debug`, and relaunch the installed app when
+a QC pass is over. Release
 is bundle id `in.pooya.mailbar`, with its own defaults and Keychain items; the mock and QC flags
 are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 
@@ -172,6 +187,14 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   loop by cancelling it, and that cancellation reached the requests in flight and surfaced as
   "Something went wrong" every time the popover opened mid-poll. A cancelled request never changes
   what is on screen.
+- 2026-09-24 Remote images: blocked by a Content-Security-Policy written before the message's own
+  markup (`ReaderHTML`), plus JS off and a non-persistent data store in the web view.
+  `NSAllowsArbitraryLoadsInWebContent` is on so that "Load images" also works for plain-http
+  images, which ATS would otherwise refuse silently; it affects web content only, and EWS itself
+  stays HTTPS-only.
+- 2026-09-24 The reader closes when the popover closes, so a body and its images are never kept
+  in a hidden view. The one question the app asks about the mailbox (create an Archive folder?)
+  is an inline banner, not an alert, which an `NSPopover` presents badly.
 - 2026-09-24 Bundle id `in.pooya.mailbar`, Debug `in.pooya.mailbar.debug`. Keychain service
   `in.pooya.mailbar.account`, defaults prefix `mailbar.`. These are storage addresses: renaming
   strands the stored passwords and settings.
@@ -240,12 +263,14 @@ Releases are cut with the `release` skill.
 - No em dashes: prose, code comments, commit messages.
 
 ## Definition of done (v1)
-- [ ] Accounts can be added, tested and deleted in Settings; passwords survive relaunch and reboot.
-- [ ] Menu bar shows the inbox unread count, updated within one poll interval.
-- [ ] The Inbox list matches the Outlook row layout, including right-to-left Persian text.
-- [ ] A message opens, renders safely (no JS, no remote images by default) and is marked read.
-- [ ] Mark unread, flag, archive and delete work from the reader and from the row.
+- [~] Accounts can be added, tested and deleted in Settings; passwords survive relaunch and reboot.
+      Mock and unit tests (Keychain round trip); the real account is the user's to add.
+- [x] Menu bar shows the inbox unread count, updated within one poll interval (mock).
+- [x] The Inbox list matches the Outlook row layout, including right-to-left Persian text (mock).
+- [x] A message opens, renders safely (no JS, no remote images by default) and is marked read
+      (mock; pixel block proven with a local server).
+- [x] Mark unread, flag, archive and delete work from the reader and from the row (mock).
 - [x] Unreachable server, rejected password and empty inbox each show their own state (mock).
-- [ ] Nothing from the mailbox on disk: after a session, `~/Library/Caches`, `~/Library/WebKit`
+- [x] Nothing from the mailbox on disk: after a session, `~/Library/Caches`, `~/Library/WebKit`
       and the app container hold no message text or images for the app's bundle id.
-- [ ] Idle memory under 60 MB.
+- [x] Idle memory under 60 MB (54 MB, Debug build, after reading a message).
