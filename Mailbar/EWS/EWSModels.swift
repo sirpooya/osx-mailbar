@@ -1,0 +1,177 @@
+import Foundation
+
+/// The Exchange build, from the `ServerVersionInfo` header on every response.
+struct ServerVersion: Equatable, Sendable {
+    let major: Int
+    let minor: Int
+
+    /// Exchange 2013 is major version 15. 2016 and 2019 report 15 as well.
+    var isModern: Bool { major >= 15 }
+
+    var label: String {
+        switch (major, minor) {
+        case (15, 2): return "Exchange 2019"
+        case (15, 1): return "Exchange 2016"
+        case (15, 0): return "Exchange 2013"
+        case (14, _): return "Exchange 2010"
+        default: return "Exchange \(major).\(minor)"
+        }
+    }
+}
+
+struct InboxStatus: Equatable, Sendable {
+    let unreadCount: Int
+    let totalCount: Int
+    let version: ServerVersion?
+}
+
+/// One inbox row. Exactly what the list shows plus what acting on it will need, and nothing more:
+/// this is the only mail content the app keeps between polls, and only in memory.
+struct MailMessage: Identifiable, Equatable, Sendable {
+    /// EWS `ItemId`. Opaque, stable for the life of the item in this folder.
+    let id: String
+    /// Changes whenever the item does. Needed by every write.
+    let changeKey: String
+    let senderName: String
+    let senderAddress: String
+    let subject: String
+    var preview: String
+    let received: Date
+    let isRead: Bool
+    let isFlagged: Bool
+    let hasAttachments: Bool
+}
+
+/// Reads EWS responses into the models above.
+enum EWSResponse {
+
+    /// Throws for a SOAP fault or for a response message whose `ResponseClass` is `Error`.
+    /// Returns the response messages that succeeded (or merely warned).
+    static func responseMessages(in root: XMLTreeNode) throws -> [XMLTreeNode] {
+        if let fault = root.first("Fault") {
+            let text = fault.child("faultstring")?.trimmedText
+                ?? fault.first("Message")?.trimmedText
+                ?? "Exchange returned a SOAP fault."
+            throw EWSError.server(text)
+        }
+        guard let container = root.first("ResponseMessages") else {
+            throw EWSError.invalidResponse("The reply had no response messages.")
+        }
+        let messages = container.children
+        for message in messages where message.attributes["ResponseClass"] == "Error" {
+            let code = message.child("ResponseCode")?.trimmedText ?? "Error"
+            let text = message.child("MessageText")?.trimmedText ?? code
+            throw EWSError.server(code == text ? text : "\(text) (\(code))")
+        }
+        return messages
+    }
+
+    static func serverVersion(in root: XMLTreeNode) -> ServerVersion? {
+        guard let info = root.first("ServerVersionInfo"),
+              let major = info.attributes["MajorVersion"].flatMap(Int.init) else { return nil }
+        return ServerVersion(major: major, minor: info.attributes["MinorVersion"].flatMap(Int.init) ?? 0)
+    }
+
+    static func inboxStatus(from data: Data) throws -> InboxStatus {
+        let root = try parse(data)
+        let messages = try responseMessages(in: root)
+        guard let folder = messages.first?.first("Folder") ?? root.first("Folder"),
+              let unread = folder.child("UnreadCount").flatMap({ Int($0.trimmedText) }) else {
+            throw EWSError.invalidResponse("The reply did not include the inbox unread count.")
+        }
+        let total = folder.child("TotalCount").flatMap { Int($0.trimmedText) } ?? 0
+        return InboxStatus(unreadCount: unread, totalCount: total, version: serverVersion(in: root))
+    }
+
+    static func messages(from data: Data) throws -> [MailMessage] {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        guard let items = responses.first?.first("Items") else {
+            throw EWSError.invalidResponse("The reply did not include the inbox items.")
+        }
+        // Any item type: a meeting request or a delivery report sits in the inbox as well and is
+        // shown like mail. The one thing every item has is an ItemId.
+        return items.children.compactMap(message(from:))
+    }
+
+    /// Item id to a one-line preview, from a `GetItem` of text bodies.
+    static func previews(from data: Data) throws -> [String: String] {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        var result: [String: String] = [:]
+        for response in responses {
+            for item in response.child("Items")?.children ?? [] {
+                guard let id = item.child("ItemId")?.attributes["Id"] else { continue }
+                result[id] = previewText(item.child("Body")?.text ?? "")
+            }
+        }
+        return result
+    }
+
+    static func message(from item: XMLTreeNode) -> MailMessage? {
+        guard let itemID = item.child("ItemId"), let id = itemID.attributes["Id"] else { return nil }
+        let mailbox = item.path("From", "Mailbox")
+        let name = mailbox?.child("Name")?.trimmedText ?? ""
+        let address = mailbox?.child("EmailAddress")?.trimmedText ?? ""
+        let subject = item.child("Subject")?.trimmedText ?? ""
+        let received = item.child("DateTimeReceived").flatMap { parseDate($0.trimmedText) } ?? .distantPast
+
+        return MailMessage(
+            id: id,
+            changeKey: itemID.attributes["ChangeKey"] ?? "",
+            senderName: name.isEmpty ? (address.isEmpty ? "No sender" : address) : name,
+            senderAddress: address,
+            subject: subject.isEmpty ? "(No subject)" : subject,
+            preview: previewText(item.child("Preview")?.text ?? ""),
+            received: received,
+            isRead: item.child("IsRead")?.trimmedText == "true",
+            isFlagged: isFlagged(item),
+            hasAttachments: item.child("HasAttachments")?.trimmedText == "true")
+    }
+
+    /// `item:Flag` on 2013 and later, the MAPI flag status (2 is flagged) on older servers.
+    private static func isFlagged(_ item: XMLTreeNode) -> Bool {
+        if let status = item.path("Flag", "FlagStatus")?.trimmedText {
+            return status == "Flagged"
+        }
+        for property in item.children where property.name == "ExtendedProperty" {
+            if property.child("ExtendedFieldURI")?.attributes["PropertyTag"]?.lowercased() == "0x1090" {
+                return property.child("Value")?.trimmedText == "2"
+            }
+        }
+        return false
+    }
+
+    /// One line: every run of whitespace, including the blank lines between paragraphs, becomes a
+    /// single space. Capped, since the row only ever shows one line of it.
+    static func previewText(_ raw: String) -> String {
+        let collapsed = raw.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+        return String(collapsed.prefix(256))
+    }
+
+    static func parseDate(_ text: String) -> Date? {
+        plainDate.date(from: text) ?? fractionalDate.date(from: text)
+    }
+
+    // ISO8601DateFormatter is documented thread safe; it just is not marked Sendable.
+    private nonisolated(unsafe) static let plainDate: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private nonisolated(unsafe) static let fractionalDate: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static func parse(_ data: Data) throws -> XMLTreeNode {
+        do {
+            return try XMLTree.parse(data)
+        } catch let error as XMLTree.ParseError {
+            throw EWSError.invalidResponse(error.message)
+        }
+    }
+}

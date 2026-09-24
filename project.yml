@@ -47,6 +47,9 @@ targets:
         DEVELOPMENT_TEAM: 37MA269X54
         ENABLE_HARDENED_RUNTIME: YES
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        # Resources/AppIcon.icon, an Icon Composer bundle (needs Xcode 26 to compile), the same
+        # arrangement as osx-jirabar.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
           # A dev build and the installed release coexist, each with its own defaults and its own
