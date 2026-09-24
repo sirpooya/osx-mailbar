@@ -13,12 +13,18 @@ enum Keys {
     static let pollMinutes = "mailbar.pollMinutes"
     /// The account whose inbox the popover shows, when there is more than one.
     static let selectedAccount = "mailbar.selectedAccount"
+    /// New-mail notifications on or off (M7).
+    static let notifyNewMail = "mailbar.notifyNewMail"
+    /// Whether a notification shows the sender, subject and preview, or only the account name.
+    static let notificationDetails = "mailbar.notificationDetails"
 
     static let pollMinuteChoices = [1, 2, 3, 5, 10]
 
     static func registerDefaults(_ defaults: UserDefaults = .standard) {
         defaults.register(defaults: [
             pollMinutes: 2,
+            notifyNewMail: true,
+            notificationDetails: true,
         ])
     }
 

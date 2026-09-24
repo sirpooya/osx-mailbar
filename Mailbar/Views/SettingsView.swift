@@ -7,6 +7,10 @@ struct SettingsView: View {
     let onChange: () -> Void
 
     @AppStorage(Keys.pollMinutes) private var pollMinutes = 2
+    @AppStorage(Keys.notifyNewMail) private var notifyNewMail = true
+    @AppStorage(Keys.notificationDetails) private var notificationDetails = true
+    @State private var launchAtLogin = false
+    @State private var launchAtLoginMessage: String?
 
     /// The account open in the editor sheet. A fresh `Account` means "add".
     @State private var editing: EditorTarget?
@@ -22,6 +26,8 @@ struct SettingsView: View {
         SettingsTabBody {
             accountsSection
             refreshSection
+            notificationsSection
+            generalSection
             privacySection
         }
         .onAppear {
@@ -122,7 +128,36 @@ struct SettingsView: View {
         }
     }
 
+    private var notificationsSection: some View {
+        SettingsSection("Notifications",
+                        footnote: "macOS keeps notifications in Notification Center until they are cleared. Mailbar withdraws each one as soon as that message is read, archived or deleted. With details off, a notification names only the account.") {
+            SettingsRow("Notify me about new mail") {
+                SettingsSwitch(isOn: $notifyNewMail)
+            }
+            SettingsDivider()
+            SettingsRow("Show sender and subject") {
+                SettingsSwitch(isOn: $notificationDetails)
+                    .disabled(!notifyNewMail)
+            }
+        }
+    }
+
+    private var generalSection: some View {
+        SettingsSection("General", footnote: launchAtLoginMessage) {
+            SettingsRow("Launch at login") {
+                SettingsSwitch(isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, enabled in
+                        guard enabled != LaunchAtLogin.isEnabled else { return }
+                        launchAtLoginMessage = LaunchAtLogin.set(enabled)
+                        // Write back what macOS actually did, not what was asked for.
+                        launchAtLogin = LaunchAtLogin.isEnabled
+                    }
+            }
+        }
+        .onAppear { launchAtLogin = LaunchAtLogin.isEnabled }
+    }
+
     private var privacySection: some View {
-        SettingsFootnote("Passwords are kept in your Keychain. Mail is held in memory only while Mailbar runs and is never written to disk. Mailbar talks to your accounts' servers and nothing else.")
+        SettingsFootnote("Passwords are kept in your Keychain. Mail is held in memory only while Mailbar runs and is never written to disk, except an attachment you choose to open, which waits in a private temporary folder until Mailbar quits. Mailbar talks to your accounts' servers and nothing else.")
     }
 }

@@ -18,6 +18,7 @@ struct PopoverRootView: View {
     /// Which way the next account change travels, so the inbox leaves the way the swipe went.
     @State private var goesForward = true
     @State private var swipeMonitor: Any?
+    @FocusState private var searchFocused: Bool
     @State private var swipe = SwipeTracker()
 
     private static let swipeThreshold: CGFloat = 40
@@ -62,6 +63,7 @@ struct PopoverRootView: View {
     private var list: some View {
         VStack(spacing: 0) {
             header
+            if store.isSearchOpen { searchBar }
             Divider().opacity(0.5)
             banners
             ZStack {
@@ -137,6 +139,17 @@ struct PopoverRootView: View {
 
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
+                Button {
+                    if store.isSearchOpen { store.closeSearch() } else { store.isSearchOpen = true }
+                } label: {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("f", modifiers: .command)
+                .help("Search the Inbox (Cmd+F)")
+                .accessibilityLabel("Search the Inbox")
+                .disabled(store.selectedAccount == nil)
+
                 // One fixed box for both states, so the spinner replacing the button cannot nudge
                 // the header's height (osx-jirabar measured that one).
                 Group {
@@ -228,6 +241,81 @@ struct PopoverRootView: View {
     @ViewBuilder
     private var content: some View {
         if let account = store.selectedAccount {
+            if store.isSearchOpen, store.searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 {
+                searchContent(account)
+            } else {
+                inboxContent(account)
+            }
+        } else {
+            NoAccountsView(onOpenSettings: onOpenSettings)
+        }
+    }
+
+    // MARK: - Search
+
+    /// The field under the header. Typing searches the server after a short pause, so each
+    /// keystroke does not become a request; results that arrive after the text changed are dropped
+    /// by the store.
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            TextField("Search Inbox", text: $store.searchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($searchFocused)
+                .onSubmit { Task { await store.runSearch() } }
+            if !store.searchQuery.isEmpty {
+                Button {
+                    store.searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Clear")
+            }
+            Button("Done") { store.closeSearch() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(Color.primary.opacity(0.06)))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 7)
+        .onAppear { searchFocused = true }
+        .task(id: store.searchQuery) {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            await store.runSearch()
+        }
+    }
+
+    @ViewBuilder
+    private func searchContent(_ account: Account) -> some View {
+        switch store.searchPhase {
+        case .idle, .searching:
+            SkeletonListView(rowCount: 3)
+        case .results(let messages) where messages.isEmpty:
+            StatePlaceholder(symbol: "magnifyingglass", tint: .secondary,
+                             title: "No messages match",
+                             message: "Nothing in the Inbox of \(account.displayName) matches \u{201C}\(store.searchQuery)\u{201D}.") {
+                EmptyView()
+            }
+        case .results(let messages):
+            InboxListView(messages: messages, accountID: account.id, store: store)
+        case .failed(let message):
+            GenericFailureView(message: message) { Task { await store.runSearch() } }
+        }
+    }
+
+    @ViewBuilder
+    private func inboxContent(_ account: Account) -> some View {
+        do {
             switch store.state(for: account.id) {
             case .loading:
                 SkeletonListView()
@@ -244,8 +332,6 @@ struct PopoverRootView: View {
             case .failed(let message):
                 GenericFailureView(message: message, onRetry: onRefresh)
             }
-        } else {
-            NoAccountsView(onOpenSettings: onOpenSettings)
         }
     }
 

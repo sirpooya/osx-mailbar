@@ -117,6 +117,54 @@ struct EWSClient: Sendable {
         try await perform(SOAP.move(id: id, toFolder: folderID), modern: false, url: url, credential: credential)
     }
 
+    // MARK: - Streaming (M11)
+
+    func subscribeToInbox(at url: URL, credential: EWSCredential) async throws -> String {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.subscribeToInbox),
+                                  to: url, credential: credential)
+        return try EWSResponse.subscriptionID(from: data)
+    }
+
+    /// Opens the streaming connection. Each element is one envelope, already reduced. The
+    /// sequence ends when the server closes the connection or the network drops.
+    func streamInboxEvents(subscription: String,
+                           minutes: Int,
+                           at url: URL,
+                           credential: EWSCredential) async throws -> AsyncThrowingStream<StreamingChunk, Error> {
+        let body = SOAP.envelope(.exchange2010SP2,
+                                 body: SOAP.getStreamingEvents(subscription: subscription, minutes: minutes))
+        let (envelopes, status): (AsyncThrowingStream<Data, Error>, Int)
+        do {
+            (envelopes, status) = try await transport.stream(body, to: url, credential: credential)
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch let error as URLError {
+            throw EWSError.from(urlError: error)
+        }
+        if status != 200 {
+            var whole = Data()
+            for try await part in envelopes { whole.append(part) }
+            _ = try check(status: status, data: whole)
+        }
+        return AsyncThrowingStream { continuation in
+            let relay = Task {
+                do {
+                    for try await envelope in envelopes {
+                        continuation.yield(EWSResponse.streamingChunk(from: envelope))
+                    }
+                    continuation.finish()
+                } catch let error as URLError where error.code == .cancelled {
+                    continuation.finish(throwing: CancellationError())
+                } catch let error as URLError {
+                    continuation.finish(throwing: EWSError.from(urlError: error))
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in relay.cancel() }
+        }
+    }
+
     private func perform(_ body: String, modern: Bool, url: URL, credential: EWSCredential) async throws {
         let data = try await send(SOAP.envelope(modern ? .exchange2013 : .exchange2010SP2, body: body),
                                   to: url, credential: credential)
@@ -140,6 +188,11 @@ struct EWSClient: Sendable {
             throw EWSError.unexpected(error.localizedDescription)
         }
 
+        return try check(status: status, data: data)
+    }
+
+    /// Maps an HTTP status to the app's errors, reading a SOAP fault's own words on a 500.
+    private func check(status: Int, data: Data) throws -> Data {
         switch status {
         case 200:
             return data

@@ -12,6 +12,20 @@ struct EWSCredential: Sendable {
 /// tests can answer with fixtures instead of a server.
 protocol EWSTransport: Sendable {
     func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> (Data, Int)
+
+    /// A long-lived request whose reply is a sequence of SOAP envelopes written as they happen:
+    /// EWS streaming notifications (M11). Yields each complete envelope. A non-200 reply yields
+    /// its whole body once and finishes, with the status alongside.
+    func stream(_ body: Data, to url: URL, credential: EWSCredential) async throws
+        -> (AsyncThrowingStream<Data, Error>, Int)
+}
+
+extension EWSTransport {
+    /// Transports that cannot stream (the tests' stubs) say so, and the app keeps polling.
+    func stream(_ body: Data, to url: URL, credential: EWSCredential) async throws
+        -> (AsyncThrowingStream<Data, Error>, Int) {
+        throw EWSError.server("Streaming is not supported by this transport.")
+    }
 }
 
 /// The real transport.
@@ -20,6 +34,13 @@ protocol EWSTransport: Sendable {
 /// and the URL cache is removed outright, so no response (which is mail) ever reaches the disk.
 struct URLSessionTransport: EWSTransport {
     private let session: URLSession
+    /// For streaming only: the same no-cache setup, but a connection may sit quiet for up to the
+    /// 30 minutes EWS allows between envelopes' batches, so the idle timeout is set past that.
+    /// It shares the cookie jar (in memory) with `session`: a load-balanced Exchange pins a
+    /// subscription to one server by cookie, and the stream must reach the server that made it.
+    private let streamSession: URLSession
+
+    static let streamIdleTimeout: TimeInterval = 35 * 60
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -30,6 +51,53 @@ struct URLSessionTransport: EWSTransport {
         // The credential is answered per request by the task delegate below, never from a store.
         configuration.urlCredentialStorage = nil
         session = URLSession(configuration: configuration)
+
+        let streaming = URLSessionConfiguration.ephemeral
+        streaming.urlCache = nil
+        streaming.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        streaming.urlCredentialStorage = nil
+        streaming.httpCookieStorage = configuration.httpCookieStorage
+        streaming.timeoutIntervalForRequest = Self.streamIdleTimeout
+        streaming.timeoutIntervalForResource = Self.streamIdleTimeout
+        streamSession = URLSession(configuration: streaming)
+    }
+
+    func stream(_ body: Data, to url: URL, credential: EWSCredential) async throws
+        -> (AsyncThrowingStream<Data, Error>, Int) {
+        var request = URLRequest(url: url, timeoutInterval: Self.streamIdleTimeout)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("text/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/xml", forHTTPHeaderField: "Accept")
+
+        let (bytes, response) = try await streamSession.bytes(for: request,
+                                                             delegate: ChallengeResponder(credential: credential))
+        guard let http = response as? HTTPURLResponse else {
+            throw EWSError.unexpected("The server's reply was not HTTP.")
+        }
+        let status = http.statusCode
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            let reader = Task {
+                var buffer = Data()
+                do {
+                    for try await byte in bytes {
+                        buffer.append(byte)
+                        // An envelope is complete at its closing tag, whatever prefix the server
+                        // gives the SOAP namespace.
+                        if status == 200, byte == UInt8(ascii: ">"), EnvelopeSplitter.endsWithClosingEnvelope(buffer) {
+                            continuation.yield(buffer)
+                            buffer.removeAll(keepingCapacity: true)
+                        }
+                    }
+                    if !buffer.isEmpty { continuation.yield(buffer) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in reader.cancel() }
+        }
+        return (stream, status)
     }
 
     func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> (Data, Int) {
@@ -51,6 +119,16 @@ struct URLSessionTransport: EWSTransport {
             throw EWSError.notEWS("That address answered with a web page, not Exchange Web Services.")
         }
         return (data, http.statusCode)
+    }
+}
+
+/// Finds the end of one SOAP envelope in a byte stream: `</Envelope>` or `</s:Envelope>` and so on.
+enum EnvelopeSplitter {
+    static func endsWithClosingEnvelope(_ buffer: Data) -> Bool {
+        let tail = String(decoding: buffer.suffix(48), as: UTF8.self)
+        guard tail.hasSuffix("Envelope>"), let open = tail.range(of: "</", options: .backwards) else { return false }
+        let name = tail[open.upperBound...].dropLast() // "s:Envelope" or "Envelope"
+        return name == "Envelope" || name.hasSuffix(":Envelope")
     }
 }
 

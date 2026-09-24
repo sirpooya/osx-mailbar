@@ -6,7 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var client: EWSClient!
     private var store: MailStore!
     private var poller: Poller!
+    private var streamer: MailStreamer!
     private var statusItemController: StatusItemController!
+    private let notifications = NotificationService()
     private var editingShortcutMonitor: Any?
 
     /// The unit tests use the app as their TEST_HOST, so this delegate runs for them too. Without
@@ -31,12 +33,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         store = MailStore(accounts: accounts, client: client)
+        notifications.configure()
+        store.onNewMail = { [weak self] account, messages in
+            let defaults = UserDefaults.standard
+            guard let self, defaults.bool(forKey: Keys.notifyNewMail) else { return }
+            self.notifications.notify(messages, account: account,
+                                      showDetails: defaults.bool(forKey: Keys.notificationDetails))
+        }
+        store.onUnreadChanged = { [weak self] unread in
+            self?.notifications.withdraw(except: unread)
+        }
         statusItemController = StatusItemController(
             store: store,
             onOpenSettings: { [weak self] in self?.showSettings() },
             onRefresh: { [weak self] in self?.poller.refreshNow() })
 
-        poller = Poller(intervalProvider: { Keys.pollInterval() },
+        // Streaming (M11) brings changes the moment they happen; while it covers every account,
+        // polling only guards against a subscription that died without the connection noticing.
+        streamer = MailStreamer(store: store, onChange: { [weak self] in self?.poller.refreshNow() })
+        poller = Poller(intervalProvider: { [weak self] in
+                            guard let self, self.streamer.coversAllAccounts else { return Keys.pollInterval() }
+                            return max(Keys.pollInterval(), MailStreamer.fallbackPollInterval)
+                        },
                         action: { [weak self] in
                             guard let self else { return false }
                             // Unstructured on purpose. `refreshNow` (every popover open) restarts
@@ -49,6 +67,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             return await Task { await store.refresh() }.value
                         })
         poller.start()
+        // After the launch poll has had a moment, so the first stream does not race it for the
+        // server version.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.streamer.start() }
+
+        // Asked once an account exists, never at a bare first launch (osx-jirabar's rule).
+        if !accounts.accounts.isEmpty, MockMode.current == nil {
+            Task { await notifications.requestAuthorizationIfNeeded() }
+        }
+        notifications.onOpenMessage = { [weak self] account, message in
+            guard let self else { return }
+            self.store.closeSearch()
+            self.store.selectedAccountID = account
+            self.store.openMessage = .init(accountID: account, messageID: message)
+            self.statusItemController.show()
+        }
+        Attachments.clearOpenedCopies()
 
         installMainMenu()
         installEditingShortcuts()
@@ -59,6 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if QCFlags.openPopover {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.statusItemController.show()
+            }
+            if let text = QCFlags.searchText {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                    self?.store.isSearchOpen = true
+                    self?.store.searchQuery = text
+                }
             }
             if QCFlags.openMessage {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -75,7 +115,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettings() {
         // An account added, edited or deleted, or a new interval, all mean "check now".
         SettingsWindow.shared.show(accounts: accounts, client: client,
-                                   onChange: { [weak self] in self?.poller.refreshNow() })
+                                   onChange: { [weak self] in
+                                       guard let self else { return }
+                                       self.poller.refreshNow()
+                                       self.streamer.restartAll()
+                                       if !self.accounts.accounts.isEmpty, MockMode.current == nil {
+                                           Task { await self.notifications.requestAuthorizationIfNeeded() }
+                                       }
+                                   })
     }
 
     // MARK: - Sleep and wake
@@ -85,10 +132,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeSleepAndWake() {
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.poller.pauseForSleep() }
+            MainActor.assumeIsolated {
+                self?.poller.pauseForSleep()
+                self?.streamer.stopLoops()
+            }
         }
         center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.poller.resumeFromWake() }
+            MainActor.assumeIsolated {
+                self?.poller.resumeFromWake()
+                self?.streamer.sync()
+            }
         }
     }
 
@@ -151,6 +204,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Menu-bar app lifecycle
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Attachments.clearOpenedCopies()
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 

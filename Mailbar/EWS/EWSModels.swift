@@ -85,8 +85,58 @@ struct FileAttachment: Identifiable, Equatable, Sendable {
     }
 }
 
+/// One envelope from a streaming connection, reduced to what the app acts on.
+struct StreamingChunk: Equatable, Sendable {
+    /// Any event at all: new, created, deleted, modified, moved or copied.
+    var hasChanges = false
+    /// The server ended this connection (its timeout ran out). Reconnect with the same subscription.
+    var isClosed = false
+    /// `ResponseCode` of an error response, such as `ErrorSubscriptionNotFound`.
+    var errorCode: String?
+
+    /// The subscription no longer exists server side: subscribe again.
+    var subscriptionIsGone: Bool {
+        guard let errorCode else { return false }
+        return ["ErrorSubscriptionNotFound", "ErrorInvalidSubscription", "ErrorExpiredSubscription",
+                "ErrorSubscriptionAccessDenied", "ErrorInvalidPullSubscriptionId"].contains(errorCode)
+    }
+
+    static let eventNames = ["NewMailEvent", "CreatedEvent", "DeletedEvent",
+                             "ModifiedEvent", "MovedEvent", "CopiedEvent"]
+}
+
 /// Reads EWS responses into the models above.
 enum EWSResponse {
+
+    /// The subscription id from a `Subscribe` reply.
+    static func subscriptionID(from data: Data) throws -> String {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        guard let id = responses.first?.child("SubscriptionId")?.trimmedText, !id.isEmpty else {
+            throw EWSError.invalidResponse("Exchange did not return a subscription.")
+        }
+        return id
+    }
+
+    /// One streaming envelope. Never throws for an error response: the error is data here, since
+    /// what to do about it (resubscribe, back off) is the caller's decision.
+    static func streamingChunk(from data: Data) -> StreamingChunk {
+        guard let root = try? XMLTree.parse(data) else { return StreamingChunk() }
+        var chunk = StreamingChunk()
+        if root.first("Fault") != nil { chunk.errorCode = "Fault" }
+        for message in root.first("ResponseMessages")?.children ?? [] {
+            if message.attributes["ResponseClass"] == "Error" {
+                chunk.errorCode = message.child("ResponseCode")?.trimmedText ?? "Error"
+            }
+            if message.child("ConnectionStatus")?.trimmedText == "Closed" { chunk.isClosed = true }
+            for notification in message.all("Notification") {
+                if notification.children.contains(where: { StreamingChunk.eventNames.contains($0.name) }) {
+                    chunk.hasChanges = true
+                }
+            }
+        }
+        return chunk
+    }
 
     /// Throws for a SOAP fault or for a response message whose `ResponseClass` is `Error`.
     /// Returns the response messages that succeeded (or merely warned).

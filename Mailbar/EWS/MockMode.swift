@@ -51,9 +51,46 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     private var readOverrides: [String: Bool] = [:]
     private var flagOverrides: [String: Bool] = [:]
     private var teamHasArchive = false
+    /// Messages delivered while the app runs, by account prefix. Only ever grows.
+    private var arrived: [String: [MockFixtures.Message]] = [:]
+    /// Seconds after a stream opens before a new message arrives on it, for the work account.
+    /// `MAILBAR_MOCK_NEWMAIL=<seconds>` overrides it; 0 means never.
+    let newMailAfter: TimeInterval
 
-    init(mode: MockMode) {
+    init(mode: MockMode, newMailAfter: TimeInterval? = nil) {
         self.mode = mode
+        let fromEnvironment = ProcessInfo.processInfo.environment["MAILBAR_MOCK_NEWMAIL"].flatMap(TimeInterval.init)
+        self.newMailAfter = newMailAfter ?? fromEnvironment ?? 12
+    }
+
+    /// Streaming, with one scripted arrival: after `newMailAfter` seconds a message lands in the
+    /// work inbox and a NewMailEvent envelope is written, exactly as Exchange would.
+    func stream(_ body: Data, to url: URL, credential: EWSCredential) async throws
+        -> (AsyncThrowingStream<Data, Error>, Int) {
+        switch mode {
+        case .rejected: return (AsyncThrowingStream { $0.finish() }, 401)
+        case .unreachable: throw URLError(.cannotFindHost)
+        case .failed, .loading, .empty, .inbox: break
+        }
+        let isWork = url.host?.hasSuffix("example.com") == true
+        let delay = newMailAfter
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            let writer = Task {
+                continuation.yield(Data(MockFixtures.streamingEnvelope(event: nil).utf8))
+                if isWork, delay > 0, self.lock.withLock({ (self.arrived["work"] ?? []).isEmpty }) {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    guard !Task.isCancelled else { return }
+                    self.lock.withLock { self.arrived["work", default: []].append(MockFixtures.arrival) }
+                    continuation.yield(Data(MockFixtures.streamingEnvelope(event: "NewMailEvent").utf8))
+                }
+                // Then idle, as a quiet inbox does, until the app closes the connection.
+                try? await Task.sleep(nanoseconds: 1_800 * 1_000_000_000)
+                continuation.yield(Data(MockFixtures.streamingEnvelope(event: nil, closed: true).utf8))
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in writer.cancel() }
+        }
+        return (stream, 200)
     }
 
     func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> (Data, Int) {
@@ -84,11 +121,24 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         }
 
         return lock.withLock {
+            if request.contains("<m:Subscribe>") {
+                return ok(MockFixtures.subscribe)
+            }
             if request.contains("<m:GetFolder>") {
                 return ok(MockFixtures.getFolder(unread: mode == .empty ? 0 : inbox(prefix).filter { !$0.isRead }.count))
             }
             if request.contains("<m:FindItem") {
-                return ok(MockFixtures.findItem(mode == .empty ? [] : inbox(prefix)))
+                var messages = mode == .empty ? [] : inbox(prefix)
+                // Search: the query string (2013+) or the restriction constant (older servers),
+                // matched against sender, subject and preview the way Exchange's index would.
+                if let query = Self.firstMatch("<m:QueryString>([^<]*)</m:QueryString>", in: request)
+                    ?? Self.firstMatch(#"<t:Constant Value="([^"]*)"/>"#, in: request) {
+                    let needle = query.lowercased()
+                    messages = messages.filter {
+                        "\($0.sender) \($0.subject) \($0.preview)".lowercased().contains(needle)
+                    }
+                }
+                return ok(MockFixtures.findItem(messages))
             }
             if request.contains("<m:GetItem>"), let itemID,
                let message = inbox(prefix).first(where: { $0.id == itemID }) {
@@ -129,9 +179,17 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     /// The fixture inbox with every change made so far applied. Call with the lock held.
     private func inbox(_ prefix: String) -> [MockFixtures.Message] {
         let base = prefix == "team" ? MockFixtures.teamInbox : MockFixtures.workInbox
-        return base.enumerated().compactMap { index, message in
+        let newest = (arrived[prefix] ?? []).reversed().enumerated().map { index, message in
+            var message = message
+            message.id = "\(prefix)-new-\(index)"
+            return message
+        }
+        return (newest + base.enumerated().map { index, message in
             var message = message
             message.id = "\(prefix)-\(index)"
+            return message
+        }).compactMap { message in
+            var message = message
             guard !removed.contains(message.id) else { return nil }
             if let read = readOverrides[message.id] { message.isRead = read }
             if let flag = flagOverrides[message.id] { message.isFlagged = flag }
@@ -317,13 +375,7 @@ enum MockFixtures {
                           <t:ContentId>logo@mock</t:ContentId>
                           <t:IsInline>true</t:IsInline>
                         </t:FileAttachment>
-                        <t:FileAttachment>
-                          <t:AttachmentId Id="att-photo"/>
-                          <t:Name>photo.png</t:Name>
-                          <t:ContentType>image/png</t:ContentType>
-                          <t:ContentId>photo@mock</t:ContentId>
-                          <t:IsInline>true</t:IsInline>
-                        </t:FileAttachment>
+                        \(message.hasAttachments ? fileAttachments : "")
                       </t:Attachments>
                       <t:DateTimeReceived>\(received)</t:DateTimeReceived>
                       <t:ToRecipients><t:Mailbox><t:Name>Sample User</t:Name><t:EmailAddress>sample.user@example.com</t:EmailAddress></t:Mailbox></t:ToRecipients>
@@ -358,6 +410,26 @@ enum MockFixtures {
     /// large image to the text column, proportionally, with no sideways scroll.
     static let photoPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAABkAAAAMgCAIAAAD0ojkNAABFrklEQVR42u3YQQ3AIBREQYTVEU7wUz/1gAEskGwPe5jkKSDDP+zY79Rl33p0GS1cccUVV1xxJa644oorrrgSV381cAHLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVX4sqABZaDxRVX4oorrrjiiitxxRVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK3HFFVdcccWVuOKKK6644koGLLAcLK644kpcccUVV1xxxRUwXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1yJK6644oorA5bAcrC44oorrsQVV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcyYIHlYHHFFVfiiiuuuOKKK3HFFVdcGbDAkoPFFVdcccUVV8BwxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbAEloPFFVdccSWuuOKKK664EldccWXAAsvBEldcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXIkrrrjiyoAFlhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFldcAcMVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdccSWuDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLgSV1xxxRVXXIkrrrjiiiuuDFjEgOVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFlbjiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxJQMWWA4WV1xxJa644oorrrjiChiuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBS2A5WFxxxRVX4oorrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccWVuOKKK64MWGDJweKKK6644oorYLjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK66A4YorrrjiiitxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664Ei0GLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcGLGLAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKtHDFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXHElrrjiyoAFloMlrrjiiiuuuBJXXHHFFVdciSsDFlgOFldciSuuuOKKK67EFVdcccWVAUtgOVhcccUVV6KFK6644oorrsQVVwYssBwsrsQVV1xxxRVX4oorrrjiiisZsMBysLjiiitxxRVXXHHFlbjiiiuuDFhgycHiiiuuuOKKK3HFFVdcccWVuDJggeVgccWVuOKKK6644kpcccUVV1wZsASWg8UVV1xxJa644oorrrgSV1xxZcACy8ESLVxxxRVXXHElrrjiiiuuuJIBCywHiyuuuBJXXHHFFVdciSuuuOLKgAWWHCyuuOKKK67EFVdcccUVV+KKKwMWWA4WV1yJK6644oorrsQVV1xxxZUBS2A5WFxxxRVX4oorrrjiiitxxRVXBiywHCxxxRVXXHHFlbjiiiuuuOKKK2AMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuBJXXHHFFVdciSuuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVX4sqABZaDxRVX4oorrrjiiiuugOGKK664MmCBJQeLK6644oorccUVV1xxxZW44sqABZaDxZW44oorrrjiSlxxxRVXXHElAxZYDhZXXHElrrjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1yJK6644oorA5bAcrC44oorrrgChiuuuOKKK67EFVcGLLAcLK7EFVdcccUVV+KKK6644oorGbDAcrC44oorccUVV1xxxZW44oorrgxYYMnB4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbAEloPFFVdccSWuuOKKK664EldccWXAAsvB4goYrrjiiiuuuBJXXHHFFVdcyYAFloPFFVdciSuuuOKKK67EFVdccWXAAksOFldcccUVV+KKK6644oorccWVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdcccUVMAYssBwsrrjiSlxxxRVXXHElrrjiiisDFlhysLjiiiuuuBJXXHHFFVdciSuuDFhgOVhciSuuuOKKK67EFVdcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFFVfAcMUVV1wZsMCSg8UVV1xxxZW44oorrrjiSlxxZcACy8HiSlxxxRVXXHElrrjiiiuuuJIBCywHiyuuuBJXXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJq3DA8gQ+oU/IFVdccSWuuOKKK664EldccdWcAQssB4srrrjiSlxxxRVXXHElrrjiyoAFloMlrrjiiiuuuBJXXHHFFVdciSsDFlgOFldciSuuuOKKK67EFVdcccWVAQssYhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kq0cMUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBJXXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXooUrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WuOKKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuBItXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVX4sqABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK3HFFVdcccWVuOKKK6644sqAhQtYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1yJK6644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcyYIHlYHHFFVfiiiuuuOKKK66A4YorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbAEloPFFVdccSWuuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXIkrrrjiyoAFlhwsrrjiiiuuuAKGK6644oorrsSVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLjiChiuuOKKK664EldcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiiuuxBVXXHHFFVfiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxZcAiBiwHiyuuuOJKXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBCyw5WFxxxRVXXIkrrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccUVV8BwxRVXBiywHCxxxRVXXHHFlbjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVdcAcMVV1xxxRVX4sqABZaDxRVX4oorrrjiiitxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdcccWVuOKKK6644koGLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXHEFDFdcccUVV1yJK6644oorA5bAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlWgxYIHlYHHFFVfiiiuuuOKKK3HFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrrgyYBEDloPFFVdccSWuuOKKK664EldccWXAAsvBEldcccUVV1yJK6644oorrsSVAQssB4srrsQVV1xxxRVXooUrrrjiyoAFlhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644oorccUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBItXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXXIkrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WaOGKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVXXAFjwALLweKKK67EFVdcccUVV+KKK664MmCBJQeLK6644oorccUVV1xxxZW44sqABZaDxZW44oorrrjiSlxxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1xxBQxXXHHFlQELLDlYXHHFFVdciSuuuOKKK67EFVcGLLAcLK7EFVdcccUVV+KKK6644oorGbDAcrC44oorccUVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbhKByxP4BP6hFxxxRVX4oorrrjiiitxxRVXzRmwwHKwuOKKK67EFVdcccUVV+KKK64MWGA5WOKKK6644oorccUVV1xxxZW4MmCB5WBxxZW44oorrrjiSlxxxRVXXBmwwCLGweKKK6644kpcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuRAtXXHFlwALLwRJXXHHFFVdciSuuuOKKK67ElQELLAeLK67EFVdcccUVV+KKK6644sqAJbAcLK644oorccUVV1xxxRVX4oorAxZYDhZX4oorrrjiiitxxRVXXHHFlQxYYDlYXHHFlbjiiiuuuOJKXHHFFVcGLLDkYHHFFVdccSVauOKKK6644kpcGbDAcrC44kpcccUVV1xxJa644oorrgxYAsvB4oorrrgSV1xxxRVXXIkrrrgyYIHlYIkrrrjiiiuuuBJXXHHFFVdcyYAFloPFFVdciSuuuOKKK67EFVdccWXAAksOFldcccUVV+KKK6644oorccWVAQssB4sr0cIVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdccSWuDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLgSV1xxxRVXXIkrrrjiiiuuDFi4gOVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFlbjiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxJQMWWA4WV1xxJa644oorrrjiChiuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBS2A5WFxxxRVX4oorrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccWVuOKKK64MWGDJweKKK6644oorYLjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrrgSV1xxxRVXXMmABZaD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iiuuuOJKXHHFlQELLAdLXHHFFVdcccWVuOKKK6644koGLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXHEFDFdcccUVV1yJK6644oorA5bAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlWgxYIHlYHHFFVfiiiuuuOKKK3HFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrrgyYBEDloPFFVdccSWuuOKKK664EldccWXAAsvBEldcccUVV1yJK6644oorrsSVAQssB4srrsQVV1xxxRVXooUrrrjiyoAFlhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644oorccUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBItXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXXIkrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WaOGKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVXXAFjwALLweKKK67EFVdcccUVV+KKK664MmCBJQeLK6644oorccUVV1xxxZW44sqABZaDxZW44oorrrjiSlxxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1xxBQxXXHHFlQELLDlYXHHFFVdciSuuuOKKK67EFVcGLLAcLK7EFVdcccUVV+KKK6644oorGbDAcrC44oorccUVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbhKByxP4BP6hFxxxRVX4oorrrjiiitxxRVXzRmwwHKwuOKKK67EFVdcccUVV+KKK64MWGA5WOKKK6644oorccUVV1xxxZW4MmCB5WBxxZW44oorrrjiSlxxxRVXXBmwwCLGweKKK6644kpcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuRAtXXHFlwALLwRJXXHHFFVdciSuuuOKKK67ElQELLAeLK67EFVdcccUVV+KKK6644sqAJbAcLK644oorccUVV1xxxRVX4oorAxZYDhZX4oorrrjiiitxxRVXXHHFlQxYYDlYXHHFlbjiiiuuuOJKXHHFFVcGLLDkYHHFFVdccSVauOKKK6644kpcGbDAcrC44kpcccUVV1xxJa644oorrgxYAsvB4oorrrgSV1xxxRVXXIkrrrgyYIHlYIkrrrjiiiuuuBJXXHHFFVdcyYAFloPFFVdciSuuuOKKK67EFVdccWXAAksOFldcccUVV+KKK6644oorccWVAQssB4sr0cIVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdccSWuDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLgSV1xxxRVXXIkrrrjiiiuuDFi4gOVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFlbjiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxJQMWWA4WV1xxJa644oorrrjiChiuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBS2A5WFxxxRVX4oorrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccWVuOKKK64MWGDJweKKK6644oorYLjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK66A4YorrrjiiitxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcGLGLAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXHEFDFdccWXAAsvBEldcccUVV1yJK6644oorrsSVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxxRUwXHHFFVdccSWuDFhgOVhccSWuuOKKK664EldcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVXXIkrrrjiiiuuZMACy8HiiiuuxBVXXHHFFVfiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8UVV8BwxRVXXHHFlbjiiiuuuDJgCSwHiyuuuOJKXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJFgMWWA4WV1xxJa644oorrrgSV1xxxZUBCyw5WFxxxRVXXIkrrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKwMWMWA5WFxxxRVX4oorrrjiiitxxRVXBiywHCxxxRVXXHHFlbjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSVauOKKK64MWGDJweKKK6644kpcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuuBJXXHFlwALLwRJXXHHFFVdciSuuuOKKK67ElQELLAeLK67EFVdcccUVV+KKK6644sqAJbAcLK644oor0cIVV1xxxRVX4oorAxZYDhZX4oorrrjiiitxxRVXXHHFlQxYYDlYXHHFlbjiiiuuuOJKXHHFFVcGLLDkYHHFFVdcccWVuOKKK6644kpcGbDAcrC44kpcccUVV1xxJa644oorrgxYAsvB4oorrrgSV1xxxRVXXIkrrrgyYIHlYIkWrrjiiiuuuBJXXHHFFVdcyYAFloPFFVdciSuuuOKKK67EFVdccWXAAksOFldcccUVV+KKK6644oorccWVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdcccUVMAYssBwsrrjiSlxxxRVXXHElrrjiiisDFlhysLjiiiuuuBJXXHHFFVdciSuuDFhgOVhciSuuuOKKK67EFVdcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFFVfAcMUVV1wZsMCSg8UVV1xxxZW44oorrrjiSlxxZcACy8HiSlxxxRVXXHElrrjiiiuuuJIBCywHiyuuuBJXXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJq3TA8gQ+oU/IFVdccSWuuOKKK664EldccdWcAQssB4srrrjiSlxxxRVXXHElrrjiyoAFloMlrrjiiiuuuBJXXHHFFVdciSsDFlgOFldciSuuuOKKK67EFVdcccWVAQssYhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kq0cMUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBJXXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXooUrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WuOKKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuBItXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVX4sqABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK3HFFVdcccWVuOKKK6644sqAhQtYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1yJK6644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcyYIHlYHHFFVfiiiuuuOKKK66A4YorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbAEloPFFVdccSWuuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXIkrrrjiyoAFlhwsrrjiiiuuuAKGK6644oorrsSVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLjiChiuuOKKK664EldcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiiuuxBVXXHHFFVfiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxZcAiBiwHiyuuuOJKXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBCyw5WFxxxRVXXIkrrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccUVV8BwxRVXBiywHCxxxRVXXHHFlbjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVdcAcMVV1xxxRVX4sqABZaDxRVX4oorrrjiiitxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdcccWVuOKKK6644koGLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXHEFDFdcccUVV1yJK6644oorA5bAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlWgxYIHlYHHFFVfiiiuuuOKKK3HFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrrgyYBEDloPFFVdccSWuuOKKK664EldccWXAAsvBEldcccUVV1yJK6644oorrsSVAQssB4srrsQVV1xxxRVXooUrrrjiyoAFlhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644oorccUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBItXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXXIkrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WaOGKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVXXAFjwALLweKKK67EFVdcccUVV+KKK664MmCBJQeLK6644oorccUVV1xxxZW44sqABZaDxZW44oorrrjiSlxxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1xxBQxXXHHFlQELLDlYXHHFFVdciSuuuOKKK67EFVcGLLAcLK7EFVdcccUVV+KKK6644oorGbDAcrC44oorccUVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbhKByxP4BP6hFxxxRVX4oorrrjiiitxxRVXzRmwwHKwuOKKK67EFVdcccUVV+KKK64MWGA5WOKKK6644oorccUVV1xxxZW4MmCB5WBxxZW44oorrrjiSlxxxRVXXBmwwCLGweKKK6644kpcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuRAtXXHFlwALLwRJXXHHFFVdciSuuuOKKK67ElQELLAeLK67EFVdcccUVV+KKK6644sqAJbAcLK644oorccUVV1xxxRVX4oorAxZYDhZX4oorrrjiiitxxRVXXHHFlQxYYDlYXHHFlbjiiiuuuOJKXHHFFVcGLLDkYHHFFVdccSVauOKKK6644kpcGbDAcrC44kpcccUVV1xxJa644oorrgxYAsvB4oorrrgSV1xxxRVXXIkrrrgyYIHlYIkrrrjiiiuuuBJXXHHFFVdcyYAFloPFFVdciSuuuOKKK67EFVdccWXAAksOFldcccUVV+KKK6644oorccWVAQssB4sr0cIVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdccSWuDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLgSV1xxxRVXXIkrrrjiiiuuDFi4gOVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFlbjiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxJQMWWA4WV1xxJa644oorrrjiChiuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBS2A5WFxxxRVX4oorrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccWVuOKKK64MWGDJweKKK6644oorYLjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK66A4YorrrjiiitxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcGLGLAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXHEFDFdccWXAAsvBEldcccUVV1yJK6644oorrsSVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxxRUwXHHFFVdccSWuDFhgOVhccSWuuOKKK664EldcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVXXIkrrrjiiiuuZMACy8HiiiuuxBVXXHHFFVfiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8UVV8BwxRVXXHHFlbjiiiuuuDJgCSwHiyuuuOJKXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJFgMWWA4WV1xxJa644oorrrgSV1xxxZUBCyw5WFxxxRVXXIkrrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKwMWMWA5WFxxxRVX4oorrrjiiitxxRVXBiywHCxxxRVXXHHFlbjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSVauOKKK64MWGDJweKKK6644kpcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuuBJXXHFlwALLwRJXXHHFFVdciSuuuOKKK67ElQELLAeLK67EFVdcccUVV+KKK6644sqAJbAcLK644oor0cIVV1xxxRVX4oorAxZYDhZX4oorrrjiiitxxRVXXHHFlQxYYDlYXHHFlbjiiiuuuOJKXHHFFVcGLLDkYHHFFVdcccWVuOKKK6644kpcGbDAcrC44kpcccUVV1xxJa644oorrgxYAsvB4oorrrgSV1xxxRVXXIkrrrgyYIHlYIkWrrjiiiuuuBJXXHHFFVdcyYAFloPFFVdciSuuuOKKK67EFVdccWXAAksOFldcccUVV+KKK6644oorccWVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOJKXHHFFVdcccUVMAYssBwsrrjiSlxxxRVXXHElrrjiiisDFlhysLjiiiuuuBJXXHHFFVdciSuuDFhgOVhciSuuuOKKK67EFVdcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiitxxRVXXHHFFVfAcMUVV1wZsMCSg8UVV1xxxZW44oorrrjiSlxxZcACy8HiSlxxxRVXXHElrrjiiiuuuJIBCywHiyuuuBJXXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJq3TA8gQ+oU/IFVdccSWuuOKKK664EldccdWcAQssB4srrrjiSlxxxRVXXHElrrjiyoAFloMlrrjiiiuuuBJXXHHFFVdciSsDFlgOFldciSuuuOKKK67EFVdcccWVAQssYhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kq0cMUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBJXXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXooUrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WuOKKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuBItXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVX4sqABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVfiiiuuuOKKK3HFlQELLAeLK3HFFVdcccWVuOKKK6644sqAhQtYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1yJK6644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXIkrrrjiiiuuxBVXXHHFFVcyYIHlYHHFFVfiiiuuuOKKK66A4YorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgyYIHlYHHFlbjiiiuuuOJKXHHFFVdcGbAEloPFFVdccSWuuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrriSAQssB4srrrgSV1xxxRVXXIkrrrjiyoAFlhwsrrjiiiuuuAKGK6644oorrsSVAQssB4srrsQVV1xxxRVX4oorrrjiyoAlsBwsrrjiiitxxRVXXHHFlbjiiisDFlgOlrjiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644kpcccUVVwYssORgccUVV1xxJa644oorrrgSV1wZsMBysLjiChiuuOKKK664EldcccUVVwYsgeVgccUVV1yJK6644oorrsQVV1wZsMBysMQVV1xxxRVX4oorrrjiiitxZcACy8HiiiuuxBVXXHHFFVfiiiuuuDJggSUHiyuuuOKKK3HFFVdcccWVuOLKgAWWg8WVuOKKK6644kpcccUVV1xxZcAiBiwHiyuuuOJKXHHFFVdccSWuuOLKgAWWgyWuuOKKK664EldcccUVV1yJKwMWWA4WV1yJK6644oorrsQVV1xxxZUBCyw5WFxxxRVXXIkrrrjiiiuuxBVXBiywHCyuxBVXXHHFFVfiiiuuuOKKKxmwwHKwuOKKK3HFFVdcccUVV8BwxRVXBiywHCxxxRVXXHHFlbjiiiuuuOJKXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1xxJa64MmCB5WBxJa644oorrrgSV1xxxRVXXMmABZaDxRVXXIkrrrjiiiuuxBVXXHFlwAJLDhZXXHHFFVdcAcMVV1xxxRVX4sqABZaDxRVX4oorrrjiiitxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdcccWVuOKKK6644koGLLAcLK644kpcccUVV1xxJa644oorAxZYcrC44oorrrgSV1xxxRVXXIkrrgxYYDlYXHEFDFdcccUVV1yJK6644oorA5bAcrC44oorrsQVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlWgxYIHlYHHFFVfiiiuuuOKKK3HFFVdcGbDAkoPFFVdcccWVuOKKK6644kpccWXAAsvB4kpcccUVV1xxJa644oorrrgyYBEDloPFFVdccSWuuOKKK664EldccWXAAsvBEldcccUVV1yJK6644oorrsSVAQssB4srrsQVV1xxxRVXooUrrrjiyoAFlhwsrrjiiiuuxBVXXHHFFVfiiisDFlgOFlfiiiuuuOKKK3HFFVdcccWVDFhgOVhcccWVuOKKK6644oorccUVVwYssBwsccUVV1xxxZW44oorrrjiSlwZsMBysLjiSlxxxRVXXHElrrjiiiuuDFgCy8HiiiuuuBItXHHFFVdccSWuuDJggeVgcSWuuOKKK664EldcccUVV1zJgAWWg8UVV1yJK6644oorrsQVV1xxZcACSw4WV1xxxRVXXIkrrrjiiiuuxJUBCywHiyuuxBVXXHHFFVfiiiuuuOLKgCWwHCyuuOKKK3HFFVdcccWVuOKKKwMWWA6WaOGKK6644oorccUVV1xxxZUMWGA5WFxxxZW44oorrrjiSlxxxRVXBiyw5GBxxRVXXHElrrjiiiuuuBJXXBmwwHKwuOJKXHHFFVdccSWuuOKKK64MWALLweKKK664EldcccUVV1yJK664MmCB5WCJK6644oorrsQVV1xxxRVXXAFjwALLweKKK67EFVdcccUVV+KKK664MmCBJQeLK6644oorccUVV1xxxZW44sqABZaDxZW44oorrrjiSlxxxRVXXHFlwBJYDhZXXHHFlbjiiiuuuOJKXHHFlQELLAdLXHHFFVdccSWuuOKKK664ElcGLLAcLK64EldcccUVV1xxBQxXXHHFlQELLDlYXHHFFVdciSuuuOKKK67EFVcGLLAcLK7EFVdcccUVV+KKK6644oorGbDAcrC44oorccUVV1xxxRVX4oorrgxYYDlY4oorrrjiiitxxRVXXHHFlbgKOxRexWU5PAq8AAAAAElFTkSuQmCC"
 
+    /// The inline photo, plus one real attachment, for the message that has attachments.
+    static let fileAttachments = """
+    <t:FileAttachment>
+      <t:AttachmentId Id="att-photo"/>
+      <t:Name>photo.png</t:Name>
+      <t:ContentType>image/png</t:ContentType>
+      <t:ContentId>photo@mock</t:ContentId>
+      <t:IsInline>true</t:IsInline>
+    </t:FileAttachment>
+    <t:FileAttachment>
+      <t:AttachmentId Id="att-notes"/>
+      <t:Name>Review notes.txt</t:Name>
+      <t:ContentType>text/plain</t:ContentType>
+      <t:Size>\(notesText.utf8.count)</t:Size>
+      <t:IsInline>false</t:IsInline>
+    </t:FileAttachment>
+    """
+
+    static let notesText = "Design review notes (sample)\n\n1. Chip height on compact density.\n2. Keep or drop the divider.\n"
+
     static let logoPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAHgAAAAYCAIAAAC+8q7fAAAAW0lEQVR42u3ZMREAEACFYU1E0EcJLQQRSgmbBBpwFoP77v75Dd/6QixdDwoIQP8Fneo4lts8ZmcfaNCgQYMGDRoQaNCgQYMGDQg0aNCgQYMGBPonaCeTzxC07ltJ8elfIzIdLgAAAABJRU5ErkJggg=="
 
     static let attachment = """
@@ -383,6 +455,12 @@ enum MockFixtures {
                   <t:ContentType>image/png</t:ContentType>
                   <t:ContentId>photo@mock</t:ContentId>
                   <t:Content>\(photoPNGBase64)</t:Content>
+                </t:FileAttachment>
+                <t:FileAttachment>
+                  <t:AttachmentId Id="att-notes"/>
+                  <t:Name>Review notes.txt</t:Name>
+                  <t:ContentType>text/plain</t:ContentType>
+                  <t:Content>\(Data(notesText.utf8).base64EncodedString())</t:Content>
                 </t:FileAttachment>
               </m:Attachments>
             </m:GetAttachmentResponseMessage>
@@ -473,6 +551,51 @@ enum MockFixtures {
       </Response>
     </Autodiscover>
     """
+
+    /// The message the mock stream delivers.
+    static let arrival = Message(sender: "Omid Karimi", address: "omid@example.org",
+                                 subject: "Quick question about tomorrow's review",
+                                 preview: "Are we still on for 10:00? I can move it if the room is taken.",
+                                 hoursAgo: 0)
+
+    static let subscribe = """
+    <?xml version="1.0" encoding="utf-8"?>
+    <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+      <s:Body>
+        <m:SubscribeResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+          <m:ResponseMessages>
+            <m:SubscribeResponseMessage ResponseClass="Success">
+              <m:ResponseCode>NoError</m:ResponseCode>
+              <m:SubscriptionId>mock-subscription</m:SubscriptionId>
+            </m:SubscribeResponseMessage>
+          </m:ResponseMessages>
+        </m:SubscribeResponse>
+      </s:Body>
+    </s:Envelope>
+    """
+
+    /// One streaming envelope: a keep-alive, an event, or the server's Closed at timeout.
+    static func streamingEnvelope(event: String?, closed: Bool = false) -> String {
+        let notification = event.map {
+            """
+            <m:Notifications><m:Notification>\
+            <t:SubscriptionId>mock-subscription</t:SubscriptionId>\
+            <t:\($0)><t:TimeStamp>2026-09-24T12:00:00Z</t:TimeStamp>\
+            <t:ItemId Id="new" ChangeKey="ck"/><t:ParentFolderId Id="inbox" ChangeKey="f"/></t:\($0)>\
+            </m:Notification></m:Notifications>
+            """
+        } ?? ""
+        return """
+        <?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">\
+        <s:Body><m:GetStreamingEventsResponse \
+        xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" \
+        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"><m:ResponseMessages>\
+        <m:GetStreamingEventsResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode>\
+        \(notification)<m:ConnectionStatus>\(closed ? "Closed" : "OK")</m:ConnectionStatus>\
+        </m:GetStreamingEventsResponseMessage></m:ResponseMessages></m:GetStreamingEventsResponse>\
+        </s:Body></s:Envelope>
+        """
+    }
 
     static let fault = """
     <?xml version="1.0" encoding="utf-8"?>

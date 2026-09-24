@@ -40,6 +40,37 @@ final class MailStore {
     /// Set when Archive found no Archive folder. The popover asks before one is created.
     var pendingArchive: OpenMessage?
 
+    // MARK: Search (M8)
+
+    /// Whether the search field is showing, over the selected account's inbox.
+    var isSearchOpen = false
+    /// What is typed. Searching starts from two characters.
+    var searchQuery = ""
+    private(set) var searchPhase: SearchPhase = .idle
+    /// The account the current results belong to.
+    private(set) var searchAccountID: UUID?
+
+    enum SearchPhase: Equatable {
+        case idle
+        case searching
+        case results([MailMessage])
+        case failed(String)
+
+        var messages: [MailMessage] {
+            if case .results(let list) = self { return list }
+            return []
+        }
+    }
+
+    // MARK: New mail (M7)
+
+    /// Messages that arrived since the last poll, per account. Wired to notifications.
+    @ObservationIgnored var onNewMail: ((Account, [MailMessage]) -> Void)?
+    /// Every unread message id across accounts, after anything that can change it, so delivered
+    /// notifications for mail that has since been read or removed can be withdrawn.
+    @ObservationIgnored var onUnreadChanged: ((Set<String>) -> Void)?
+    @ObservationIgnored private var newMail = NewMailTracker()
+
     /// Pre-2013 servers only: previews built from text bodies, so a poll does not refetch them.
     @ObservationIgnored private var legacyPreviews: [String: String] = [:]
     /// Learned from each poll. Decides whether writes use the Exchange 2013 fields.
@@ -151,6 +182,8 @@ final class MailStore {
                 unreadCounts[id] = max(0, status.unreadCount + unreadDelta)
                 states[id] = .from(shown)
                 legacyPreviews.merge(previews) { _, new in new }
+                let fresh = newMail.newMessages(in: shown, account: id)
+                if !fresh.isEmpty { onNewMail?(account, fresh) }
             case .failure(let error):
                 states[id] = .from(error, host: account.host)
                 allHealthy = false
@@ -166,6 +199,7 @@ final class MailStore {
         // Edits made before this poll began are reflected in what the server just said.
         edits = edits.filter { $0.value.at >= started }
         lastRefresh = Date()
+        unreadChanged()
         return allHealthy
     }
 
@@ -195,8 +229,52 @@ final class MailStore {
 
     // MARK: - Opening and acting
 
+    /// A row from the inbox, or from the search results when it is only there (a search reaches
+    /// further back than the 50 newest).
     func message(_ id: String, in account: UUID) -> MailMessage? {
         state(for: account).messages.first { $0.id == id }
+            ?? (searchAccountID == account ? searchPhase.messages.first { $0.id == id } : nil)
+    }
+
+    private func unreadChanged() {
+        let unread = states.values.flatMap(\.messages).filter { !$0.isRead }.map(\.id)
+        onUnreadChanged?(Set(unread))
+    }
+
+    // MARK: - Searching
+
+    /// Runs the typed query against the server, for the selected account. A result that comes
+    /// back after the query changed is dropped, so fast typing never shows stale matches.
+    func runSearch() async {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2, let account = selectedAccount else {
+            searchPhase = .idle
+            return
+        }
+        guard let (url, credential) = connection(for: account.id) else {
+            searchPhase = .failed("The password for this account is missing. Enter it in Settings.")
+            return
+        }
+        searchPhase = .searching
+        searchAccountID = account.id
+        do {
+            let found = try await client.searchInbox(query, at: url, credential: credential,
+                                                     modern: isModern(account.id))
+            guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            searchPhase = .results(found)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            searchPhase = .failed(describe(error, accountID: account.id))
+        }
+    }
+
+    func closeSearch() {
+        isSearchOpen = false
+        searchQuery = ""
+        searchPhase = .idle
+        searchAccountID = nil
     }
 
     /// The endpoint and a fresh credential, read from the Keychain for this one call.
@@ -205,6 +283,11 @@ final class MailStore {
               let url = account.endpoint,
               let password = accounts.passwords.password(for: accountID) else { return nil }
         return (url, EWSCredential(username: account.username, password: password))
+    }
+
+    /// The Exchange version the last poll reported, or nil before the first answer.
+    func serverVersion(_ accountID: UUID) -> ServerVersion? {
+        versions[accountID]
     }
 
     func isModern(_ accountID: UUID) -> Bool {
@@ -309,36 +392,54 @@ final class MailStore {
 
     /// Delete and archive: the row leaves at once, and comes back where it was on failure.
     private func remove(_ id: String, in accountID: UUID, request: @escaping Request) async {
-        guard let (url, credential) = connection(for: accountID) else { return }
+        guard let (url, credential) = connection(for: accountID),
+              let removed = message(id, in: accountID) else { return }
         let messages = state(for: accountID).messages
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        let removed = messages[index]
-        var remaining = messages
-        remaining.remove(at: index)
-        states[accountID] = .from(remaining)
-        if !removed.isRead { unreadCounts[accountID] = max(0, (unreadCounts[accountID] ?? 0) - 1) }
+        let index = messages.firstIndex(where: { $0.id == id })
+        let searchBefore = searchPhase
+        if let index {
+            var remaining = messages
+            remaining.remove(at: index)
+            states[accountID] = .from(remaining)
+            if !removed.isRead { unreadCounts[accountID] = max(0, (unreadCounts[accountID] ?? 0) - 1) }
+        }
+        if case .results(let list) = searchPhase, searchAccountID == accountID {
+            searchPhase = .results(list.filter { $0.id != id })
+        }
         if openMessage?.messageID == id { openMessage = nil }
         edits[id] = Edit(removed: true, at: Date())
+
+        unreadChanged()
 
         do {
             try await request(client, url, credential, isModern(accountID))
             edits[id]?.at = Date()
         } catch {
             edits[id] = nil
-            var restored = state(for: accountID).messages
-            restored.insert(removed, at: min(index, restored.count))
-            states[accountID] = .from(restored)
-            if !removed.isRead { unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + 1 }
+            if let index {
+                var restored = state(for: accountID).messages
+                restored.insert(removed, at: min(index, restored.count))
+                states[accountID] = .from(restored)
+                if !removed.isRead { unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + 1 }
+            }
+            if searchAccountID == accountID, case .results = searchBefore { searchPhase = searchBefore }
             actionError = describe(error, accountID: accountID)
         }
     }
 
     private func replace(_ message: MailMessage, in accountID: UUID, unreadDelta: Int) {
+        if case .results(var list) = searchPhase, searchAccountID == accountID,
+           let index = list.firstIndex(where: { $0.id == message.id }) {
+            list[index] = message
+            searchPhase = .results(list)
+        }
         var messages = state(for: accountID).messages
-        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return }
-        messages[index] = message
-        states[accountID] = .from(messages)
-        unreadCounts[accountID] = max(0, (unreadCounts[accountID] ?? 0) + unreadDelta)
+        if let index = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[index] = message
+            states[accountID] = .from(messages)
+            unreadCounts[accountID] = max(0, (unreadCounts[accountID] ?? 0) + unreadDelta)
+        }
+        unreadChanged()
     }
 
     private func describe(_ error: Error, accountID: UUID) -> String {

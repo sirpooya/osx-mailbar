@@ -107,6 +107,11 @@ struct MessageReaderView: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
             }
+
+            if let files = loadedBody?.files, !files.isEmpty {
+                AttachmentStrip(files: files, accountID: accountID, store: store)
+                    .padding(.top, 4)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -226,5 +231,93 @@ struct MessageActionButtons: View {
         .buttonStyle(.plain)
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// The message's attachments, one chip each: click to open in the default app, right-click to
+/// open or save. Bytes are fetched on the click, not with the message (M9).
+struct AttachmentStrip: View {
+    let files: [FileAttachment]
+    let accountID: UUID
+    @Bindable var store: MailStore
+
+    @State private var busy: String?
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(files) { file in chip(file) }
+                }
+            }
+            if let problem {
+                Text(problem)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func chip(_ file: FileAttachment) -> some View {
+        Button {
+            Task { await fetch(file, save: false) }
+        } label: {
+            HStack(spacing: 5) {
+                if busy == file.id {
+                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 16, height: 16)
+                } else {
+                    Image(nsImage: Attachments.icon(for: file.name))
+                        .resizable()
+                        .frame(width: 16, height: 16)
+                }
+                Text(file.name)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 170, alignment: .leading)
+                if !file.sizeLabel.isEmpty {
+                    Text(file.sizeLabel)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy != nil)
+        .help("Open \(file.name)")
+        .contextMenu {
+            Button("Open") { Task { await fetch(file, save: false) } }
+            Button("Save As...") { Task { await fetch(file, save: true) } }
+        }
+    }
+
+    private func fetch(_ file: FileAttachment, save: Bool) async {
+        guard let (url, credential) = store.connection(for: accountID) else {
+            problem = "The password for this account is missing. Enter it in Settings."
+            return
+        }
+        busy = file.id
+        problem = nil
+        defer { busy = nil }
+        do {
+            let data = try await store.client.attachmentContent(id: file.id, at: url, credential: credential)
+            if save {
+                _ = try Attachments.save(data, named: file.name)
+            } else {
+                try Attachments.open(data, named: file.name)
+            }
+        } catch let error as EWSError {
+            problem = error.message(host: store.accounts.account(accountID)?.host ?? "The server")
+        } catch {
+            problem = "Could not \(save ? "save" : "open") \(file.name): \(error.localizedDescription)"
+        }
     }
 }

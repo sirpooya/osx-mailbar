@@ -255,6 +255,37 @@ enum SOAP {
         """
     }
 
+    // MARK: - Streaming notifications (M11)
+
+    /// A streaming subscription to the inbox. Every change that can alter the list or the count.
+    /// Needs Exchange 2010 SP1 or later.
+    static let subscribeToInbox = """
+        <m:Subscribe>
+          <m:StreamingSubscriptionRequest>
+            <t:FolderIds><t:DistinguishedFolderId Id="inbox"/></t:FolderIds>
+            <t:EventTypes>
+              <t:EventType>NewMailEvent</t:EventType>
+              <t:EventType>CreatedEvent</t:EventType>
+              <t:EventType>DeletedEvent</t:EventType>
+              <t:EventType>ModifiedEvent</t:EventType>
+              <t:EventType>MovedEvent</t:EventType>
+              <t:EventType>CopiedEvent</t:EventType>
+            </t:EventTypes>
+          </m:StreamingSubscriptionRequest>
+        </m:Subscribe>
+    """
+
+    /// Holds the connection open for up to `minutes` (EWS allows 1 to 30), writing an envelope
+    /// whenever events arrive, and a last one with `ConnectionStatus` Closed when time is up.
+    static func getStreamingEvents(subscription: String, minutes: Int) -> String {
+        """
+            <m:GetStreamingEvents>
+              <m:SubscriptionIds><t:SubscriptionId>\(escape(subscription))</t:SubscriptionId></m:SubscriptionIds>
+              <m:ConnectionTimeout>\(min(max(minutes, 1), 30))</m:ConnectionTimeout>
+            </m:GetStreamingEvents>
+        """
+    }
+
     static func escape(_ text: String) -> String {
         var out = ""
         out.reserveCapacity(text.count)

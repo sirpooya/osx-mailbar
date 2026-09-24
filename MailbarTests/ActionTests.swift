@@ -117,7 +117,8 @@ import Testing
         #expect(body.subject == message.subject)
         #expect(body.from?.name == message.senderName)
         #expect(body.to.map(\.address) == ["sample.user@example.com"])
-        #expect(body.inlineImages.map(\.contentID) == ["logo@mock", "photo@mock"])
+        #expect(body.inlineImages.map(\.contentID) == ["logo@mock"])
+        #expect(body.files.isEmpty)
 
         let images = try await store.client.inlineImages(body.inlineImages, at: url, credential: credential)
         let png = try #require(images["att-logo"])

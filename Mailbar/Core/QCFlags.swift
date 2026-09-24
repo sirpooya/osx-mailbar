@@ -11,8 +11,16 @@ import Foundation
 ///     Mailbar.app/Contents/MacOS/Mailbar --load-images      (remote images allowed from the start)
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
-    static var openPopover: Bool { has("--open-popover") || openMessage }
+    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil }
     static var openMessage: Bool { openMessageIndex != nil }
+    /// `--search=booking`: the popover with the search field open on that text.
+    static var searchText: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--search=") }.map { String($0.dropFirst("--search=".count)) }
+        #else
+        return nil
+        #endif
+    }
     /// `--open-message` opens the first message, `--open-message=5` the sixth.
     static var openMessageIndex: Int? {
         #if DEBUG

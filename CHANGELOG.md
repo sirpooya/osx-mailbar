@@ -21,6 +21,10 @@ section when a release is cut.
 - Mark as read or unread, flag, archive and delete, from the message toolbar, from buttons that appear when you hover a row, or by right-clicking. Delete moves mail to Deleted Items.
 - If your mailbox has no Archive folder yet, Mailbar asks before creating one.
 - Adding an account offers a password already saved in Keychain Access (by Outlook or Safari) for your email's domain: press Use It and macOS asks permission, so there is nothing to type.
+- New-mail notifications. Click one to open that message. Turn off Show sender and subject to have notifications name only the account.
+- Search the inbox: press Cmd+F or the magnifier and type. Results come from your server.
+- Attachments show under the message. Click one to open it, or right-click to save it.
+- Launch at login, in Settings, General.
 
 ### Changed
 - The new menu bar and app icons.

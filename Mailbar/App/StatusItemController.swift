@@ -120,6 +120,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         store.openMessage = nil
         store.pendingArchive = nil
+        store.closeSearch()
     }
 
     // MARK: - Icon

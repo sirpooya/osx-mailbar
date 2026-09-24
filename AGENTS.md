@@ -14,8 +14,8 @@ The Scope section below holds the exact in-scope and out-of-scope lists; it wins
 vaguer here.
 
 ## Scope
-v1 is built (M0 to M6, 2026-09-24). `PLAN.md`, which held the milestone order, was retired once
-every milestone landed; its history is in git.
+v1 is built (M0 to M6) and so is v1.1 (M7 to M10), 2026-09-24. `PLAN.md` holds the milestones,
+M11 still open. (It was briefly retired and the user asked for the milestones back.)
 
 ### Wanted (v1, built)
 - **Accounts in Settings**: add, edit, test, delete; several allowed. Adding needs only email and
@@ -39,12 +39,15 @@ every milestone landed; its history is in git.
 - Calendar, contacts, tasks, notes, directory (LDAP) lookup.
 - Offline mode, local search index, any disk cache.
 
-### Maybe later (not v1, ask before starting)
-- New-mail notification, click to open that message.
-- Search within the inbox.
-- Opening or saving attachments.
-- Launch at login.
-- EWS streaming notifications instead of polling.
+### Wanted (v1.1, built 2026-09-24, milestones M7 to M10 in `PLAN.md`)
+- **New-mail notifications** (M7): click one to open that message. Sender, subject and preview,
+  or only the account name when "Show sender and subject" is off.
+- **Search** (M8): a field under the header (Cmd+F), searching the server as you type.
+- **Attachments** (M9): chips under the reader's header; click to open, right-click to save.
+- **Launch at login** (M10): a switch in Settings, General.
+
+### Next (M11 in `PLAN.md`)
+- EWS streaming notifications instead of polling: instant mail, one idle connection.
 
 ### Still open (the user's steps)
 - Add the real account and press Sign In. This settles the user name format and the Exchange
@@ -233,6 +236,17 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   request) to find the EWS URL and display name, guesses the user name (short name, then the full
   address, keeping whichever the server accepts), and tests the connection. Server Details then
   opens, filled and editable; when Autodiscover is not available it opens empty, as before.
+- 2026-09-24 Notifications (M7): the first poll per account after launch is a silent baseline,
+  ids seen are kept in memory only, and each notification is withdrawn when its message is read,
+  archived or deleted anywhere. macOS stores delivered notifications on disk in Notification
+  Center; that is outside this app's control, which is why the details switch exists.
+- 2026-09-24 Attachments (M9) are the one sanctioned exception to "nothing on disk": Open writes
+  the file to `<tmp>/Mailbar Attachments/<uuid>/` (0700 folder, 0600 file) because another app can
+  only open a file, and the folder is deleted at quit and again at launch. Save writes where the
+  user picks. Bytes are fetched only when one of the two is pressed.
+- 2026-09-24 Search (M8) is server-side: `QueryString` (the server index Outlook uses) on 2013+,
+  a subject-or-body substring restriction on older servers. Results are in memory, the
+  selected account only, dropped when the popover closes. Actions on a result update it.
 - 2026-09-24 Remote images: blocked by a Content-Security-Policy written before the message's own
   markup (`ReaderHTML`), plus JS off and a non-persistent data store in the web view.
   `NSAllowsArbitraryLoadsInWebContent` is on so that "Load images" also works for plain-http
@@ -306,7 +320,7 @@ release notes, not a commit message. Skip pure refactors, formatting, and doc-on
 Releases are cut with the `release` skill.
 
 ## Working style
-- Read this file first, the Scope section above all.
+- Read this file first, the Scope section above all, then `PLAN.md` for what is next.
 - Never hardcode the user's data: no server URL, user name, email or name in code, fixtures,
   placeholders or defaults. Mock fixtures use invented names and `example.com`.
 - Never delete, archive, flag or change the read state of real mail during testing without
