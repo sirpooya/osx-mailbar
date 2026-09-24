@@ -25,6 +25,9 @@ final class AccountStore {
         self.accounts = accounts
     }
 
+    /// False in mock mode and tests: nothing about the session is written to UserDefaults.
+    var persists: Bool { defaults != nil }
+
     func account(_ id: UUID) -> Account? {
         accounts.first { $0.id == id }
     }
