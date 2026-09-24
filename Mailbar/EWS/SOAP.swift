@@ -75,6 +75,28 @@ enum SOAP {
         """
     }
 
+    /// Search (M8). Exchange 2013 and later: `QueryString`, the server's own search index, the
+    /// same one Outlook's search box uses, matching sender, subject and body. Older servers have
+    /// no query string, so a restriction matches the subject or the body as a substring.
+    static func searchInbox(_ text: String, limit: Int, modern: Bool) -> String {
+        let find = findInbox(limit: limit, modern: modern)
+        let query = escape(text)
+        if modern {
+            return find.replacingOccurrences(of: "</m:ParentFolderIds>",
+                                             with: "</m:ParentFolderIds>\n      <m:QueryString>\(query)</m:QueryString>")
+        }
+        let contains = { (field: String) in
+            """
+            <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">\
+            <t:FieldURI FieldURI="\(field)"/><t:Constant Value="\(query)"/></t:Contains>
+            """
+        }
+        let restriction = """
+              <m:Restriction><t:Or>\(contains("item:Subject"))\(contains("item:Body"))</t:Or></m:Restriction>
+        """
+        return find.replacingOccurrences(of: "      <m:SortOrder>", with: restriction + "\n      <m:SortOrder>")
+    }
+
     /// Plain-text bodies, for building a preview on a pre-2013 server. Only ever asked for the
     /// items whose preview is not already known, so a poll does not refetch fifty bodies.
     static func textBodies(ids: [String]) -> String {

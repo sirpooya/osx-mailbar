@@ -31,6 +31,28 @@ struct EWSClient: Sendable {
         return try EWSResponse.messages(from: data)
     }
 
+    /// Inbox search, newest first. See `SOAP.searchInbox` for how each server generation matches.
+    func searchInbox(_ text: String,
+                     at url: URL,
+                     credential: EWSCredential,
+                     modern: Bool,
+                     limit: Int = EWSClient.pageSize) async throws -> [MailMessage] {
+        let body = SOAP.searchInbox(text, limit: limit, modern: modern)
+        let data = try await send(SOAP.envelope(modern ? .exchange2013 : .exchange2010SP2, body: body),
+                                  to: url, credential: credential)
+        return try EWSResponse.messages(from: data)
+    }
+
+    /// One attachment's bytes, for opening or saving it. In memory until the caller hands them on.
+    func attachmentContent(id: String, at url: URL, credential: EWSCredential) async throws -> Data {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.getAttachments(ids: [id])),
+                                  to: url, credential: credential)
+        guard let bytes = try EWSResponse.attachmentContents(from: data)[id] else {
+            throw EWSError.invalidResponse("Exchange did not return the attachment.")
+        }
+        return bytes
+    }
+
     /// One-line previews built from text bodies, for servers without `item:Preview`.
     func previews(for ids: [String], at url: URL, credential: EWSCredential) async throws -> [String: String] {
         guard !ids.isEmpty else { return [:] }

@@ -67,6 +67,22 @@ struct MessageBody: Equatable, Sendable {
     let received: Date
     let html: String
     let inlineImages: [InlineImage]
+    /// Real attachments: everything that is not an image drawn inside the body.
+    var files: [FileAttachment] = []
+}
+
+/// A file attached to a message, as listed by `GetItem`. The bytes are fetched only when the user
+/// opens or saves it.
+struct FileAttachment: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let contentType: String
+    /// Bytes, as Exchange reports it. Zero when the server leaves it out.
+    let size: Int
+
+    var sizeLabel: String {
+        size > 0 ? ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) : ""
+    }
 }
 
 /// Reads EWS responses into the models above.
@@ -157,6 +173,22 @@ enum EWSResponse {
             return MessageBody.InlineImage(attachmentID: attachmentID, contentID: contentID, contentType: type)
         }
 
+        // Anything the body does not draw is a file the user can open. Outlook marks some inline
+        // images IsInline=false, so "drawn" means referenced as cid: in the HTML, not the flag.
+        let html = item.child("Body")?.text ?? ""
+        let drawn = Set(inline.map(\.attachmentID)).filter { id in
+            inline.first { $0.attachmentID == id }.map { html.localizedCaseInsensitiveContains("cid:\($0.contentID)") } ?? false
+        }
+        let files: [FileAttachment] = (item.child("Attachments")?.children ?? []).compactMap { attachment in
+            guard attachment.name == "FileAttachment",
+                  let attachmentID = attachment.child("AttachmentId")?.attributes["Id"],
+                  !drawn.contains(attachmentID) else { return nil }
+            return FileAttachment(id: attachmentID,
+                                  name: attachment.child("Name")?.trimmedText.nonEmpty ?? "Attachment",
+                                  contentType: attachment.child("ContentType")?.trimmedText ?? "",
+                                  size: attachment.child("Size").flatMap { Int($0.trimmedText) } ?? 0)
+        }
+
         return MessageBody(
             id: id,
             subject: item.child("Subject")?.trimmedText.nonEmpty ?? "(No subject)",
@@ -164,8 +196,9 @@ enum EWSResponse {
             to: people("ToRecipients"),
             cc: people("CcRecipients"),
             received: item.child("DateTimeReceived").flatMap { parseDate($0.trimmedText) } ?? .distantPast,
-            html: item.child("Body")?.text ?? "",
-            inlineImages: inline)
+            html: html,
+            inlineImages: inline,
+            files: files)
     }
 
     private static func person(_ mailbox: XMLTreeNode) -> MessageBody.Person {
