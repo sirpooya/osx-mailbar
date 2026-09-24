@@ -12,7 +12,17 @@ import Foundation
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
     static var openPopover: Bool { has("--open-popover") || openMessage }
-    static var openMessage: Bool { has("--open-message") }
+    static var openMessage: Bool { openMessageIndex != nil }
+    /// `--open-message` opens the first message, `--open-message=5` the sixth.
+    static var openMessageIndex: Int? {
+        #if DEBUG
+        if has("--open-message") { return 0 }
+        return CommandLine.arguments.first { $0.hasPrefix("--open-message=") }
+            .flatMap { Int($0.dropFirst("--open-message=".count)) }
+        #else
+        return nil
+        #endif
+    }
     static var openEditor: Bool { has("--open-editor") || editorSignIn || editorEmail }
     /// The add sheet, filled with the mock account's address and signed in, to photograph what
     /// Autodiscover fills in. Mock mode only.

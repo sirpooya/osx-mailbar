@@ -63,8 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if QCFlags.openMessage {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                     guard let self, let account = self.store.selectedAccount,
-                          let first = self.store.state(for: account.id).messages.first else { return }
-                    self.store.openMessage = .init(accountID: account.id, messageID: first.id)
+                          let index = QCFlags.openMessageIndex else { return }
+                    let messages = self.store.state(for: account.id).messages
+                    guard messages.indices.contains(index) else { return }
+                    self.store.openMessage = .init(accountID: account.id, messageID: messages[index].id)
                 }
             }
         }

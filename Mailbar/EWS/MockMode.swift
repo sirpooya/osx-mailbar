@@ -287,6 +287,7 @@ enum MockFixtures {
         let html = """
         <html><head><style>p { margin: 0 0 10px; }</style></head>
         <body dir="\(rtl ? "rtl" : "ltr")">
+        \(message.sender == "Newsletter" ? MockFixtures.wideNewsletter : "")
         <p>\(message.preview)</p>
         <p>\(rtl ? "با سپاس،" : "Thanks,")<br>\(message.sender)</p>
         <p><img src="cid:logo@mock" alt="logo" width="120" height="24"></p>
@@ -335,6 +336,15 @@ enum MockFixtures {
     static var pixelURL: String {
         ProcessInfo.processInfo.environment["MAILBAR_MOCK_PIXEL"] ?? "https://tracker.example.net/open.gif"
     }
+
+    /// A fixed 600px table with a 600x150 image slot, the shape real newsletters have, to check the
+    /// reader zooms it to fit without changing any proportions.
+    static let wideNewsletter = """
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#b8dcea"><tr><td align="center">
+    <img src="cid:logo@mock" width="600" height="120" alt="banner">
+    <p style="font-size:22px;margin:16px">A 600 pixel wide newsletter layout</p>
+    </td></tr></table>
+    """
 
     static let logoPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAHgAAAAYCAIAAAC+8q7fAAAAW0lEQVR42u3ZMREAEACFYU1E0EcJLQQRSgmbBBpwFoP77v75Dd/6QixdDwoIQP8Fneo4lts8ZmcfaNCgQYMGDRoQaNCgQYMGDQg0aNCgQYMGBPonaCeTzxC07ltJ8elfIzIdLgAAAABJRU5ErkJggg=="
 

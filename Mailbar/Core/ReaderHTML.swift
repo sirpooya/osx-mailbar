@@ -12,6 +12,11 @@ import Foundation
 ///
 /// DNS prefetch is switched off as well, because a prefetch leaks a lookup even when the load
 /// itself is blocked.
+///
+/// There is deliberately no image rule. Fitting a wide message is done by zooming the whole page
+/// (`MessageWebView.fitToWidth`), which scales every image by the same factor. An
+/// `img { height: auto }` rule, which this once had, overrode the message's own height attributes
+/// and could change an image's proportions from what the sender set.
 enum ReaderHTML {
 
     static func document(body html: String,
@@ -31,7 +36,6 @@ enum ReaderHTML {
           html { background: #ffffff; }
           body { margin: 12px 14px; color: #1d1d1f; font: 13px -apple-system, "Helvetica Neue", sans-serif;
                  overflow-wrap: anywhere; }
-          img { max-width: 100%; height: auto; }
           pre { white-space: pre-wrap; }
         </style>
         """

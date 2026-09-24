@@ -51,14 +51,37 @@ struct MessageWebView: NSViewRepresentable {
             #if DEBUG
             FileHandle.standardError.write(Data("[reader] loading \(html.utf8.count) bytes\n".utf8))
             #endif
+            // Measured afresh for every document ("Load images" reloads), so start from 1.
+            view.pageZoom = 1
             view.loadHTMLString(html, baseURL: nil)
         }
 
-        #if DEBUG
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            FileHandle.standardError.write(Data("[reader] didFinish\n".utf8))
+            Task { await fitToWidth(webView) }
         }
 
+        /// Zooms a fixed-width message out until it fits the reader, the way Mail does.
+        ///
+        /// Newsletters and HR mail are laid out as a 600px table; the reader is 380pt wide, so
+        /// without this the right side of the message sat off screen. `pageZoom` is browser zoom,
+        /// not a bitmap scale: the page lays out again at width / zoom, so text stays sharp and
+        /// a layout that can reflow still does.
+        ///
+        /// The width is read with one line of app-side script. That is not the page's script,
+        /// which stays off: `allowsContentJavaScript = false` governs the message's own code, and
+        /// this runs in the app's `.defaultClient` world, reading one number and changing nothing.
+        private func fitToWidth(_ webView: WKWebView) async {
+            let available = webView.bounds.width
+            guard available > 0,
+                  let measured = try? await webView.evaluateJavaScript(
+                      "document.documentElement.scrollWidth", in: nil, contentWorld: .defaultClient),
+                  let contentWidth = (measured as? NSNumber)?.doubleValue,
+                  contentWidth > available + 1 else { return }
+            // Floor, so a very wide message is scrollable rather than unreadably small.
+            webView.pageZoom = max(0.45, available / contentWidth)
+        }
+
+        #if DEBUG
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             FileHandle.standardError.write(Data("[reader] didFail \(error)\n".utf8))
         }
