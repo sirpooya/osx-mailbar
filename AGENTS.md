@@ -114,8 +114,17 @@ Mailbar/
 MailbarTests/            SOAP builder and response fixtures, relative time, account store
 ```
 Build: `xcodegen generate && xcodebuild -project Mailbar.xcodeproj -scheme Mailbar build`.
-Run: quit the running app first, then `open` the built bundle. Replacing the bundle under a
-running process invalidates its code signature.
+
+**The user runs `/Applications/Mailbar.app`, and asked (2026-09-24) for it to be rebuilt and
+relaunched from there after every change.** Every time:
+```bash
+xcodegen generate && xcodebuild -project Mailbar.xcodeproj -scheme Mailbar -configuration Release -derivedDataPath .dd build
+pkill -x Mailbar; sleep 1
+ditto .dd/Build/Products/Release/Mailbar.app /Applications/Mailbar.app && open /Applications/Mailbar.app
+```
+Quit first: replacing the bundle under a running process invalidates its code signature. Release
+is bundle id `in.pooya.mailbar`, with its own defaults and Keychain items; the mock and QC flags
+are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 
 ## Decisions (DECIDED, do not re-litigate unless you spot a real problem)
 - 2026-09-24 EWS, not Graph, not IMAP. The mailbox is on-prem Exchange and EWS is the endpoint
