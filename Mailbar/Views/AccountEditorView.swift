@@ -27,6 +27,12 @@ struct AccountEditorView: View {
     @State private var showsDetails: Bool
     /// Whether Autodiscover filled Server Details, so the footnote never claims it did otherwise.
     @State private var discovered = false
+    /// Logins already in the login Keychain for this address. Attributes only, no passwords.
+    @State private var savedLogins: [LoginKeychain.Item] = []
+    /// The saved login the password field was filled from, if any.
+    @State private var usedLogin: LoginKeychain.Item?
+    /// Mock mode never reads the real Keychain.
+    private let loginKeychain: any SavedLogins = MockMode.current != nil ? MockSavedLogins() : LoginKeychain()
 
     private enum TestResult: Equatable {
         case success(String)
@@ -69,6 +75,8 @@ struct AccountEditorView: View {
                                  secure: true)
             }
 
+            if isNew { savedLoginLine }
+
             if showsDetails { details }
 
             if let result {
@@ -85,11 +93,64 @@ struct AccountEditorView: View {
         .padding(SettingsMetrics.bodyHPadding)
         .frame(width: SettingsMetrics.windowWidth + 40)
         .animation(.snappy(duration: 0.25), value: showsDetails)
+        .task(id: draft.email) {
+            guard isNew else { return }
+            // Settle on the address before looking, not on every keystroke.
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            savedLogins = loginKeychain.items(forEmail: draft.email)
+            if let usedLogin, !savedLogins.contains(usedLogin) {
+                self.usedLogin = nil
+                password = ""
+            }
+        }
+        .onChange(of: password) {
+            if password.isEmpty { usedLogin = nil }
+        }
         .task {
-            guard isNew, QCFlags.editorSignIn else { return }
+            guard isNew else { return }
+            if QCFlags.editorEmail { draft.email = MockMode.accounts[0].email }
+            guard QCFlags.editorSignIn else { return }
             draft.email = MockMode.accounts[0].email
             password = "mock"
             await signIn()
+        }
+    }
+
+    /// "Keychain Access has a saved password for mail.example.com. Use It", under the password
+    /// field. Pressing Use It is what reads the password, and macOS asks first.
+    @ViewBuilder
+    private var savedLoginLine: some View {
+        if let usedLogin, !password.isEmpty {
+            Label("Using the password saved in Keychain Access for \(usedLogin.server).",
+                  systemImage: "key.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, SettingsMetrics.rowHPadding)
+        } else if password.isEmpty, let first = savedLogins.first {
+            HStack(spacing: 8) {
+                Label(savedLogins.count == 1
+                          ? "Keychain Access has a saved password for \(first.server)."
+                          : "Keychain Access has \(savedLogins.count) saved passwords for this address.",
+                      systemImage: "key.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if savedLogins.count == 1 {
+                    Button("Use It") { Task { await use(first) } }
+                } else {
+                    Menu("Use One") {
+                        ForEach(savedLogins) { item in
+                            Button("\(item.server) (\(item.account))") { Task { await use(item) } }
+                        }
+                    }
+                    .fixedSize()
+                }
+            }
+            .controlSize(.small)
+            .disabled(isWorking)
+            .padding(.horizontal, SettingsMetrics.rowHPadding)
         }
     }
 
@@ -226,6 +287,22 @@ struct AccountEditorView: View {
             result = .failure("\(reason) Enter the server below.")
         } catch {
             result = .failure("That does not look like an email address.")
+        }
+    }
+
+    /// Reads the chosen login's password off the main thread, since macOS holds the call while
+    /// it asks permission. The password goes into the field and nowhere else until Save.
+    private func use(_ item: LoginKeychain.Item) async {
+        let source = loginKeychain
+        do {
+            let secret = try await Task.detached { try source.password(for: item) }.value
+            password = secret
+            usedLogin = item
+            result = nil
+        } catch let error as LoginKeychain.LookupError {
+            result = .failure(error.message)
+        } catch {
+            result = .failure(error.localizedDescription)
         }
     }
 

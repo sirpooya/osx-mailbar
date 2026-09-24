@@ -254,6 +254,12 @@ No telemetry, no analytics. Network calls, exhaustively:
   no DNS SRV lookup.
 - Remote images inside a message, only when the user clicks "Load images" for that message.
 
+Reading the login Keychain: while adding an account, the sheet looks up internet-password items
+for the address's user names, on the email's own domain only, attributes only (no prompt, no
+secret read). A password is read only when the user presses Use It, behind macOS's own permission
+prompt, and it goes into the password field and nowhere else until Save
+(`Accounts/LoginKeychain.swift`, adapted from osx-autoconnect).
+
 Passwords live only in the Keychain. Never log a password, an `Authorization` header or a message
 body, not even in DEBUG.
 

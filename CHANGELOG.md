@@ -20,6 +20,7 @@ section when a release is cut.
 - Click a message to read it in the popover. Opening it marks it read. Remote images stay blocked until you click Load images, so tracking pixels cannot report that you opened it.
 - Mark as read or unread, flag, archive and delete, from the message toolbar, from buttons that appear when you hover a row, or by right-clicking. Delete moves mail to Deleted Items.
 - If your mailbox has no Archive folder yet, Mailbar asks before creating one.
+- Adding an account offers a password already saved in Keychain Access (by Outlook or Safari) for your email's domain: press Use It and macOS asks permission, so there is nothing to type.
 
 ### Changed
 - The new menu bar and app icons.

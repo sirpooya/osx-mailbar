@@ -13,9 +13,12 @@ enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
     static var openPopover: Bool { has("--open-popover") || openMessage }
     static var openMessage: Bool { has("--open-message") }
-    static var openEditor: Bool { has("--open-editor") || editorSignIn }
+    static var openEditor: Bool { has("--open-editor") || editorSignIn || editorEmail }
     /// The add sheet, filled with the mock account's address and signed in, to photograph what
     /// Autodiscover fills in. Mock mode only.
+    /// The add sheet with the mock account's address typed in and nothing else, to photograph the
+    /// saved-login offer. Mock mode only.
+    static var editorEmail: Bool { has("--editor-email") && MockMode.current != nil }
     static var editorSignIn: Bool { has("--editor-signin") && MockMode.current != nil }
     /// Opens messages with remote images already allowed: the positive control for the pixel
     /// test (a blocked load only proves something if an allowed one is seen to arrive).

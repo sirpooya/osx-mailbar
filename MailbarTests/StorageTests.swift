@@ -74,3 +74,31 @@ import Testing
         #expect(passwords.password(for: account.id) == nil)
     }
 }
+
+@Suite struct LoginKeychainTests {
+    private typealias Item = LoginKeychain.Item
+
+    @Test func onlyLoginsOnTheEmailDomainAreOffered() {
+        #expect(LoginKeychain.isOnDomain("mail.example.com", "example.com"))
+        #expect(LoginKeychain.isOnDomain("Example.com", "example.com"))
+        #expect(!LoginKeychain.isOnDomain("example.com.evil.test", "example.com"))
+        #expect(!LoginKeychain.isOnDomain("notexample.com", "example.com"))
+    }
+
+    @Test func newestFirstOneRowPerLogin() {
+        let mail = Item(server: "mail.example.com", account: "some.one")
+        let owa = Item(server: "owa.example.com", account: "some.one@example.com")
+        let elsewhere = Item(server: "shop.example.net", account: "some.one")
+        let ranked = LoginKeychain.rank([(mail, .distantPast),
+                                         (elsewhere, .now),
+                                         (owa, Date(timeIntervalSince1970: 100)),
+                                         (mail, Date(timeIntervalSince1970: 50))],
+                                        domain: "example.com")
+        #expect(ranked == [owa, mail])
+    }
+
+    @Test func mockModeOffersOneLoginForTheSampleAccount() {
+        #expect(MockSavedLogins().items(forEmail: MockMode.accounts[0].email).count == 1)
+        #expect(MockSavedLogins().items(forEmail: "someone@example.org").isEmpty)
+    }
+}
