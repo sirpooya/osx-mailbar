@@ -30,4 +30,5 @@ section when a release is cut.
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
 - A mistyped password costs at most one failed logon per user name tried, not one per authentication scheme, so Sign In no longer risks locking the domain account.
 - Wide emails such as newsletters now zoom out to fit the reader instead of running off the right edge. Images keep the proportions the sender gave them.
+- Large images in an email now shrink to fit the reader, keeping their shape, so there is no sideways scrolling.
 

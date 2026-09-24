@@ -60,26 +60,62 @@ struct MessageWebView: NSViewRepresentable {
             Task { await fitToWidth(webView) }
         }
 
-        /// Zooms a fixed-width message out until it fits the reader, the way Mail does.
+        /// Makes the message fit the reader's width with no sideways scroll, the way Mail does.
         ///
-        /// Newsletters and HR mail are laid out as a 600px table; the reader is 380pt wide, so
-        /// without this the right side of the message sat off screen. `pageZoom` is browser zoom,
-        /// not a bitmap scale: the page lays out again at width / zoom, so text stays sharp and
-        /// a layout that can reflow still does.
+        /// Two kinds of wide content need different treatment:
+        /// - **Large images** (a 1600px photo in an otherwise plain email). These are shrunk to the
+        ///   width the rest of the message occupies, with width AND height set together from the
+        ///   image's rendered size, so each keeps exactly the proportions the sender gave it,
+        ///   spacers and deliberately stretched images included.
+        /// - **Fixed-width layouts** (a 600px newsletter table). These are zoomed as a whole with
+        ///   `pageZoom`, which is browser zoom, not a bitmap scale: the page lays out again at
+        ///   width / zoom, so text stays sharp and everything shrinks by the same factor.
         ///
-        /// The width is read with one line of app-side script. That is not the page's script,
-        /// which stays off: `allowsContentJavaScript = false` governs the message's own code, and
-        /// this runs in the app's `.defaultClient` world, reading one number and changing nothing.
+        /// Images go first, because a large image is what made a plain email look like a wide layout
+        /// and pushed the zoom to its floor, leaving a sideways scroll (reported 2026-09-24).
+        ///
+        /// This is the app's own script, in the `.defaultClient` world, not the page's: the
+        /// message's code stays off (`allowsContentJavaScript = false`).
         private func fitToWidth(_ webView: WKWebView) async {
             let available = webView.bounds.width
             guard available > 0,
                   let measured = try? await webView.evaluateJavaScript(
-                      "document.documentElement.scrollWidth", in: nil, contentWorld: .defaultClient),
+                      Self.fitImagesScript, in: nil, contentWorld: .defaultClient),
                   let contentWidth = (measured as? NSNumber)?.doubleValue,
                   contentWidth > available + 1 else { return }
-            // Floor, so a very wide message is scrollable rather than unreadably small.
+            // Floor, so a very wide layout scrolls rather than turning unreadably small.
             webView.pageZoom = max(0.45, available / contentWidth)
         }
+
+        /// Shrinks every image wider than the message's own layout to that layout's width,
+        /// proportionally, and returns the document width that is left for the zoom.
+        ///
+        /// The layout width is measured with the oversized images taken out, so a 600px table
+        /// keeps its 600px banner untouched, while a lone photo in a plain email is fitted to the
+        /// text column.
+        static let fitImagesScript = """
+        (() => {
+          const root = document.documentElement, body = document.body;
+          if (!body) { return root.scrollWidth; }
+          const viewport = root.clientWidth, column = body.clientWidth;
+          const big = Array.from(document.images).filter(i => i.getBoundingClientRect().width > column + 0.5);
+          if (big.length === 0) { return root.scrollWidth; }
+          const sizes = big.map(i => { const r = i.getBoundingClientRect(); return [r.width, r.height]; });
+          big.forEach(i => i.style.setProperty('display', 'none', 'important'));
+          const layout = root.scrollWidth;
+          const cap = layout <= viewport + 1 ? column : layout - body.offsetLeft;
+          big.forEach((img, k) => {
+            img.style.removeProperty('display');
+            const [w, h] = sizes[k];
+            if (w > cap) {
+              img.style.setProperty('width', cap + 'px', 'important');
+              img.style.setProperty('height', (h * cap / w) + 'px', 'important');
+              img.style.setProperty('max-width', 'none', 'important');
+            }
+          });
+          return root.scrollWidth;
+        })()
+        """
 
         #if DEBUG
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
