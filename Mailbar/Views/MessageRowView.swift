@@ -30,10 +30,12 @@ struct MessageRowView: View {
             VStack(alignment: .leading, spacing: Metrics.lineSpacing) {
                 DirectionalText(message.senderName,
                                 font: .system(size: 13, weight: message.isRead ? .regular : .semibold))
+                    .foregroundStyle(.primary)
 
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     DirectionalText(message.subject,
                                     font: .system(size: 12, weight: message.isRead ? .regular : .medium))
+                        .foregroundStyle(.primary)
                     trailingMarks
                 }
 
@@ -99,10 +101,15 @@ struct MessageRowView: View {
     }
 }
 
-/// One line of text laid out in the direction its own content implies.
+/// One line of text placed on the side its own content implies.
 ///
-/// Setting the layout direction per line, rather than per row, is what lets a Persian subject sit
-/// right aligned beside a left-to-right time, and a Persian preview under an English sender.
+/// Right-to-left text is pinned to the trailing edge with a plain frame alignment. It is NOT done
+/// with `.environment(\.layoutDirection, .rightToLeft)`: that also flips the view's leading
+/// alignment guide, and the row's stacks line their children up by that guide, so one Persian line
+/// dragged its neighbours across (measured 2026-09-24: the time jumped to the left edge on a row
+/// whose sender and subject were both Persian). The text itself needs no help: its paragraph
+/// direction comes from its first strong character, so a Persian line still reads right to left
+/// and still truncates at its left end.
 struct DirectionalText: View {
     let text: String
     let font: Font
@@ -112,8 +119,8 @@ struct DirectionalText: View {
         self.font = font
     }
 
-    private var direction: LayoutDirection {
-        TextDirection.firstStrong(in: text) == .rightToLeft ? .rightToLeft : .leftToRight
+    private var isRightToLeft: Bool {
+        TextDirection.firstStrong(in: text) == .rightToLeft
     }
 
     var body: some View {
@@ -121,7 +128,7 @@ struct DirectionalText: View {
             .font(font)
             .lineLimit(1)
             .truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.layoutDirection, direction)
+            .multilineTextAlignment(isRightToLeft ? .trailing : .leading)
+            .frame(maxWidth: .infinity, alignment: isRightToLeft ? .trailing : .leading)
     }
 }

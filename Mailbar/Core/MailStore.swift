@@ -120,6 +120,9 @@ final class MailStore {
             case .failure(let error):
                 states[id] = .from(error, host: account.host)
                 allHealthy = false
+            case .cancelled:
+                // Not an answer about the mailbox, so it changes nothing on screen.
+                continue
             }
         }
         // Only previews for rows still in some inbox are worth keeping.
@@ -133,6 +136,7 @@ final class MailStore {
     enum AccountResult: Sendable {
         case success(InboxStatus, [MailMessage], previews: [String: String])
         case failure(EWSError)
+        case cancelled
     }
 
     /// One account's poll: the unread count and version first, then the rows in whichever shape
@@ -159,6 +163,8 @@ final class MailStore {
                 }
             }
             return .success(status, messages, previews: previews)
+        } catch is CancellationError {
+            return .cancelled
         } catch let error as EWSError {
             return .failure(error)
         } catch {

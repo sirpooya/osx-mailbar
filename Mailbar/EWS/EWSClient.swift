@@ -46,6 +46,10 @@ struct EWSClient: Sendable {
             (data, status) = try await transport.send(body, to: url, credential: credential)
         } catch let error as EWSError {
             throw error
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as URLError {
             throw EWSError.from(urlError: error)
         } catch {

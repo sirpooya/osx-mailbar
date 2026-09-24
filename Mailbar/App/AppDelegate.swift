@@ -4,7 +4,9 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var accounts: AccountStore!
     private var client: EWSClient!
-    private var statusItem: NSStatusItem?
+    private var store: MailStore!
+    private var poller: Poller!
+    private var statusItemController: StatusItemController!
     private var editingShortcutMonitor: Any?
 
     /// The unit tests use the app as their TEST_HOST, so this delegate runs for them too. Without
@@ -28,21 +30,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             client = EWSClient()
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.autosaveName = "mailbar.status.v1"
-        item.button?.image = StatusItemIcon.image(dimmed: false)
-        item.button?.target = self
-        item.button?.action = #selector(showSettings)
-        statusItem = item
+        store = MailStore(accounts: accounts, client: client)
+        statusItemController = StatusItemController(
+            store: store,
+            onOpenSettings: { [weak self] in self?.showSettings() },
+            onRefresh: { [weak self] in self?.poller.refreshNow() })
+
+        poller = Poller(intervalProvider: { Keys.pollInterval() },
+                        action: { [weak self] in
+                            guard let self else { return false }
+                            // Unstructured on purpose. `refreshNow` (every popover open) restarts
+                            // the poller's loop by cancelling it, and that cancellation used to
+                            // reach the requests in flight and surface as "Something went wrong".
+                            // A detached-from-cancellation Task lets the poll that is already
+                            // running finish; the restarted loop then finds it still refreshing
+                            // and simply uses its result.
+                            let store = self.store!
+                            return await Task { await store.refresh() }.value
+                        })
+        poller.start()
 
         installMainMenu()
         installEditingShortcuts()
+        observeSleepAndWake()
 
-        if accounts.accounts.isEmpty || QCFlags.openSettings { showSettings() }
+        if accounts.accounts.isEmpty || QCFlags.openSettings {
+            showSettings()
+        } else if QCFlags.openPopover {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.statusItemController.show()
+            }
+        }
     }
 
-    @objc private func showSettings() {
-        SettingsWindow.shared.show(accounts: accounts, client: client, onChange: {})
+    private func showSettings() {
+        // An account added, edited or deleted, or a new interval, all mean "check now".
+        SettingsWindow.shared.show(accounts: accounts, client: client,
+                                   onChange: { [weak self] in self?.poller.refreshNow() })
+    }
+
+    // MARK: - Sleep and wake
+
+    /// Polling stops for the sleep and does exactly one refresh on wake, rather than firing every
+    /// tick that was missed.
+    private func observeSleepAndWake() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poller.pauseForSleep() }
+        }
+        center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poller.resumeFromWake() }
+        }
     }
 
     // MARK: - Main menu and editing shortcuts

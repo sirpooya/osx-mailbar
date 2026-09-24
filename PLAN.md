@@ -57,10 +57,10 @@ milestone above it is observable on screen or against the server. Check boxes as
 ## M0. Scaffold
 Model: Sonnet 5. Template filling and one `xcodegen` run.
 
-- [ ] `project.yml` (bundle id `in.pooya.mailbar`, Debug `.debug`, macOS 14, `LSUIElement`)
-- [ ] Source tree: `Mailbar/{App,Accounts,EWS,Core,Views,Resources}`, `MailbarTests/`
-- [ ] `git init`, first commit
-- [ ] Placeholder status item, no Dock tile
+- [x] `project.yml` (bundle id `in.pooya.mailbar`, Debug `.debug`, macOS 14, `LSUIElement`)
+- [x] Source tree: `Mailbar/{App,Accounts,EWS,Core,Views,Resources}`, `MailbarTests/`
+- [x] `git init`, first commit
+- [x] Placeholder status item, no Dock tile
 
 Proof: `open` the built app, an icon in the menu bar, nothing in the Dock.
 
@@ -69,16 +69,19 @@ Proof: `open` the built app, an icon in the menu bar, nothing in the Dock.
 ## M1. Accounts, Keychain, first EWS call
 Model: Opus 5.5 with thinking. Secrets, the auth challenge, and keeping passwords out of logs.
 
-- [ ] `Account` model (UUID, description, full name, email, EWS URL, user name), list stored in
+- [x] `Account` model (UUID, description, full name, email, EWS URL, user name), list stored in
       UserDefaults, no secret fields
-- [ ] `KeychainStore`: one password per account UUID, service `in.pooya.mailbar.account`
-- [ ] `EWSClient`: ephemeral `URLSession`, delegate answers NTLM and Basic challenges
-- [ ] `GetFolder inbox` returns `UnreadCount`; read `ServerVersionInfo` and record the version
-- [ ] If the server is older than Exchange 2013: preview comes from a truncated text body and the
+- [x] `KeychainStore`: one password per account UUID, service `in.pooya.mailbar.account`
+- [x] `EWSClient`: ephemeral `URLSession`, delegate answers NTLM and Basic challenges
+- [x] `GetFolder inbox` returns `UnreadCount`; read `ServerVersionInfo` and record the version
+- [x] If the server is older than Exchange 2013: preview comes from a truncated text body and the
       flag uses the extended property `PidTagFlagStatus` (0x1090)
-- [ ] Settings window, Accounts pane: list, "+" opens the add sheet, "-" deletes (with confirm,
+- [x] Settings window, Accounts pane: list, "+" opens the add sheet, "-" deletes (with confirm,
       removes the Keychain item too), a Test button showing the unread count or the exact failure
-- [ ] Unit tests: SOAP builders against fixtures, Keychain round trip on a throwaway service
+- [x] Unit tests: SOAP builders against fixtures, Keychain round trip on a throwaway service
+
+Status 2026-09-24: built and proven in mock mode. **The real-account proof is still open** and is
+the user's to run, since it needs their password.
 
 Proof: add the real account, Test shows the true unread count. Quit, relaunch, Test again with no
 re-typing. `defaults read in.pooya.mailbar` contains no password.
@@ -88,10 +91,13 @@ re-typing. `defaults read in.pooya.mailbar` contains no password.
 ## M2. Menu bar count and polling
 Model: Sonnet 5 for wiring, Opus 5.5 for the icon (`menubar-icon-theming` skill).
 
-- [ ] `NSStatusItem` plus `NSPopover`, centred under the icon
-- [ ] Icon plus unread count, legible in light, dark, template and colour
-- [ ] `Poller`: every couple of minutes, on popover open, and after wake from sleep
-- [ ] Unreachable and rejected are states on the icon, not a silent zero
+- [x] `NSStatusItem` plus `NSPopover`, centred under the icon
+- [x] Icon plus unread count, legible in light, dark, template and colour
+- [x] `Poller`: every couple of minutes, on popover open, and after wake from sleep
+- [x] Unreachable and rejected are states on the icon, not a silent zero
+
+Status 2026-09-24: count and dimmed-on-failure icon built; count proven by screenshot in mock
+mode. The dimmed icon is unverified by pixels, and the proof below needs the real account.
 
 Proof: mark a message read in Outlook Web or on the phone, the count drops within one poll.
 
@@ -100,13 +106,17 @@ Proof: mark a message read in Outlook Web or on the phone, the count drops withi
 ## M3. Inbox list
 Model: Opus 5.5. The row is the whole product; the failure split is easy to collapse.
 
-- [ ] `FindItem` 50 newest, then `SyncFolderItems` for changes, all in memory only
-- [ ] Row: sender, subject plus relative time, one-line preview, unread weight, flag marker
-- [ ] Relative time formatter with unit tests (today, yesterday, 2 to 6 days, older, time zones)
-- [ ] Per-string text direction for Persian and mixed text
-- [ ] Unreachable, rejected and empty states, each with its own view and action
-- [ ] `MAILBAR_MOCK=1` fixtures with invented senders, Persian and English
-- [ ] Multi-account header, per open question 1
+- [x] `FindItem` 50 newest plus `GetFolder` for the count on every poll, all in memory only
+      (not `SyncFolderItems`: see AGENTS.md, Decisions)
+- [x] Row: sender, subject plus relative time, one-line preview, unread weight, flag marker
+- [x] Relative time formatter with unit tests (today, yesterday, 2 to 6 days, older, time zones)
+- [x] Per-string text direction for Persian and mixed text
+- [x] Unreachable, rejected and empty states, each with its own view and action
+- [x] `MAILBAR_MOCK=1` fixtures with invented senders, Persian and English
+- [x] Multi-account header, per open question 1
+
+Status 2026-09-24: done in mock mode; list, loading, unreachable and rejected photographed.
+Open question 1 was taken at its default: one view per account, a menu in the title, and a swipe.
 
 Proof: `mac-qc` screenshot of the list next to Outlook's, Persian rows right-aligned.
 

@@ -42,6 +42,12 @@ struct PopoverRootView: View {
             footer
         }
         .frame(width: Self.width)
+        // An opaque surface, not the popover's glass. On macOS 26 the popover glass adapts to the
+        // LUMINANCE of whatever is behind it, independent of the light or dark appearance, so over
+        // a dark wallpaper in Light mode it went dark while the text stayed light-mode dark:
+        // primary text read dim grey and secondary read brighter than it (measured 2026-09-24).
+        // The window background follows the appearance itself, so the text always matches it.
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { installSwipe() }
         .onDisappear { removeSwipe() }
     }

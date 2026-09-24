@@ -74,6 +74,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     func show() {
         guard let button = statusItem.button else { return }
+        // Active first. An inactive app's popover draws its material flat grey, which erases the
+        // difference between primary and secondary text; and the popover already closes when the
+        // app resigns active, so it is only ever meant to be open while active.
+        WindowActivation.claim()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         // Without this the popover opens behind the frontmost app's windows.
         popover.contentViewController?.view.window?.makeKey()

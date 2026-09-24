@@ -15,8 +15,23 @@ so the user can delete Outlook.
 Keep it minimal and dependency-light. No cloud sync, no analytics.
 
 ## Status
-2026-09-24: repo created. `AGENTS.md`, `PLAN.md` and `.gitignore` exist; no code yet.
-Next: milestone M0 in `PLAN.md`.
+2026-09-24 (latest): **M0 to M3 built**, 41 tests green. Settings adds, edits, tests and deletes
+accounts; the menu bar shows the icon plus the total unread count; the popover lists the Inbox in
+the Outlook row layout, with Persian lines right-aligned, and each failure state has its own view.
+All of it is proven in `MAILBAR_MOCK` mode by screenshot. **Nothing is proven against the real
+server yet**: the user has to add their account (the password never passes through Claude). That
+one Test press settles the user name format and the Exchange version. Next: M4, the reader.
+
+QC note: Accessibility is not granted to the VS Code host, so `mac-qc` can photograph windows but
+cannot click the status item. The DEBUG launch flags in `Core/QCFlags.swift` (`--open-popover`,
+`--open-settings`, `--open-editor`) put each surface on screen without a click.
+
+> **Another committer is active in this repo**, as in osx-jirabar: commit e2a7906 ("Add core
+> functionality for account management and inbox state handling") was made and pushed at 21:20 by
+> something other than Claude, sweeping up half-written files. Commit early, and do not assume the
+> working tree is still yours.
+
+2026-09-24: repo created.
 
 2026-09-24: the first draft of this file assumed Microsoft 365 plus Graph plus OAuth. That was
 wrong. The user's Outlook for Mac account settings show an on-prem Exchange account using EWS with
@@ -27,15 +42,18 @@ and the "confirm with IT" blocker that came with them is gone.
 Context only. **None of this is hardcoded in the app, not even as a placeholder or a default.** The
 user types every value into Settings when adding an account.
 
-- Account type in Outlook for Mac: "Microsoft Exchange". Email domain `<company domain>`.
-- EWS endpoint: `https://<mail host>/ews/exchange.asmx`, port 443, SSL on. This is what
+**This repo is public.** The real host names, email domain and directory server live in
+`AGENTS.local.md` (gitignored). Read it when you need them; never copy them into a tracked file.
+
+- Account type in Outlook for Mac: "Microsoft Exchange".
+- EWS endpoint: the standard `https://<host>/ews/exchange.asmx`, port 443, SSL on. This is what
   Outlook uses; the app talks to this same URL.
 - Auth method in Outlook: "User Name and Password", user name in short form (no domain, no `@`).
   On-prem Exchange serves this as NTLM or Basic over HTTPS; `URLSession` answers either challenge.
   Whether the server wants `DOMAIN\user`, the short name or the UPN is **unproven**; M1 settles it.
-- Directory service: `<directory server>:3268`, an Active Directory Global Catalog (LDAP, no
-  SSL). Outlook uses it for address lookup when composing. **This app does not use it**: no compose,
-  so no address lookup. Do not add an LDAP client.
+- Directory service: an Active Directory Global Catalog (LDAP, no SSL). Outlook uses it for
+  address lookup when composing. **This app does not use it**: no compose, so no address lookup.
+  Do not add an LDAP client.
 - Message content is frequently Persian. Every text field (sender, subject, preview, body) needs
   per-string natural direction, right to left when the text is RTL. osx-jirabar's
   `Core/TextDirection.swift` is the pattern.
@@ -46,14 +64,15 @@ user types every value into Settings when adding an account.
 
 ## EWS operations, exhaustively
 SOAP 1.1 POSTs to the account's EWS URL, `Content-Type: text/xml; charset=utf-8`, with a
-`RequestServerVersion` header (start at `Exchange2013`).
+`RequestServerVersion` header. The `GetFolder` probe asks for `Exchange2010_SP2`, which every
+server from 2010 SP2 on accepts (asking an older server for a newer version is itself an error);
+its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange2013` fields.
 
 | What | Operation |
 |---|---|
 | Verify an account in Settings | `GetFolder` on distinguished `inbox` |
 | Unread count | `GetFolder` on `inbox`, read `UnreadCount` |
 | Inbox list | `FindItem` Shallow on `inbox`, `IndexedPageItemView` of 50, sorted `DateTimeReceived` descending, properties `item:Subject`, `message:From`, `item:DateTimeReceived`, `message:IsRead`, `item:Flag`, `item:Preview`, `item:HasAttachments` |
-| What changed since the last poll | `SyncFolderItems` on `inbox` with the stored `SyncState` |
 | Open a message | `GetItem`, `BodyType` HTML |
 | Mark read or unread | `UpdateItem` `SetItemField message:IsRead`, `ConflictResolution="AutoResolve"`, `SuppressReadReceipts="true"` |
 | Flag or clear flag | `UpdateItem` `SetItemField item:Flag`, `FlagStatus` `Flagged` or `NotFlagged` |
@@ -119,13 +138,31 @@ running process invalidates its code signature.
   and delete are the only operations that move mail. No general "move to folder".
 - 2026-09-24 Menu bar: `NSStatusItem` + `NSPopover`, centred under the icon. Pattern follows
   osx-jirabar.
-- 2026-09-24 `LSUIElement: true`; the app never shows in the Dock except while a real titled
-  window (Settings) is open.
+- 2026-09-24 `LSUIElement: true` and `.accessory` for the life of the process: no Dock tile ever,
+  Settings included. osx-jirabar learned that flipping to `.regular` was never what let a window
+  take focus; activating the app is. The user asked for the Dock tile gone there, same here.
+- 2026-09-24 The popover activates the app when it opens and draws an opaque window-background
+  surface. On macOS 26 the popover glass adapts to the luminance behind it, not to Light or Dark,
+  so over a dark wallpaper in Light mode it went dark under light-mode text and inverted the
+  primary and secondary contrast. Do not remove the background to "get the glass back".
+- 2026-09-24 Right-to-left rows use frame alignment, never `.environment(\.layoutDirection)`,
+  which flips the stack's alignment guide and throws the time to the wrong side (see
+  `DirectionalText`).
+- 2026-09-24 Menu bar icon is the user's `MenuBarIcon.png`, black with its shading in alpha,
+  cropped to ink and drawn as a template image. App icon is the user's Icon Composer bundle,
+  `Resources/AppIcon.icon` (needs Xcode 26). Both follow osx-jirabar.
 - 2026-09-24 Settings is an `NSWindow` this app owns, built from `SettingsComponents.swift`
   (mac-pro skill), not a SwiftUI `Settings` scene.
-- 2026-09-24 Polling, not push, for v1: `SyncFolderItems` every couple of minutes and whenever the
-  popover opens, so a poll only moves what changed. EWS streaming notifications could replace this
-  later without a webhook, but polling is simpler and enough.
+- 2026-09-24 Polling, not push, for v1: every couple of minutes (Settings, 1 to 10), on popover
+  open, and once on wake. Each poll is `GetFolder` for the count plus `FindItem` for the newest 50.
+  **Not `SyncFolderItems`**, which the first draft of this file called for: a sync from no state
+  enumerates the entire inbox before it reports anything, which is thousands of items on a real
+  mailbox, and two small requests every two minutes cost nothing. EWS streaming notifications could
+  replace polling later without a webhook.
+- 2026-09-24 The poller's refresh runs in an unstructured `Task`, because `refreshNow` restarts the
+  loop by cancelling it, and that cancellation reached the requests in flight and surfaced as
+  "Something went wrong" every time the popover opened mid-poll. A cancelled request never changes
+  what is on screen.
 - 2026-09-24 Bundle id `in.pooya.mailbar`, Debug `in.pooya.mailbar.debug`. Keychain service
   `in.pooya.mailbar.account`, defaults prefix `mailbar.`. These are storage addresses: renaming
   strands the stored passwords and settings.
@@ -150,16 +187,18 @@ WebKit cache, no thumbnails, no "offline" mode.
   after "Load images").
 - `URLSession` uses `URLSessionConfiguration.ephemeral` with `urlCache = nil`.
   `WKWebView` uses `WKWebsiteDataStore.nonPersistent()`, one store per reader, released on close.
-- The `SyncFolderItems` sync state is a server cursor, not mail content; it may sit in memory only
-  and is simply rebuilt at launch.
+- Pre-2013 servers only: previews built from text bodies are held in memory for rows still in the
+  list, so a poll does not refetch fifty bodies. They die with the process like everything else.
 
 ## Reference material and QC
 - `_samples/`: screenshots of the reference look, when supplied. Where this doc is ambiguous, the
   screenshot wins. The first reference is Outlook for Mac's message list row (sender, subject with
   time, one-line preview).
 - Screenshot-QC every significant surface with the `mac-qc` skill before calling it done.
-- QC hooks: `MAILBAR_MOCK=1` serves canned EWS responses (including Persian and mixed-direction
-  messages) so the UI can be exercised without an account.
+- QC hooks: `MAILBAR_MOCK=1` serves canned EWS responses (two invented accounts, Persian and
+  mixed-direction messages) so the UI can be exercised without an account; `MAILBAR_MOCK=empty`,
+  `unreachable`, `rejected`, `failed`, `loading` force each state. A yellow SAMPLE DATA banner
+  shows whenever it is on. DEBUG only.
 
 ## Playground convention
 Dev-only tuning windows: an `@Observable` params object the shipping views read, a `Codable`
@@ -197,7 +236,7 @@ Releases are cut with the `release` skill.
 - [ ] The Inbox list matches the Outlook row layout, including right-to-left Persian text.
 - [ ] A message opens, renders safely (no JS, no remote images by default) and is marked read.
 - [ ] Mark unread, flag, archive and delete work from the reader and from the row.
-- [ ] Unreachable server, rejected password and empty inbox each show their own state.
+- [x] Unreachable server, rejected password and empty inbox each show their own state (mock).
 - [ ] Nothing from the mailbox on disk: after a session, `~/Library/Caches`, `~/Library/WebKit`
       and the app container hold no message text or images for the app's bundle id.
 - [ ] Idle memory under 60 MB.
