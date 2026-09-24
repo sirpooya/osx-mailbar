@@ -172,8 +172,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 Right-to-left rows use frame alignment, never `.environment(\.layoutDirection)`,
   which flips the stack's alignment guide and throws the time to the wrong side (see
   `DirectionalText`).
-- 2026-09-24 Menu bar icon is the user's `MenuBarIcon.png`, black with its shading in alpha,
-  cropped to ink and drawn as a template image. App icon is the user's Icon Composer bundle,
+- 2026-09-24 Menu bar icon is the user's `tray.png`, bundled byte-for-byte as `MenuBarIcon.png`
+  and drawn WHOLE into an 18pt square as a template image: the artboard's padding is part of the
+  design. Never crop, resize, recolour or re-weight the user's artwork in code; the user rejected
+  cropping to ink and an alpha boost. Replace the file and rebuild, nothing else. App icon is the user's Icon Composer bundle,
   `Resources/AppIcon.icon` (needs Xcode 26). Both follow osx-jirabar.
 - 2026-09-24 Settings is an `NSWindow` this app owns, built from `SettingsComponents.swift`
   (mac-pro skill), not a SwiftUI `Settings` scene.
