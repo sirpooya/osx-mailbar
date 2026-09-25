@@ -34,7 +34,8 @@ in mock mode. The Milestones section below is the record; none is open.
 - **No cache**: nothing from the mailbox on disk, images cached nowhere.
 
 ### Not wanted (do not build)
-- Anything beyond simple sending: rich-text editing, drafts, signatures, outgoing attachments.
+- Anything beyond simple sending: rich-text editing, drafts, signatures, outgoing mail
+  attachments. (Files on calendar EVENTS are in, since 2026-09-25, the user's request.)
 - Move to folder, folder list, folder picker.
 - Follow up, categories, rules, junk, snooze, pin.
 - Contacts, tasks, notes, an LDAP client. (People suggestions for events use the server's own
@@ -60,10 +61,11 @@ in mock mode. The Milestones section below is the record; none is open.
 - View, create, edit, delete, answer invitations, reminders, a Today tab in the popover, over the same
   EWS server. The four open choices were taken at these defaults when the user said "build it
   now"; any can still change:
-  1. Its own resizable window from the tray menu (Cmd+K), not a popover tab.
+  1. Its own resizable window from the tray menu, or Cmd+K in the popover, not a popover tab.
   2. People suggestions from the server's directory search (`ResolveNames`) plus inbox senders.
   3. A room picker from the organization's room lists, free-text location always possible.
-  4. No Charm, no Categorize; no scheduling assistant (crossed off in the user's screenshot).
+  4. No scheduling assistant. Charm and Categorize were left out at first (crossed off in an
+     early screenshot) and added 2026-09-25 when the user asked for them.
 - No calendar library: checked 2026-09-25. KVKCalendar is UIKit and reaches the Mac only through
   Catalyst; swift-week-view and CalendarKit are iOS; GECalendar and Mijick's CalendarView are date
   pickers, not event timelines. The grid is SwiftUI.
@@ -99,7 +101,7 @@ New work gets a plan and moves here once it lands.
 | M12 | Reply and reply all | a real send |
 | M13 | Forward | a real send |
 | M14 | New message, suggestions from inbox senders | a real send |
-| M15 | Calendar window: Day, Week, Month, swipe paging, category colours, detail panel (tray menu, Cmd+K) | the real calendar |
+| M15 | Calendar window: Day, Week, Month, swipe paging, category colours, detail panel (tray menu; Cmd+K in the popover) | the real calendar |
 | M16 | Create, edit, delete events: form with rooms, people, repeat, reminder, show as | writing a real event |
 | M17 | Answer invitations from the calendar and from the invitation email | answering a real one |
 | M18 | Event reminders: one plain notification per event, no snooze | a real banner |
@@ -260,10 +262,12 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 One view: the Inbox. No folder list, no folder picker. The popover follows
   osx-jirabar's shape (header, list, push into a detail view, swipe right to go back), but where
   Jirabar has one view per board column, Mailbar has one per account, and with one account there
-  is exactly one view.
-- 2026-09-24 Row layout copies Outlook's message list: sender on line 1 (bold while unread), subject
-  on line 2 with the relative time right-aligned on the same line, one line of preview on line 3 in
-  secondary colour. Everything truncates to one line.
+  is exactly one view. Accounts switch from the header's menu only: the sideways two-finger swipe
+  between accounts was removed at the user's request (2026-09-25); do not bring it back.
+- 2026-09-24 Row layout copies Outlook's message list: sender on line 1 (bold while unread) with
+  the relative time right-aligned on the same line (moved up from the subject line 2026-09-25, the
+  user's call) and the attachment clip before it, subject on line 2 with the flag, one line of preview on line 3
+  in secondary colour. Everything truncates to one line. Hover actions sit over the subject line.
 - 2026-09-24 Relative time: today shows the time (`14:32`), yesterday shows `Yesterday`, two to six
   days back shows `2 days ago` and so on, older shows a short date. The user's own words.
 - 2026-09-24 Opening a message marks it read. It can be marked unread again from the reader or
@@ -302,6 +306,33 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `EventBlock`, `NowLine`, category colours from the same rule, `CategoryColors.tint`) and the
   reminders' fetch; opening the tab fetches at once. A strip above the inbox was built first and
   removed. With several accounts the account menu moves to the header's left.
+- 2026-09-25 Drag to create, after Apple's Calendar: press on an empty slot in Day or Week and
+  drag up or down; a "New Event" block follows in 15-minute steps within that one day, and
+  letting go opens the event form over that range. A drag that starts on an event does nothing.
+  The block is only drawn on screen: nothing reaches the server until Save or Send, and Cancel
+  drops it. Double-click still makes an hour on the half hour. `--calendar-drag` (DEBUG) draws
+  one for screenshots, since QC cannot synthesize a drag without Accessibility.
+- 2026-09-25 The event form, rebuilt at the user's request: a date field (with a calendar
+  popover) and a time field, then a Duration (or Days when all day), no end field; Category
+  (the master list with its colours, several allowed, the first colours the event); Charm (OWA's
+  33 icons, SF Symbols, shown before the title on blocks and in the detail panel); Files (Add
+  Files or drop onto the form, bytes in memory until Save, 25 MB together at most); and a People
+  sidebar on the right after OWA's, where typing suggests from `ResolveNames` plus inbox senders,
+  Up, Down and Return pick, and each person shows Free, Busy, Tentative, Away or No information
+  for the event's time (`GetUserAvailability`, UTC in the request, no zone header). Rooms are a
+  popover with a search field matching every word, ignoring case and the Arabic and Persian ye
+  and kaf. Nothing is sent before Save or Send; Cancel sends nothing (tested).
+  **Unproven on the real server**: the charm is extended property 0x0027 in property set
+  `11000E07-B51B-40D6-AF21-CAA85EDAB1D0` (Integer, 1 to 33), known from OWA and Graph, not from
+  the EWS docs; and an event with files is created with `SendToNone`, given its files with
+  `CreateAttachment`, then sent with `UpdateItem` `SendToAllAndSaveCopy`, so the invitations
+  carry them. Edits delete and add files first, then update; changed files send to everyone.
+- 2026-09-25 The Today tab swipes through days (the user's request): the calendar window's
+  paging (`CalendarPager`, `PagerStrip`, axis lock in `PagerSwipe`) on a strip of three days,
+  the day shown and its neighbours fetched in one request (`MailStore.loadNearbyDays`), only
+  those three kept, in memory. It opens on today, a "Today" capsule appears in the header once
+  away, and closing the popover returns to today and drops the other days. Only swipes inside
+  the popover's own window page it.
 - 2026-09-25 Reminders (M18) are deliberately plain: one notification per event at its
   reminder time, no snooze, no action buttons (the user's words: "a simple notification that
   comes and goes"). Scheduled with macOS for the next 26 hours; removed from Notification
@@ -318,7 +349,12 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   Day into Week. Only crossings switch, so a view picked by hand holds until the next crossing.
   Day labels and Month weekday names use ONE format across the row, never per column.
 - 2026-09-25 Toolbar controls in Apple's style: Day, Week, Month in one capsule with a sliding
-  grey pill (`ModeSwitcher`); Previous and Next as round grey buttons around a Today capsule.
+  grey pill (`ModeSwitcher`), no shadow; Previous and Next as round grey buttons around a Today
+  capsule.
+- 2026-09-25 Changing Day, Week, Month is a hard cut, as Apple's Calendar does it (checked frame
+  by frame in a 60 fps recording): only the switcher's pill animates. Animating the mode morphed
+  every column and header between layouts and read as janky. Day and Week keep the hour grid's
+  scroll position across the switch.
 - 2026-09-25 The calendar's surfaces avoid `windowBackgroundColor`, which the wallpaper tints:
   `CalendarSurface.background` (text background, never tinted) under an exactly neutral grey
   shade, measured at R = G = B. No refresh button; the title aligns with the grid's left line.
@@ -331,7 +367,9 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `DirectionalText`).
 - 2026-09-25 Popover details, the user's calls: a Persian SUBJECT in a row starts at the left
   edge (`pinnedLeading`) while sender and preview stay right-aligned; refresh and its spinner
-  live in the footer beside "Updated", not the header; the header is pinned to one height so
+  live in the footer beside "Updated", not the header; compose sits at the header's left edge on
+  both tabs; both tabs share one content height (`contentHeight`, 460) so the popover never
+  resizes on a switch, and search comes and goes without a transition, so
   Inbox and Today never shift it (search shows on Inbox only); the Today tab's header is the
   date alone; Join shows only when the event holds a real meeting link and sits centred on the
   title line.
@@ -394,7 +432,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 ## Privacy (local-first)
 No telemetry, no analytics. Network calls, exhaustively:
 - Each configured account's EWS URL (mail and, since M15, the calendar: same URL, same sign-in;
-  the directory search and room lists of M16 go to the same URL too).
+  the directory search and room lists of M16, and the People sidebar's free/busy
+  (`GetUserAvailability`), go to the same URL too).
 - While adding an account, and only when the user presses Sign In: Autodiscover at
   `https://autodiscover.<email domain>/autodiscover/autodiscover.xml`, then
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and

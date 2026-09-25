@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -92,6 +93,54 @@ final class MailStore {
     func setDayEvents(_ events: [CalendarEvent], for accountID: UUID) {
         dayEvents[accountID] = events
         todayLoaded.insert(accountID)
+    }
+
+    // MARK: Other days on the Today tab
+
+    /// The Today tab's day, in days from today: a sideways swipe moves it, as in the calendar
+    /// window, and closing the popover brings it back to today.
+    var dayOffset = 0
+    /// The strip of three days (-1, 0, 1 around `dayOffset`) that follows the fingers.
+    let dayPager = CalendarPager()
+    /// The popover's window, so only swipes inside it page the day (the calendar window has its own).
+    @ObservationIgnored weak var popoverWindow: NSWindow?
+    /// Events of the days around the one shown, per account, keyed by start of day. Only those
+    /// three days are kept, in memory, and all of it goes when the popover closes.
+    private(set) var nearbyDays: [UUID: [Date: [CalendarEvent]]] = [:]
+    @ObservationIgnored private var nearbyGeneration = 0
+
+    func day(offset: Int) -> Date {
+        let calendar = Calendar.current
+        return calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: Date())) ?? Date()
+    }
+
+    /// A day's events, or nil while it is still being fetched. Today's come from the reminders'
+    /// fetch, which the stream keeps current.
+    func events(onDay day: Date, for accountID: UUID) -> [CalendarEvent]? {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return todayLoaded.contains(accountID) ? (dayEvents[accountID] ?? []) : nil }
+        return nearbyDays[accountID]?[calendar.startOfDay(for: day)]
+    }
+
+    /// The day shown and its two neighbours, in one request, so a swipe lands on a filled page.
+    func loadNearbyDays(for accountID: UUID) async {
+        guard let (url, credential) = connection(for: accountID) else { return }
+        nearbyGeneration += 1
+        let mine = nearbyGeneration
+        let days = (-1...1).map { day(offset: dayOffset + $0) }
+        guard let first = days.first, let last = days.last,
+              let end = Calendar.current.date(byAdding: .day, value: 1, to: last),
+              let events = try? await client.calendarEvents(from: first, to: end, at: url, credential: credential),
+              mine == nearbyGeneration else { return }
+        var byDay: [Date: [CalendarEvent]] = [:]
+        for day in days { byDay[day] = TodayAgenda.all(of: events, on: day) }
+        nearbyDays[accountID] = byDay
+    }
+
+    func resetDay() {
+        dayOffset = 0
+        nearbyDays = [:]
+        nearbyGeneration += 1
     }
 
     func setCategoryColors(_ colors: [String: Int], for accountID: UUID) {

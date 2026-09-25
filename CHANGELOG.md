@@ -33,6 +33,12 @@ section when a release is cut.
 - Create, edit and delete calendar events: the + button (Command N) or a double-click on an empty slot opens a form with location and room booking, start and end, all day, private, repeat, reminder, show as, notes and people, with names suggested from your company directory. Deleting a meeting you organized sends the cancellation.
 - Answer invitations with Accept, Tentative or Decline and an optional note, from the calendar or from the invitation email.
 - Event reminders: one notification at each event's reminder time, and clicking it opens the event in the calendar. Turn it off in Settings, Notifications.
+- Drag on an empty part of the calendar's Day or Week grid to create an event over that time range, in 15-minute steps. Nothing is sent to the server until you press Save; Cancel discards it.
+- The event form has a People sidebar: type a name or address to get suggestions from the company directory, and see whether each person is free at that time.
+- Events can have a category (with its colour) and a charm icon, set in the event form; the charm shows beside the title in the calendar.
+- Files can be attached to events, from Add Files or by dropping them on the form, and an event's files open or save from its detail panel.
+- Search the room list in the event form by any part of a room's name.
+- Swipe sideways with two fingers on the popover's Today tab to go through the days; a Today button brings you back.
 
 ### Changed
 - The new menu bar and app icons.
@@ -48,6 +54,16 @@ section when a release is cut.
 - Refresh moved from the popover header to the footer, beside the last update time.
 - Persian subjects in the inbox start at the left edge, in line with the other rows.
 - The Join button on a Today meeting is centred on the event's title line.
+- New message sits at the left of the popover header on both Inbox and Today; the search button no longer slides the header icons when switching tabs.
+- Inbox rows show the received time on the sender line; the hover actions sit over the subject line instead.
+- The attachment icon sits beside the time on the sender line.
+- The footer's refresh icon is the same grey as the footer text.
+- The calendar's Day, Week, Month switcher no longer casts a shadow.
+- Switching the calendar between Day, Week and Month now changes view at once, as Apple's Calendar does, instead of morphing the grid; Day and Week keep the hours you had scrolled to.
+- The event form sets a date, a start time and a duration instead of an end time.
+
+### Removed
+- A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -56,4 +72,7 @@ section when a release is cut.
 - Large images in an email now shrink to fit the reader, keeping their shape, so there is no sideways scrolling.
 - Calendar events take exactly the colour their category has in Outlook; a category without a colour is grey, as in Outlook, instead of a guessed colour.
 - The popover header keeps one height when switching between Inbox and Today.
+- Inbox and Today are the same height, so switching tabs no longer resizes the popover or makes it jump.
+- Cmd+K opens the calendar from the popover; before, it only worked while the menu bar icon's right-click menu was open.
+- A new event started at a minute past the half hour instead of on it.
 

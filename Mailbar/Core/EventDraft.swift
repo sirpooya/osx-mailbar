@@ -44,6 +44,25 @@ struct EventDraft: Equatable, Identifiable {
         }
     }
 
+    /// Someone invited, as the People sidebar lists them.
+    struct Invitee: Equatable, Hashable, Identifiable, Sendable {
+        let name: String
+        let address: String
+        var id: String { address.lowercased() }
+        var display: String { name.isEmpty ? address : name }
+    }
+
+    /// A file added in the form: its bytes in memory until Save sends them, never on disk.
+    struct NewFile: Equatable, Identifiable {
+        let id = UUID()
+        let name: String
+        let data: Data
+        var sizeLabel: String { ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file) }
+    }
+
+    /// Exchange's default request limit is about 35 MB, and Base64 adds a third.
+    static let attachmentLimit = 25 * 1024 * 1024
+
     let formID = UUID()
     var id: String?
     let accountID: UUID
@@ -58,15 +77,24 @@ struct EventDraft: Equatable, Identifiable {
     var reminderMinutes: Int? = 15
     var showAs: ShowAs = .busy
     var notes = ""
-    /// Typed addresses, comma separated, as in the mail composer.
-    var attendees = ""
+    var people: [Invitee] = []
+    /// Category names, as the master list spells them. The first one colours the event.
+    var categories: [String] = []
+    /// `EventCharm` raw value, or nil for none.
+    var charm: Int?
+    /// Files the event already has, those the user removed from it, and those being added.
+    var existingFiles: [FileAttachment] = []
+    var removedFileIDs: Set<String> = []
+    var newFiles: [NewFile] = []
     /// Editing one occurrence of a series: the repeat rule is the series', not changeable here.
     var isOccurrence = false
     var isSaving = false
     var error: String?
 
     var isNew: Bool { id == nil }
-    var attendeeList: [String] { Recipients.parse(attendees) }
+    var attendeeList: [String] { people.map(\.address) }
+    var keptFiles: [FileAttachment] { existingFiles.filter { !removedFileIDs.contains($0.id) } }
+    var changesFiles: Bool { !newFiles.isEmpty || !removedFileIDs.isEmpty }
     var subjectOrDefault: String {
         let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "New Event" : trimmed
@@ -91,27 +119,70 @@ struct EventDraft: Equatable, Identifiable {
         if let bad = attendeeList.first(where: { !Recipients.isValid($0) }) {
             return "\u{201C}\(bad)\u{201D} is not an email address."
         }
+        if newFiles.reduce(0, { $0 + $1.data.count }) > Self.attachmentLimit {
+            return "Files over 25 MB together are too large for Exchange to take."
+        }
         return nil
     }
 
     /// Sending invitations: shown on the Save button so the user knows it will mail people.
     var sendsInvitations: Bool { !attendeeList.isEmpty || !rooms.isEmpty }
 
+    // MARK: - Start and length
+
+    /// The form sets a start and a length, not an end (the user's call, 2026-09-25): moving the
+    /// start moves the end with it.
+    var duration: TimeInterval {
+        get { max(end.timeIntervalSince(start), 0) }
+        set { end = start.addingTimeInterval(newValue) }
+    }
+
+    var startKeepingDuration: Date {
+        get { start }
+        set { let length = end.timeIntervalSince(start); start = newValue; end = newValue.addingTimeInterval(length) }
+    }
+
+    /// An all-day event's length in days. `end` is then any moment on its last day.
+    var days: Int {
+        get {
+            let calendar = Calendar.current
+            let count = calendar.dateComponents([.day], from: calendar.startOfDay(for: start),
+                                                to: calendar.startOfDay(for: max(end, start))).day ?? 0
+            return count + 1
+        }
+        set { end = Calendar.current.date(byAdding: .day, value: max(newValue, 1) - 1, to: start) ?? start }
+    }
+
+    /// Lengths the form offers, in minutes; the draft's own is added when it is not one of them.
+    static let durationChoices = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 480]
+
+    static func durationLabel(minutes: Int) -> String {
+        let hours = minutes / 60, rest = minutes % 60
+        if hours == 0 { return "\(rest) minutes" }
+        if rest == 0 { return hours == 1 ? "1 hour" : "\(hours) hours" }
+        if rest == 30 { return "\(hours).5 hours" }
+        return "\(hours) h \(rest) min"
+    }
+
     // MARK: - Starting points
 
-    /// A new event at the start of the next half hour, an hour long; or at a slot double-clicked.
-    static func new(accountID: UUID, at slot: Date? = nil) -> EventDraft {
+    /// A new event at the start of the next half hour, an hour long; or at a slot double-clicked;
+    /// or over the range dragged out on the grid (`until`).
+    static func new(accountID: UUID, at slot: Date? = nil, until end: Date? = nil) -> EventDraft {
         let calendar = Calendar.current
         let start: Date
         if let slot {
             start = slot
         } else {
+            // The next half hour, from the start of this minute. `date(bySetting: .second)` would
+            // move FORWARD to the next zero second and give 16:01 for 16:00.
             let now = Date()
             let minute = calendar.component(.minute, from: now)
-            let rounded = calendar.date(byAdding: .minute, value: minute < 30 ? 30 - minute : 60 - minute, to: now) ?? now
-            start = calendar.date(bySetting: .second, value: 0, of: rounded) ?? rounded
+            let thisMinute = calendar.dateInterval(of: .minute, for: now)?.start ?? now
+            start = calendar.date(byAdding: .minute, value: minute < 30 ? 30 - minute : 60 - minute, to: thisMinute) ?? now
         }
-        return EventDraft(accountID: accountID, start: start, end: start.addingTimeInterval(3600))
+        let finish = end.flatMap { $0 > start ? $0 : nil } ?? start.addingTimeInterval(3600)
+        return EventDraft(accountID: accountID, start: start, end: finish)
     }
 
     /// Editing what the detail panel loaded.
@@ -126,9 +197,12 @@ struct EventDraft: Equatable, Identifiable {
         draft.showAs = ShowAs(rawValue: event.showAs) ?? .busy
         draft.reminderMinutes = detail.reminderMinutes
         draft.notes = plainText(fromHTML: detail.html)
-        draft.attendees = detail.attendees.filter { !$0.isOptional }.map(\.address)
-            .filter { !$0.isEmpty }.joined(separator: ", ")
+        draft.people = detail.attendees.filter { !$0.isOptional && !$0.address.isEmpty }
+            .map { Invitee(name: $0.name, address: $0.address) }
         draft.rooms = detail.roomBoxes
+        draft.categories = event.categories
+        draft.charm = event.charm
+        draft.existingFiles = detail.files
         draft.isOccurrence = event.isRecurring
         return draft
     }

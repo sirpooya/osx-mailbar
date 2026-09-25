@@ -54,7 +54,11 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     /// Calendar changes made while the app runs (M16, M17): created events, edits by id, and the
     /// answer given to each invitation.
     private var createdEvents: [MockCalendar.Event] = []
-    private var editedEvents: [String: (subject: String, start: Date, end: Date, location: String)] = [:]
+    private var editedEvents: [String: (subject: String, start: Date, end: Date, location: String,
+                                        categories: [String], charm: Int?)] = [:]
+    /// Files attached in this run, and the ids removed, by event.
+    private var addedFiles: [String: [(String, String, Int)]] = [:]
+    private var removedFiles: Set<String> = []
     private var answers: [String: String] = [:]
 
     /// The mock calendar with every change so far applied. Call with the lock held.
@@ -68,10 +72,30 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                                            organizerAddress: event.organizerAddress, isRecurring: event.isRecurring,
                                            isMeeting: event.isMeeting, isCancelled: event.isCancelled,
                                            response: event.response, showAs: event.showAs,
-                                           attendees: event.attendees, notes: event.notes, categories: event.categories)
+                                           attendees: event.attendees, notes: event.notes, categories: edit.categories,
+                                           charm: edit.charm, files: event.files)
             }
+            event.files = (event.files + (addedFiles[event.id] ?? [])).filter { !removed(file: $0.0) }
             if let answer = answers[event.id] { event.response = answer }
             return event
+        }
+    }
+
+    private func removed(file id: String) -> Bool { removedFiles.contains(id) }
+
+    private static func categories(in request: String) -> [String] {
+        guard let block = firstMatch("<t:Categories>(.*?)</t:Categories>", in: request) else { return [] }
+        return matches("<t:String>([^<]*)</t:String>", in: block).map(unescape)
+    }
+
+    private static func charm(in request: String) -> Int? {
+        firstMatch(#"PropertyId="39" PropertyType="Integer"/><t:Value>(\d+)</t:Value>"#, in: request).flatMap { Int($0) }
+    }
+
+    private static func matches(_ pattern: String, in text: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]) }
         }
     }
 
@@ -174,7 +198,10 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                                                    isMeeting: request.contains("<t:RequiredAttendees>"),
                                                    response: "Organizer")
                     event.isRecurring = request.contains("<t:Recurrence>")
+                    event.categories = Self.categories(in: request)
+                    event.charm = Self.charm(in: request)
                     createdEvents.append(event)
+                    return ok(MockCalendar.createdResponse(id: event.id))
                 }
                 for (element, response) in [("AcceptItem", "Accept"), ("TentativelyAcceptItem", "Tentative"), ("DeclineItem", "Decline")]
                 where request.contains("<t:\(element)>") {
@@ -189,12 +216,32 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 let query = (Self.firstMatch("<m:UnresolvedEntry>([^<]*)</m:UnresolvedEntry>", in: request) ?? "").lowercased()
                 return ok(MockCalendar.resolveResponse(query))
             }
+            if request.contains("<m:CreateAttachment>"), let parent = Self.firstMatch(#"ParentItemId Id="([^"]+)""#, in: request) {
+                sent.append(request)
+                let names = Self.matches("<t:Name>([^<]*)</t:Name>", in: request).map(Self.unescape)
+                let contents = Self.matches("<t:Content>([^<]*)</t:Content>", in: request)
+                for (index, name) in names.enumerated() {
+                    let size = Data(base64Encoded: index < contents.count ? contents[index] : "")?.count ?? 0
+                    addedFiles[parent, default: []].append(("att-new-\(parent)-\(addedFiles[parent]?.count ?? 0)", name, size))
+                }
+                return ok(MockFixtures.success("CreateAttachment"))
+            }
+            if request.contains("<m:DeleteAttachment>") {
+                sent.append(request)
+                removedFiles.formUnion(Self.matches(#"AttachmentId Id="([^"]+)""#, in: request))
+                return ok(MockFixtures.success("DeleteAttachment"))
+            }
+            if request.contains("<m:GetUserAvailabilityRequest>") {
+                let addresses = Self.matches("<t:Address>([^<]*)</t:Address>", in: request).map(Self.unescape)
+                return ok(MockCalendar.availabilityResponse(addresses, events: calendarEvents()))
+            }
             if request.contains("<m:GetRoomLists") { return ok(MockCalendar.roomListsResponse) }
             if request.contains("<m:GetRooms>") { return ok(MockCalendar.roomsResponse) }
             if request.contains("<m:UpdateItem"), let itemID, itemID.hasPrefix("ev-"),
                let fields = Self.calendarFields(in: request) {
                 sent.append(request)
-                editedEvents[itemID] = (fields.subject, fields.start, fields.end, fields.location)
+                editedEvents[itemID] = (fields.subject, fields.start, fields.end, fields.location,
+                                        Self.categories(in: request), Self.charm(in: request))
                 return ok(MockFixtures.success("UpdateItem"))
             }
             if request.contains("<m:DeleteItem"), let itemID, itemID.hasPrefix("ev-") {

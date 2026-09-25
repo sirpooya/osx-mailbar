@@ -59,10 +59,6 @@ struct CalendarWeekView: View {
                     let target = "hour-\(max(store.workHours.lowerBound - 1, 0))"
                     DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
                 }
-                .onChange(of: store.mode) { _, _ in
-                    let target = "hour-\(max(store.workHours.lowerBound - 1, 0))"
-                    DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
-                }
             }
         }
     }
@@ -174,6 +170,17 @@ private struct DayColumn: View {
             ZStack(alignment: .topLeading) {
                 HourBackground(isWorkDay: isWorkDay, workHours: store.workHours, hourHeight: hourHeight)
 
+                // The empty grid takes the clicks and drags; a drag that starts on an event lands
+                // on the event instead, so it never draws a new one over it.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(newEventDrag)
+                    // Double-click an empty slot: a new event there, on the half hour, as Calendar does.
+                    .onTapGesture(count: 2) { location in
+                        store.startNewEvent(at: slot(at: location.y, step: 30, rounding: .down))
+                    }
+                    .onTapGesture { Task { await store.select(nil) } }
+
                 ForEach(EventLayout.place(store.timedEvents(on: day), on: day, calendar: calendar)) { placed in
                     let x = CGFloat(placed.column) / CGFloat(placed.columns) * (width - 6) + 3
                     let w = (width - 6) / CGFloat(placed.columns) - 2
@@ -187,20 +194,84 @@ private struct DayColumn: View {
                         .onTapGesture { Task { await store.select(placed.event) } }
                 }
 
+                if let dragged = store.draggedRange, calendar.isDate(dragged.lowerBound, inSameDayAs: day) {
+                    NewEventGhost(start: dragged.lowerBound, end: dragged.upperBound, height: hourHeight)
+                        .frame(width: max(width - 8, 10))
+                        .offset(x: 3, y: hours(dragged.lowerBound) * hourHeight)
+                }
+
                 if calendar.isDateInToday(day) {
                     NowLine(calendar: calendar, hourHeight: hourHeight, width: width)
                 }
             }
-            .contentShape(Rectangle())
-            // Double-click an empty slot: a new event there, on the half hour, as Calendar does.
-            .onTapGesture(count: 2) { location in
-                let minutes = Int((location.y / hourHeight * 60 / 30).rounded(.down)) * 30
-                let slot = calendar.date(byAdding: .minute, value: max(0, min(minutes, 23 * 60 + 30)),
-                                         to: calendar.startOfDay(for: day))
-                store.startNewEvent(at: slot)
-            }
-            .onTapGesture { Task { await store.select(nil) } }
         }
+        // The dragged block stays on the grid while the form is open, as Calendar keeps it, and
+        // goes when the form does (a saved event then shows in its place).
+        .onChange(of: store.editor == nil) { _, closed in if closed { store.draggedRange = nil } }
+    }
+
+    // MARK: - Drag to create
+
+    /// Press on an empty slot and drag up or down: a block follows in 15-minute steps, and letting
+    /// go opens the form over that range, as Apple's Calendar does. Within the one day.
+    private var newEventDrag: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                let a = slot(at: value.startLocation.y, step: 15, rounding: .down)
+                let b = slot(at: value.location.y, step: 15, rounding: .down)
+                let quarter: TimeInterval = 15 * 60
+                // The slot under the pointer counts, whichever way the drag goes.
+                let range = min(a, b)...max(a, b).addingTimeInterval(quarter)
+                if range != store.draggedRange { store.draggedRange = range }
+            }
+            .onEnded { _ in
+                guard let range = store.draggedRange else { return }
+                store.startNewEvent(at: range.lowerBound, until: range.upperBound)
+                if store.editor == nil { store.draggedRange = nil }
+            }
+    }
+
+    /// The time at a point down the column, in whole steps of minutes, kept inside the day.
+    private func slot(at y: CGFloat, step: Int, rounding: FloatingPointRoundingRule) -> Date {
+        let minutes = Int((y / hourHeight * 60 / CGFloat(step)).rounded(rounding)) * step
+        return store.calendar.date(byAdding: .minute, value: max(0, min(minutes, 24 * 60 - step)),
+                                   to: store.calendar.startOfDay(for: day)) ?? day
+    }
+
+    private func hours(_ date: Date) -> CGFloat {
+        CGFloat(date.timeIntervalSince(store.calendar.startOfDay(for: day)) / 3600)
+    }
+}
+
+/// The block a drag draws before the event exists: the accent's selected look, "New Event" and
+/// the times it covers, so the range can be read while dragging.
+private struct NewEventGhost: View {
+    let start: Date
+    let end: Date
+    let height: CGFloat
+
+    var body: some View {
+        let h = max(CGFloat(end.timeIntervalSince(start) / 3600) * height - 2, 12)
+        let times = "\(start.formatted(date: .omitted, time: .shortened)) to \(end.formatted(date: .omitted, time: .shortened))"
+        HStack(alignment: .top, spacing: 0) {
+            Rectangle().fill(Color.accentColor).frame(width: 4)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("New Event").font(.system(size: 11.5, weight: .semibold))
+                if h >= 30 {
+                    Text(times).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, h >= 18 ? 3 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(height: h)
+        .background(Color.accentColor.opacity(0.34))
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(Color.accentColor, lineWidth: 1))
+        .allowsHitTesting(false)
+        .accessibilityLabel("New event, \(times)")
     }
 }
 
@@ -276,7 +347,7 @@ struct EventBlock: View {
         guard !compact else { return 1 }
         let byHeight = max(1, min(4, Int((height - 6) / 14)))
         guard byHeight > 1 else { return 1 }
-        let icons: CGFloat = (event.isRecurring ? 13 : 0) + (event.isPrivate ? 12 : 0)
+        let icons: CGFloat = (event.isRecurring ? 13 : 0) + (event.isPrivate ? 12 : 0) + (event.charm != nil ? 14 : 0)
         let room = width - 4 - 10 - icons
         let longest = event.subject.split(whereSeparator: \.isWhitespace)
             .map { (String($0) as NSString).size(withAttributes: [.font: Self.titleFont]).width }
@@ -306,6 +377,10 @@ struct EventBlock: View {
                 .frame(maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    // The charm leads the title, as OWA draws it.
+                    if let charm = event.charm.flatMap(EventCharm.init) {
+                        Image(systemName: charm.symbol).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                     DirectionalText(event.subject, font: .system(size: 11.5, weight: .semibold), lines: titleLines)
                         .strikethrough(event.isCancelled)
                         .layoutPriority(1)

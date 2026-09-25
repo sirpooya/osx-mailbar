@@ -307,14 +307,16 @@ final class CalendarStore {
 
     /// The event form, when open. In memory only.
     var editor: EventDraft?
+    /// The range a drag on the grid is drawing out, kept while the form it opened is up.
+    var draggedRange: ClosedRange<Date>?
     /// A short confirmation under the toolbar ("Invitations sent.").
     var notice: String?
     /// Rooms the organization publishes, loaded the first time the room menu opens.
     private(set) var rooms: [Room]?
 
-    func startNewEvent(at slot: Date? = nil) {
+    func startNewEvent(at slot: Date? = nil, until end: Date? = nil) {
         guard let account else { return }
-        editor = EventDraft.new(accountID: account.id, at: slot)
+        editor = EventDraft.new(accountID: account.id, at: slot, until: end)
     }
 
     /// Opens the form on the selected event, once its details have loaded.
@@ -400,6 +402,24 @@ final class CalendarStore {
             .filter { !already.contains($0.address.lowercased()) }
         var seen = Set<String>()
         return (directory + local).filter { seen.insert($0.address.lowercased()).inserted }.prefix(6).map { $0 }
+    }
+
+    /// Categories the form offers: the master list's, in name order, else OWA's defaults.
+    var categoryNames: [String] {
+        categoryColors.isEmpty ? CategoryColors.defaultNames
+            : categoryColors.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    func categoryColor(_ name: String) -> Color {
+        CategoryColors.color(forName: name, colors: categoryColors)
+    }
+
+    /// Free or busy over the event's time for each address (lowercased keys). Empty when the
+    /// server cannot say, so the sidebar just leaves the line off.
+    func availability(for addresses: [String], start: Date, end: Date) async -> [String: String] {
+        guard !addresses.isEmpty, end > start, let account,
+              let (url, credential) = mail.connection(for: account.id) else { return [:] }
+        return (try? await mail.client.availability(addresses, start: start, end: end, at: url, credential: credential)) ?? [:]
     }
 
     func loadRooms() async {

@@ -25,7 +25,7 @@ import Testing
 
     @Test func peopleAndRoomsMakeItAMeetingThatSendsInvitations() throws {
         let body = CalendarSOAP.createEvent(draft {
-            $0.attendees = "a@example.com, b@example.com"
+            $0.people = [.init(name: "", address: "a@example.com"), .init(name: "", address: "b@example.com")]
             $0.rooms = [Room(name: "Room Blue", address: "room.blue@example.com")]
         })
         #expect(body.contains(#"SendMeetingInvitations="SendToAllAndSaveCopy""#))
@@ -63,10 +63,56 @@ import Testing
         #expect(CalendarSOAP.answer(.accept, to: "ev-1", changeKey: "ck", note: " ").contains("<t:Body") == false)
     }
 
+    @Test func categoriesAndCharmGoInTheSchemasPlaces() throws {
+        let body = CalendarSOAP.createEvent(draft { $0.categories = ["Storybook", "Red category"]; $0.charm = EventCharm.cake.rawValue })
+        let root = try XMLTree.parse(SOAP.envelope(.exchange2010SP2, body: body))
+        let item = try #require(root.first("CalendarItem"))
+        #expect(item.children.map(\.name).prefix(7) == ["Subject", "Sensitivity", "Body", "Categories", "ReminderIsSet",
+                                                          "ReminderMinutesBeforeStart", "ExtendedProperty"])
+        #expect(item.child("Categories")?.children.map(\.trimmedText) == ["Storybook", "Red category"])
+        #expect(EWSResponse.charm(in: item) == EventCharm.cake.rawValue)
+    }
+
+    @Test func anUpdateSetsOrClearsCategoriesAndCharm() {
+        let set = CalendarSOAP.updateEvent(draft { $0.categories = ["Storybook"]; $0.charm = 3 }, id: "ev-1")
+        #expect(set.contains(#"FieldURI="item:Categories"/><t:CalendarItem><t:Categories><t:String>Storybook"#))
+        #expect(set.contains("<t:Value>3</t:Value>"))
+        let cleared = CalendarSOAP.updateEvent(draft(), id: "ev-1")
+        #expect(cleared.contains(#"<t:DeleteItemField><t:FieldURI FieldURI="item:Categories"/></t:DeleteItemField>"#))
+        #expect(cleared.contains("<t:DeleteItemField>\(EventCharm.fieldURI)</t:DeleteItemField>"))
+    }
+
+    @Test func startAndDurationMoveTogether() {
+        var d = draft()
+        d.duration = 90 * 60
+        #expect(d.end == d.start.addingTimeInterval(5400))
+        let later = d.start.addingTimeInterval(7200)
+        d.startKeepingDuration = later
+        #expect(d.start == later && d.duration == 5400)
+        d.isAllDay = true
+        d.days = 3
+        #expect(d.days == 3)
+        #expect(EventDraft.durationLabel(minutes: 90) == "1.5 hours")
+        #expect(EventDraft.durationLabel(minutes: 75) == "1 h 15 min")
+    }
+
+    @Test func availabilityTakesTheBusiestBlockInTheEvent() throws {
+        let start = Date(timeIntervalSince1970: 1_790_000_000), end = start.addingTimeInterval(3600)
+        let events = [MockCalendar.Event(id: "a", subject: "", start: start.addingTimeInterval(-1800), end: start.addingTimeInterval(600),
+                                         showAs: "Tentative"),
+                      MockCalendar.Event(id: "b", subject: "", start: start.addingTimeInterval(1800), end: end, showAs: "Busy"),
+                      MockCalendar.Event(id: "c", subject: "", start: end, end: end.addingTimeInterval(3600), showAs: "OOF")]
+        let xml = MockCalendar.availabilityResponse(["sara.rahimi@example.com", "omid@example.org", "someone@elsewhere.net"], events: events)
+        let states = try EWSResponse.availability(from: Data(xml.utf8),
+                                                  addresses: ["sara.rahimi@example.com", "omid@example.org", "someone@elsewhere.net"],
+                                                  start: start, end: end)
+        #expect(states == ["sara.rahimi@example.com": "Busy", "omid@example.org": "Free", "someone@elsewhere.net": "NoData"])
+    }
+
     @Test func endBeforeStartIsRefused() {
         let d = draft { $0.end = $0.start.addingTimeInterval(-60) }
         #expect(d.problem != nil)
-        #expect(draft { $0.attendees = "not an address" }.problem != nil)
+        #expect(draft { $0.people = [.init(name: "", address: "not an address")] }.problem != nil)
     }
 }
 
@@ -83,6 +129,30 @@ import Testing
         await store.refresh()
         for _ in 0..<50 where store.phase != .loaded { try await Task.sleep(nanoseconds: 100_000_000) }
         return store
+    }
+
+    @Test func aDraggedRangeBecomesTheNewEventsTimes() {
+        let start = Calendar.current.date(bySettingHour: 10, minute: 15, second: 0, of: Date())!
+        let end = start.addingTimeInterval(90 * 60)
+        let draft = EventDraft.new(accountID: UUID(), at: start, until: end)
+        #expect(draft.start == start)
+        #expect(draft.end == end)
+        // Without a range, or with one that runs backwards, it is an hour, as a double-click gives.
+        #expect(EventDraft.new(accountID: UUID(), at: start).end == start.addingTimeInterval(3600))
+        #expect(EventDraft.new(accountID: UUID(), at: start, until: start).end == start.addingTimeInterval(3600))
+    }
+
+    @Test func roomSearchMatchesEveryWordInAnyOrderAndEitherSpelling() {
+        let rooms = [Room(name: "ساختمان نمونه | طبقه هفت | اتاق کوچک", address: "room.f7.small@example.com"),
+                     Room(name: "ساختمان نمونه | طبقه سه | اتاق آبی", address: "room.f3.blue@example.com"),
+                     Room(name: "Room Green", address: "room.green@example.com")]
+        #expect(RoomSearch.filter(rooms, by: "").count == 3)
+        #expect(RoomSearch.filter(rooms, by: "هفت نمونه").map(\.address) == ["room.f7.small@example.com"])
+        #expect(RoomSearch.filter(rooms, by: "GREEN").map(\.name) == ["Room Green"])
+        #expect(RoomSearch.filter(rooms, by: "f3").count == 1)
+        // Typed with an Arabic kaf, stored with the Persian one.
+        #expect(RoomSearch.filter(rooms, by: "\u{0643}وچ").count == 1)
+        #expect(RoomSearch.filter(rooms, by: "هشت").isEmpty)
     }
 
     @Test func aNewEventAppearsInTheWeek() async throws {
@@ -102,7 +172,7 @@ import Testing
         await store.select(own)
         #expect(store.canEditSelected)
         store.startEditing()
-        #expect(store.editor?.attendees.contains("omid@example.org") == true)
+        #expect(store.editor?.attendeeList.contains("omid@example.org") == true)
         store.editor?.subject = "ds demo alignment (moved)"
         await store.saveEditor()
         let renamed = store.events.contains { $0.subject == "ds demo alignment (moved)" }
@@ -137,6 +207,36 @@ import Testing
         #expect(planning?.myResponse == "Tentative")
     }
 
+    @Test func anEventWithFilesIsCreatedThenGivenThemThenSent() async throws {
+        let store = try await makeStore()
+        store.startNewEvent(at: Calendar.current.date(bySettingHour: 11, minute: 0, second: 0, of: Date()))
+        store.editor?.subject = "Files review"
+        store.editor?.people = [.init(name: "Sara Rahimi", address: "sara.rahimi@example.com")]
+        store.editor?.categories = ["Storybook"]
+        store.editor?.charm = EventCharm.books.rawValue
+        store.editor?.newFiles = [.init(name: "Plan.pdf", data: Data(repeating: 7, count: 1200))]
+        await store.saveEditor()
+        #expect(store.editor == nil)
+        let created = try #require(store.events.first { $0.subject == "Files review" })
+        #expect(created.categories == ["Storybook"])
+        #expect(created.charm == EventCharm.books.rawValue)
+        await store.select(created)
+        guard case .loaded(let detail) = store.detail else { Issue.record("no detail"); return }
+        #expect(detail.files.map(\.name) == ["Plan.pdf"])
+        #expect(detail.files.first?.size == 1200)
+    }
+
+    @Test func aCancelledFormSendsNothing() async throws {
+        let store = try await makeStore()
+        let transport = try #require(store.mail.client.transport as? MockTransport)
+        let before = transport.sentRequests.count
+        store.startNewEvent(at: Date(), until: Date().addingTimeInterval(1800))
+        store.editor?.subject = "Never saved"
+        store.editor = nil
+        #expect(transport.sentRequests.count == before)
+        #expect(!store.events.contains { $0.subject == "Never saved" })
+    }
+
     @Test func peopleSuggestionsComeFromTheDirectoryToo() async throws {
         let store = try await makeStore()
         let found = await store.peopleSuggestions(for: "amir", excluding: "")
@@ -144,6 +244,6 @@ import Testing
         #expect(addresses.contains("amir.karimi@example.com"))
         #expect(addresses.contains("amirhossein.nadiri@example.com"))
         await store.loadRooms()
-        #expect(store.rooms?.map(\.name) == ["Room Blue", "Room Green"])
+        #expect(store.rooms?.prefix(2).map(\.name) == ["Room Blue", "Room Green"])
     }
 }

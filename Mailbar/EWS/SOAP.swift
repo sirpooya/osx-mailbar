@@ -291,6 +291,7 @@ enum SOAP {
                   <t:FieldURI FieldURI="calendar:RequiredAttendees"/>
                   <t:FieldURI FieldURI="calendar:OptionalAttendees"/>
                   <t:FieldURI FieldURI="calendar:Resources"/>
+                  <t:FieldURI FieldURI="item:Attachments"/>
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
@@ -305,6 +306,7 @@ enum SOAP {
         "calendar:CalendarItemType", "item:Sensitivity", "item:Categories",
         "item:ReminderIsSet", "item:ReminderMinutesBeforeStart",
     ].map { "          <t:FieldURI FieldURI=\"\($0)\"/>" }.joined(separator: "\n")
+        + "\n          " + EventCharm.fieldURI
 
     /// The mailbox's master category list: each category's name and colour (see `CategoryColors`).
     static let getCategoryList = """

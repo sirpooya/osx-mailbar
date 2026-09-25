@@ -65,4 +65,24 @@ import Testing
         #expect(mail.joinLinks[focus.id] == nil)
         #expect(mail.joinLinks[sync.id]?.host == "teams.microsoft.com")
     }
+
+    @MainActor
+    @Test func swipingToOtherDaysFetchesThemWithTheirNeighboursAndClosingForgetsThem() async throws {
+        let accounts = AccountStore(inMemory: [MockMode.accounts[0]], passwords: MockMode.passwords)
+        let mail = MailStore(accounts: accounts, client: EWSClient(transport: MockTransport(mode: .inbox, newMailAfter: 0)))
+        let id = MockMode.accounts[0].id
+        mail.dayOffset = -3
+        await mail.loadNearbyDays(for: id)
+        let calendar = Calendar.current
+        for page in -1...1 {
+            let day = mail.day(offset: -3 + page)
+            let events = try #require(mail.events(onDay: day, for: id))
+            #expect(events.allSatisfy { $0.end > day && $0.start < calendar.date(byAdding: .day, value: 1, to: day)! })
+        }
+        // Only the three days around the one shown are kept.
+        #expect(mail.events(onDay: mail.day(offset: 5), for: id) == nil)
+        mail.resetDay()
+        #expect(mail.dayOffset == 0)
+        #expect(mail.events(onDay: mail.day(offset: -3), for: id) == nil)
+    }
 }

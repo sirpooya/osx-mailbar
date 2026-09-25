@@ -6,8 +6,10 @@ enum CalendarSOAP {
 
     // MARK: - Events
 
-    static func createEvent(_ draft: EventDraft) -> String {
-        let invites = draft.attendeeList.isEmpty && draft.rooms.isEmpty ? "SendToNone" : "SendToAllAndSaveCopy"
+    /// `invite: false` saves without telling anyone yet: an event with files is created first,
+    /// then given its files, then sent (`EWSClient.createEvent`), so the invitations carry them.
+    static func createEvent(_ draft: EventDraft, invite: Bool = true) -> String {
+        let invites = !invite || (draft.attendeeList.isEmpty && draft.rooms.isEmpty) ? "SendToNone" : "SendToAllAndSaveCopy"
         return """
             <m:CreateItem SendMeetingInvitations="\(invites)">
               <m:SavedItemFolderId><t:DistinguishedFolderId Id="calendar"/></m:SavedItemFolderId>
@@ -23,8 +25,10 @@ enum CalendarSOAP {
 
     /// Every field the form edits, set at once. Meetings send updates to the people whose part
     /// changed; a plain appointment sends nothing.
-    static func updateEvent(_ draft: EventDraft, id: String) -> String {
-        let sends = draft.attendeeList.isEmpty && draft.rooms.isEmpty ? "SendToNone" : "SendToChangedAndSaveCopy"
+    /// Changed files go to everyone (`sendToAll`), not only to the people whose part changed.
+    static func updateEvent(_ draft: EventDraft, id: String, sendToAll: Bool = false) -> String {
+        let sends = draft.attendeeList.isEmpty && draft.rooms.isEmpty ? "SendToNone"
+            : sendToAll ? "SendToAllAndSaveCopy" : "SendToChangedAndSaveCopy"
         func set(_ field: String, _ element: String) -> String {
             """
                           <t:SetItemField><t:FieldURI FieldURI="\(field)"/><t:CalendarItem>\(element)</t:CalendarItem></t:SetItemField>
@@ -45,6 +49,14 @@ enum CalendarSOAP {
             changes.append(set("item:ReminderMinutesBeforeStart",
                                "<t:ReminderMinutesBeforeStart>\(minutes)</t:ReminderMinutesBeforeStart>"))
         }
+        changes.append(draft.categories.isEmpty
+            ? #"              <t:DeleteItemField><t:FieldURI FieldURI="item:Categories"/></t:DeleteItemField>"#
+            : set("item:Categories", categories(draft.categories)))
+        changes.append(draft.charm.map { charm in
+            """
+                          <t:SetItemField>\(EventCharm.fieldURI)<t:CalendarItem>\(charmProperty(charm))</t:CalendarItem></t:SetItemField>
+            """
+        } ?? "              <t:DeleteItemField>\(EventCharm.fieldURI)</t:DeleteItemField>")
         changes.append(draft.attendeeList.isEmpty
             ? #"              <t:DeleteItemField><t:FieldURI FieldURI="calendar:RequiredAttendees"/></t:DeleteItemField>"#
             : set("calendar:RequiredAttendees", "<t:RequiredAttendees>\(attendees(draft.attendeeList))</t:RequiredAttendees>"))
@@ -72,6 +84,63 @@ enum CalendarSOAP {
             <m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="\(cancelMeeting ? "SendToAllAndSaveCopy" : "SendToNone")">
               <m:ItemIds><t:ItemId Id="\(SOAP.escape(id))"/></m:ItemIds>
             </m:DeleteItem>
+        """
+    }
+
+    // MARK: - Attachments
+
+    /// Files added to an event, in one request. The bytes go Base64 in the XML, as EWS takes them.
+    static func createAttachments(_ files: [EventDraft.NewFile], parent id: String) -> String {
+        let items = files.map { file in
+            "<t:FileAttachment><t:Name>\(SOAP.escape(file.name))</t:Name><t:Content>\(file.data.base64EncodedString())</t:Content></t:FileAttachment>"
+        }.joined(separator: "\n        ")
+        return """
+            <m:CreateAttachment>
+              <m:ParentItemId Id="\(SOAP.escape(id))"/>
+              <m:Attachments>
+                \(items)
+              </m:Attachments>
+            </m:CreateAttachment>
+        """
+    }
+
+    static func deleteAttachments(_ ids: [String]) -> String {
+        """
+            <m:DeleteAttachment>
+              <m:AttachmentIds>\(ids.map { #"<t:AttachmentId Id="\#(SOAP.escape($0))"/>"# }.joined())</m:AttachmentIds>
+            </m:DeleteAttachment>
+        """
+    }
+
+    // MARK: - Availability
+
+    /// Free or busy for each person over `start..<end`, for the People sidebar. Times go as UTC,
+    /// with a zero-bias zone, so nothing depends on the server's idea of the user's zone. The
+    /// window is whole days, which every Exchange version accepts.
+    static func availability(_ addresses: [String], start: Date, end: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let from = utc.startOfDay(for: start)
+        let to = utc.date(byAdding: .day, value: 1, to: utc.startOfDay(for: max(end, start))) ?? end
+        let zone = "<t:Bias>0</t:Bias><t:StandardTime><t:Bias>0</t:Bias><t:Time>02:00:00</t:Time><t:DayOrder>5</t:DayOrder><t:Month>10</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:StandardTime><t:DaylightTime><t:Bias>0</t:Bias><t:Time>02:00:00</t:Time><t:DayOrder>1</t:DayOrder><t:Month>4</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:DaylightTime>"
+        let mailboxes = addresses.map {
+            "<t:MailboxData><t:Email><t:Address>\(SOAP.escape($0))</t:Address></t:Email><t:AttendeeType>Required</t:AttendeeType><t:ExcludeConflicts>false</t:ExcludeConflicts></t:MailboxData>"
+        }.joined()
+        return """
+            <m:GetUserAvailabilityRequest>
+              <t:TimeZone>\(zone)</t:TimeZone>
+              <m:MailboxDataArray>\(mailboxes)</m:MailboxDataArray>
+              <t:FreeBusyViewOptions>
+                <t:TimeWindow><t:StartTime>\(formatter.string(from: from))</t:StartTime><t:EndTime>\(formatter.string(from: to))</t:EndTime></t:TimeWindow>
+                <t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>
+                <t:RequestedView>FreeBusy</t:RequestedView>
+              </t:FreeBusyViewOptions>
+            </m:GetUserAvailabilityRequest>
         """
     }
 
@@ -157,11 +226,13 @@ enum CalendarSOAP {
             "<t:Subject>\(SOAP.escape(draft.subjectOrDefault))</t:Subject>",
             "<t:Sensitivity>\(draft.isPrivate ? "Private" : "Normal")</t:Sensitivity>",
             #"<t:Body BodyType="HTML">\#(SOAP.escape(ComposeHTML.html(from: draft.notes)))</t:Body>"#,
-            "<t:ReminderIsSet>\(draft.reminderMinutes != nil)</t:ReminderIsSet>",
         ]
+        if !draft.categories.isEmpty { lines.append(categories(draft.categories)) }
+        lines.append("<t:ReminderIsSet>\(draft.reminderMinutes != nil)</t:ReminderIsSet>")
         if let minutes = draft.reminderMinutes {
             lines.append("<t:ReminderMinutesBeforeStart>\(minutes)</t:ReminderMinutesBeforeStart>")
         }
+        if let charm = draft.charm { lines.append(charmProperty(charm)) }
         lines += [
             "<t:Start>\(SOAP.isoDate(draft.requestStart))</t:Start>",
             "<t:End>\(SOAP.isoDate(draft.requestEnd))</t:End>",
@@ -176,6 +247,14 @@ enum CalendarSOAP {
             lines.append("<t:Resources>\(attendees(draft.rooms.map(\.address)))</t:Resources>")
         }
         return lines.map { "          " + $0 }.joined(separator: "\n")
+    }
+
+    private static func categories(_ names: [String]) -> String {
+        "<t:Categories>" + names.map { "<t:String>\(SOAP.escape($0))</t:String>" }.joined() + "</t:Categories>"
+    }
+
+    private static func charmProperty(_ charm: Int) -> String {
+        "<t:ExtendedProperty>\(EventCharm.fieldURI)<t:Value>\(charm)</t:Value></t:ExtendedProperty>"
     }
 
     private static func attendees(_ addresses: [String]) -> String {
@@ -252,6 +331,35 @@ extension EWSResponse {
         }
     }
 
+    /// One state per address, in request order, as the reply lists them: `Free`, `Tentative`,
+    /// `Busy`, `OOF`, `WorkingElsewhere`, or `NoData` when the server could not say.
+    static func availability(from data: Data, addresses: [String], start: Date, end: Date) throws -> [String: String] {
+        let root = try parse(data)
+        let rank = ["Free": 0, "WorkingElsewhere": 1, "Tentative": 2, "Busy": 3, "OOF": 4]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        func date(_ text: String) -> Date? { parseDate(text) ?? formatter.date(from: String(text.prefix(19))) }
+        var result: [String: String] = [:]
+        for (address, response) in zip(addresses, root.all("FreeBusyResponse")) {
+            guard response.child("ResponseMessage")?.attributes["ResponseClass"] != "Error" else {
+                result[address.lowercased()] = "NoData"
+                continue
+            }
+            var state = "Free"
+            for event in response.all("CalendarEvent") {
+                guard let from = event.child("StartTime").flatMap({ date($0.trimmedText) }),
+                      let to = event.child("EndTime").flatMap({ date($0.trimmedText) }),
+                      from < end, to > start else { continue }
+                let type = event.child("BusyType")?.trimmedText ?? "Busy"
+                if (rank[type] ?? 0) > (rank[state] ?? 0) { state = type }
+            }
+            result[address.lowercased()] = state
+        }
+        return result
+    }
+
     static func roomAddresses(from data: Data, element: String) throws -> [Room] {
         let root = try parse(data)
         if root.first("ResponseCode")?.trimmedText.hasPrefix("Error") == true { return [] }
@@ -264,12 +372,44 @@ extension EWSResponse {
 }
 
 extension EWSClient {
+    /// With files, three steps, as Exchange's own API does it: save the event telling nobody,
+    /// attach the files, then send the invitations, so they arrive with the files in them.
     func createEvent(_ draft: EventDraft, at url: URL, credential: EWSCredential) async throws {
-        try await calendarWrite(CalendarSOAP.createEvent(draft), url: url, credential: credential)
+        guard !draft.newFiles.isEmpty else {
+            try await calendarWrite(CalendarSOAP.createEvent(draft), url: url, credential: credential)
+            return
+        }
+        let created = try await raw(CalendarSOAP.createEvent(draft, invite: false), url: url, credential: credential)
+        let root = try EWSResponse.parse(created)
+        _ = try EWSResponse.responseMessages(in: root)
+        guard let id = root.first("ItemId")?.attributes["Id"] else {
+            throw EWSError.invalidResponse("Exchange did not return the new event.")
+        }
+        try await calendarWrite(CalendarSOAP.createAttachments(draft.newFiles, parent: id), url: url, credential: credential)
+        if draft.sendsInvitations {
+            try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id, sendToAll: true), url: url, credential: credential)
+        }
     }
 
+    /// Files first, removed then added, so the update that follows sends the event as it now is.
     func updateEvent(_ draft: EventDraft, id: String, at url: URL, credential: EWSCredential) async throws {
-        try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id), url: url, credential: credential)
+        if !draft.removedFileIDs.isEmpty {
+            try await calendarWrite(CalendarSOAP.deleteAttachments(Array(draft.removedFileIDs)), url: url, credential: credential)
+        }
+        if !draft.newFiles.isEmpty {
+            try await calendarWrite(CalendarSOAP.createAttachments(draft.newFiles, parent: id), url: url, credential: credential)
+        }
+        try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id, sendToAll: draft.changesFiles),
+                                url: url, credential: credential)
+    }
+
+    /// Each address's state over the event's time: the busiest thing they have in it.
+    func availability(_ addresses: [String], start: Date, end: Date, at url: URL,
+                      credential: EWSCredential) async throws -> [String: String] {
+        // No time zone header: the request carries its own zone, UTC, and the header would compete.
+        let data = try await sendRaw(SOAP.envelope(.exchange2010SP2, body: CalendarSOAP.availability(addresses, start: start, end: end),
+                                                   timeZone: nil), to: url, credential: credential)
+        return try EWSResponse.availability(from: data, addresses: addresses, start: start, end: end)
     }
 
     func deleteEvent(id: String, cancelMeeting: Bool, at url: URL, credential: EWSCredential) async throws {

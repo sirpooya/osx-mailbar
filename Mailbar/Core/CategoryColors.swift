@@ -43,13 +43,22 @@ enum CategoryColors {
     static func tint(for event: CalendarEvent, colors: [String: Int]) -> Color {
         if event.isCancelled { return .gray }
         guard let first = event.categories.first else { return .accentColor }
+        return color(forName: first, colors: colors)
+    }
+
+    /// One category's colour by the same rule, for the form's picker and the detail panel.
+    static func color(forName name: String, colors: [String: Int]) -> Color {
         if !colors.isEmpty {
-            if let index = colors[first] { return color(index: index) ?? neutral }
+            if let index = colors[name] { return color(index: index) ?? neutral }
             return neutral
         }
-        if let index = guessedIndex(forName: first), let color = color(index: index) { return color }
+        if let index = guessedIndex(forName: name), let color = color(index: index) { return color }
         return neutral
     }
+
+    /// OWA's default categories, offered when the master list cannot be read.
+    static let defaultNames = ["Blue category", "Green category", "Orange category", "Purple category",
+                               "Red category", "Yellow category"]
 
     /// No colour: `color="-1"` in the master list. Outlook and OWA draw such an event grey.
     static let noColor = -1

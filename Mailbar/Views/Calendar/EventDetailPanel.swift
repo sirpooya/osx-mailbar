@@ -50,6 +50,11 @@ struct EventDetailPanel: View {
                 Spacer()
             case .loaded(let detail):
                 people(detail)
+                if !detail.files.isEmpty, let account = store.account {
+                    AttachmentStrip(files: detail.files, accountID: account.id, store: store.mail)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                }
                 if !detail.html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Divider().opacity(0.6).padding(.top, 8)
                     MessageWebView(html: ReaderHTML.document(body: detail.html, images: [:], allowRemoteImages: false))
@@ -130,8 +135,16 @@ struct EventDetailPanel: View {
 
     private func summary(_ event: CalendarEvent) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            DirectionalText(event.subject, font: .system(size: 17, weight: .semibold))
-                .strikethrough(event.isCancelled)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if let charm = event.charm.flatMap(EventCharm.init) {
+                    Image(systemName: charm.symbol)
+                        .font(.system(size: 14))
+                        .foregroundStyle(store.tint(for: event))
+                        .help(charm.label)
+                }
+                DirectionalText(event.subject, font: .system(size: 17, weight: .semibold))
+                    .strikethrough(event.isCancelled)
+            }
             if event.isCancelled {
                 Label("Cancelled", systemImage: "xmark.circle").font(.system(size: 12)).foregroundStyle(.red)
             }
@@ -146,7 +159,7 @@ struct EventDetailPanel: View {
                     ForEach(event.categories, id: \.self) { name in
                         HStack(spacing: 4) {
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(store.tint(for: CalendarEventCategoryProbe.event(name)))
+                                .fill(store.categoryColor(name))
                                 .frame(width: 10, height: 10)
                             Text(name).font(.system(size: 11))
                         }
@@ -226,15 +239,5 @@ struct EventDetailPanel: View {
         case "Organizer": return "person.crop.circle"
         default: return "circle.dashed"
         }
-    }
-}
-
-/// A stand-in event carrying one category, so the detail panel can ask the store for that single
-/// category's colour with the same rule the grid uses.
-enum CalendarEventCategoryProbe {
-    static func event(_ category: String) -> CalendarEvent {
-        CalendarEvent(id: "", changeKey: "", subject: "", start: .distantPast, end: .distantPast,
-                      isAllDay: false, location: "", organizer: "", isRecurring: false, isMeeting: false,
-                      isCancelled: false, myResponse: "", showAs: "", isPrivate: false, categories: [category])
     }
 }

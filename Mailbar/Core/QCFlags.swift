@@ -14,6 +14,14 @@ enum QCFlags {
     static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil || openToday }
     /// `--open-today`: the popover on its Today tab.
     static var openToday: Bool { has("--open-today") }
+    /// `--today-offset=1`: with `--open-today`, the Today tab on that many days from today.
+    static var todayOffset: Int? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--today-offset=") }.flatMap { Int($0.dropFirst("--today-offset=".count)) }
+        #else
+        return nil
+        #endif
+    }
     static var openMessage: Bool { openMessageIndex != nil }
     /// `--compose=reply` or `--compose=new`: the composer with sample text, mock mode only.
     static var composeKind: String? {
@@ -47,6 +55,22 @@ enum QCFlags {
 
     /// `--calendar-new`: the calendar with the new event form open.
     static var calendarNew: Bool { has("--calendar-new") }
+
+    /// `--calendar-rooms=هفت`: with `--calendar-new`, the room picker open, searching for that.
+    static var calendarRooms: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--calendar-rooms=") }.map { String($0.dropFirst("--calendar-rooms=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
+    /// `--calendar-charms`, `--calendar-categories`: with `--calendar-new`, that picker open.
+    static var calendarCharms: Bool { has("--calendar-charms") }
+    static var calendarCategories: Bool { has("--calendar-categories") }
+
+    /// `--calendar-drag`: the calendar with a new event being dragged out today, 10:00 to 11:30.
+    static var calendarDrag: Bool { has("--calendar-drag") }
 
     /// `--calendar-select=Design Weekly`: the calendar with that event's detail panel open.
     static var calendarSelect: String? {

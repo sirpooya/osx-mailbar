@@ -27,7 +27,7 @@ exists so you can stop keeping a 2 GB mail client open all day.
 ## Calendar
 
 - **Day, Week and Month**, laid out like Outlook on the web, the week starting Saturday; opened
-  from the menu bar icon's right-click menu (Cmd+K).
+  from the menu bar icon's right-click menu, or Cmd+K in the popover.
 - Swipe between weeks the way Apple's Calendar does; events in their Outlook category colours; a
   narrow window switches to Day.
 - **Create, edit and delete events**, with rooms, people (suggested from your company directory),

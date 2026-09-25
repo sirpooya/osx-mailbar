@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = MailStore(accounts: accounts, client: client)
         reminders = EventReminders(mail: store)
         if QCFlags.openToday { store.popoverTab = .today }
+        if let offset = QCFlags.todayOffset { store.dayOffset = offset }
         store.refreshToday = { [weak self] in
             await self?.reminders.update(force: true, schedule: MockMode.current == nil)
         }
@@ -171,8 +172,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 CalendarWindow.shared.store?.startNewEvent()
                 CalendarWindow.shared.store?.editor?.subject = "Design review"
-                CalendarWindow.shared.store?.editor?.attendees = "sara.rahimi@example.com, "
+                CalendarWindow.shared.store?.editor?.people = [.init(name: "Sara Rahimi", address: "sara.rahimi@example.com"),
+                                                               .init(name: "Omid Karimi", address: "omid@example.org")]
+                CalendarWindow.shared.store?.editor?.categories = ["Storybook"]
+                CalendarWindow.shared.store?.editor?.charm = EventCharm.group.rawValue
+                CalendarWindow.shared.store?.editor?.newFiles = [.init(name: "Agenda.pdf", data: Data(count: 18_400))]
                 CalendarWindow.shared.store?.editor?.rooms = [Room(name: "Room Blue", address: "room.blue@example.com")]
+            }
+        }
+        if QCFlags.calendarDrag {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard let start = Calendar.current.date(bySettingHour: 10, minute: 0, second: 0, of: Date()) else { return }
+                CalendarWindow.shared.store?.draggedRange = start...start.addingTimeInterval(90 * 60)
             }
         }
         if let title = QCFlags.calendarSelect {
@@ -253,7 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// key first. Matched by key code, never by character, so it keeps working on the Persian
     /// layout (see `EditingShortcut`).
     private func installEditingShortcuts() {
-        editingShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        editingShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.statusItemController.handleCalendarShortcut(event) == true { return nil }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard flags == .command || flags == [.command, .shift],
                   let shortcut = EditingShortcut.match(keyCode: event.keyCode,

@@ -39,9 +39,9 @@ struct MessageRowView: View {
         Button(action: onOpen) { rowContent }
             .buttonStyle(.plain)
             .onHover { isHovering = $0 }
-            // The four actions over the sender line while the pointer is on the row, the way
-            // Outlook shows them. Over the sender rather than the time, so the time never hides.
-            .overlay(alignment: .topTrailing) {
+            // The four actions at the row's trailing edge while the pointer is on it, the way
+            // Outlook shows them: over the subject line, so the time on the sender line never hides.
+            .overlay(alignment: .trailing) {
                 if isHovering {
                     MessageActionButtons(message: message, accountID: accountID, store: store, size: 11)
                         .foregroundStyle(.secondary)
@@ -50,7 +50,6 @@ struct MessageRowView: View {
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(Color(nsColor: .windowBackgroundColor)))
-                        .padding(.top, Metrics.verticalPadding - 3)
                         .padding(.trailing, Metrics.horizontalPadding - 4)
                 }
             }
@@ -83,9 +82,18 @@ struct MessageRowView: View {
             unreadDot
 
             VStack(alignment: .leading, spacing: Metrics.lineSpacing) {
-                DirectionalText(message.senderName,
-                                font: .system(size: 13, weight: message.isRead ? .regular : .semibold))
-                    .foregroundStyle(.primary)
+                // The time sits in front of the sender, on line 1 (the user's call, 2026-09-25).
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    DirectionalText(message.senderName,
+                                    font: .system(size: 13, weight: message.isRead ? .regular : .semibold))
+                        .foregroundStyle(.primary)
+                    if message.hasAttachments {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    receivedTime
+                }
 
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     DirectionalText(message.subject,
@@ -121,24 +129,23 @@ struct MessageRowView: View {
 
     private var trailingMarks: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            if message.hasAttachments {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
             if message.isFlagged {
                 Image(systemName: "flag.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.red)
             }
-            Text(RelativeTime.label(for: message.received))
-                .font(.system(size: 11, weight: message.isRead ? .regular : .medium))
-                .monospacedDigit()
-                .foregroundStyle(message.isRead ? Color.secondary : Color.accentColor)
-                .lineLimit(1)
         }
-        // Never squeezed: the subject gives way, the time does not.
         .fixedSize()
+    }
+
+    /// Never squeezed: the sender gives way, the time does not.
+    private var receivedTime: some View {
+        Text(RelativeTime.label(for: message.received))
+            .font(.system(size: 11, weight: message.isRead ? .regular : .medium))
+            .monospacedDigit()
+            .foregroundStyle(message.isRead ? Color.secondary : Color.accentColor)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     private var accessibilityDescription: String {

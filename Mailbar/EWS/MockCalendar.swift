@@ -20,6 +20,9 @@ enum MockCalendar {
         var attendees: [(String, String, String)] = []
         var notes = ""
         var categories: [String] = []
+        var charm: Int?
+        /// Attached files: id, name, size.
+        var files: [(String, String, Int)] = []
     }
 
     /// The mock mailbox's master category list: OWA's defaults plus a custom "Storybook", whose
@@ -40,6 +43,46 @@ enum MockCalendar {
                     <t:XmlData>\(Data(categoryListXML.utf8).base64EncodedString())</t:XmlData>
                   </m:UserConfiguration>
         """)
+    }
+
+    private static func charmXML(_ charm: Int?) -> String {
+        charm.map { "<t:ExtendedProperty>\(EventCharm.fieldURI)<t:Value>\($0)</t:Value></t:ExtendedProperty>" } ?? ""
+    }
+
+    private static func filesXML(_ files: [(String, String, Int)]) -> String {
+        guard !files.isEmpty else { return "" }
+        return "<t:Attachments>" + files.map { id, name, size in
+            "<t:FileAttachment><t:AttachmentId Id=\"\(id)\"/><t:Name>\(SOAP.escape(name))</t:Name><t:ContentType>application/octet-stream</t:ContentType><t:Size>\(size)</t:Size><t:IsInline>false</t:IsInline></t:FileAttachment>"
+        }.joined() + "</t:Attachments>"
+    }
+
+    /// Busy blocks for the People sidebar: Sara is busy whenever the mock calendar is, everyone
+    /// else is free, and an address outside the invented domains has no data.
+    static func availabilityResponse(_ addresses: [String], events: [Event]) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let responses = addresses.map { address -> String in
+            guard address.hasSuffix("example.com") || address.hasSuffix("example.org") else {
+                return "<m:FreeBusyResponse><m:ResponseMessage ResponseClass=\"Error\"><m:ResponseCode>ErrorMailRecipientNotFound</m:ResponseCode></m:ResponseMessage></m:FreeBusyResponse>"
+            }
+            let busy = address.hasPrefix("sara") ? events.filter { !$0.isAllDay } : []
+            let blocks = busy.map {
+                "<t:CalendarEvent><t:StartTime>\(formatter.string(from: $0.start))</t:StartTime><t:EndTime>\(formatter.string(from: $0.end))</t:EndTime><t:BusyType>\($0.showAs)</t:BusyType></t:CalendarEvent>"
+            }.joined()
+            return "<m:FreeBusyResponse><m:ResponseMessage ResponseClass=\"Success\"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage><m:FreeBusyView><t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType><t:CalendarEventArray>\(blocks)</t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse>"
+        }.joined()
+        return """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>\
+        <m:GetUserAvailabilityResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">\
+        <m:FreeBusyResponseArray>\(responses)</m:FreeBusyResponseArray></m:GetUserAvailabilityResponse></s:Body></s:Envelope>
+        """
+    }
+
+    static func createdResponse(id: String) -> String {
+        wrap("CreateItem", "<m:Items><t:CalendarItem><t:ItemId Id=\"\(id)\" ChangeKey=\"ck\"/></t:CalendarItem></m:Items>")
     }
 
     private static func categoriesXML(_ names: [String]) -> String {
@@ -116,7 +159,8 @@ enum MockCalendar {
                   categories: ["Shared team"]),
             Event(id: "ev-wed-farewell", subject: "Nima's Farewell", start: at(0, wednesday, 17),
                   end: minutes(at(0, wednesday, 17), 30), organizer: "Mahan Rostami", organizerAddress: "mahan@example.com",
-                  categories: ["Red category"]),
+                  categories: ["Red category"], charm: EventCharm.cake.rawValue,
+                  files: [("att-ev-card", "Farewell card.pdf", 48_213)]),
             Event(id: "ev-thu-holiday", subject: "Company holiday", start: at(0, thursday, 0),
                   end: at(0, thursday + 1, 0), isAllDay: true, isMeeting: false, response: "Organizer", showAs: "Free"),
             Event(id: "ev-next-planning", subject: "Quarterly planning", start: at(1, sunday, 10),
@@ -153,6 +197,10 @@ enum MockCalendar {
               <m:Rooms>
                 <t:Room><t:Id><t:Name>Room Blue</t:Name><t:EmailAddress>room.blue@example.com</t:EmailAddress></t:Id></t:Room>
                 <t:Room><t:Id><t:Name>Room Green</t:Name><t:EmailAddress>room.green@example.com</t:EmailAddress></t:Id></t:Room>
+                <t:Room><t:Id><t:Name>ساختمان نمونه | طبقه سه | اتاق آبی</t:Name><t:EmailAddress>room.f3.blue@example.com</t:EmailAddress></t:Id></t:Room>
+                <t:Room><t:Id><t:Name>ساختمان نمونه | طبقه سه | اتاق سبز</t:Name><t:EmailAddress>room.f3.green@example.com</t:EmailAddress></t:Id></t:Room>
+                <t:Room><t:Id><t:Name>ساختمان نمونه | طبقه هفت | اتاق کوچک</t:Name><t:EmailAddress>room.f7.small@example.com</t:EmailAddress></t:Id></t:Room>
+                <t:Room><t:Id><t:Name>ساختمان نمونه | طبقه هفت | اتاق بزرگ</t:Name><t:EmailAddress>room.f7.large@example.com</t:EmailAddress></t:Id></t:Room>
               </m:Rooms>
     """)
 
@@ -178,6 +226,7 @@ enum MockCalendar {
                         \(categoriesXML(event.categories))
                         <t:ReminderIsSet>\(!event.isAllDay)</t:ReminderIsSet>
                         <t:ReminderMinutesBeforeStart>15</t:ReminderMinutesBeforeStart>
+                        \(charmXML(event.charm))
                         <t:Start>\(formatter.string(from: event.start))</t:Start>
                         <t:End>\(formatter.string(from: event.end))</t:End>
                         <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>
@@ -212,7 +261,9 @@ enum MockCalendar {
                       <t:ItemId Id="\(event.id)" ChangeKey="ck"/>
                       <t:Subject>\(SOAP.escape(event.subject))</t:Subject>
                       <t:Body BodyType="HTML">\(SOAP.escape(event.notes))</t:Body>
+                      \(filesXML(event.files))
                       \(categoriesXML(event.categories))
+                      \(charmXML(event.charm))
                       <t:Start>\(formatter.string(from: event.start))</t:Start>
                       <t:End>\(formatter.string(from: event.end))</t:End>
                       <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>

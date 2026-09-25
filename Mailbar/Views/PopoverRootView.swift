@@ -3,9 +3,9 @@ import SwiftUI
 
 /// The popover: one view, the Inbox, for one account at a time.
 ///
-/// With several accounts the title becomes a menu, and a two-finger swipe steps between them the
-/// way osx-jirabar steps between board columns. With one account there is nothing to switch and
-/// the title is plain text.
+/// With several accounts the title becomes a menu; there is no swipe between accounts (the user
+/// took it out, 2026-09-25). With one account the title is plain text. On the Today tab a
+/// sideways swipe goes through the days.
 struct PopoverRootView: View {
     @Bindable var store: MailStore
     let onOpenSettings: () -> Void
@@ -25,8 +25,11 @@ struct PopoverRootView: View {
     @State private var swipeMonitor: Any?
     @FocusState private var searchFocused: Bool
     @State private var swipe = SwipeTracker()
+    @State private var daySwipe = PagerSwipe()
 
     private static let swipeThreshold: CGFloat = 40
+    /// The list's tallest, and the fixed height of both tabs when Today is on.
+    static let contentHeight: CGFloat = 460
 
     private var accounts: [Account] { store.accounts.accounts }
 
@@ -82,6 +85,9 @@ struct PopoverRootView: View {
                         insertion: .move(edge: goesForward ? .trailing : .leading),
                         removal: .move(edge: goesForward ? .leading : .trailing).combined(with: .opacity)))
             }
+            // With the Today tab on, both tabs get exactly this height, so switching never resizes
+            // the popover: a resize moved the whole panel and read as the header jumping.
+            .frame(height: showToday ? Self.contentHeight : nil, alignment: .top)
             .clipped()
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: store.selectedAccount?.id)
             Divider().opacity(0.5)
@@ -158,15 +164,9 @@ struct PopoverRootView: View {
         ZStack {
             if showToday { tabSwitch } else { title }
 
-            if showToday, accounts.count > 1 {
-                HStack {
-                    accountMenu
-                    Spacer(minLength: 0)
-                }
-            }
-
+            // Compose sits at the left edge on both tabs (the user's call, 2026-09-25), then the
+            // account menu when there are several accounts.
             HStack(spacing: 10) {
-                Spacer(minLength: 0)
                 Button {
                     store.startNewMessage()
                 } label: {
@@ -179,9 +179,16 @@ struct PopoverRootView: View {
                 .help(store.draft?.hasContent == true ? "Back to the message you are writing" : "New message (Command N)")
                 .accessibilityLabel("New message")
                 .disabled(store.selectedAccount == nil)
+                if showToday, accounts.count > 1 { accountMenu }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
 
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
                 // Search belongs to the Inbox; on the Today tab it leaves the row entirely rather
-                // than leaving a hole (the user's call, 2026-09-25).
+                // than leaving a hole. It goes and comes without a transition: animated, it slid
+                // the icons beside it and the bar looked as if it changed height.
                 if !showsTodayTab {
                     Button {
                         if store.isSearchOpen { store.closeSearch() } else { store.isSearchOpen = true }
@@ -193,6 +200,7 @@ struct PopoverRootView: View {
                     .help("Search the Inbox (Cmd+F)")
                     .accessibilityLabel("Search the Inbox")
                     .disabled(store.selectedAccount == nil)
+                    .transition(.identity)
                 }
 
                 Button(action: onOpenSettings) {
@@ -202,6 +210,7 @@ struct PopoverRootView: View {
                 .help("Settings")
                 .accessibilityLabel("Settings")
             }
+            .animation(nil, value: showsTodayTab)
             .foregroundStyle(.secondary)
         }
         // One height whatever the tab shows: the search glyph comes and goes with the Inbox tab,
@@ -470,7 +479,7 @@ struct PopoverRootView: View {
                         Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .keyboardShortcut("r", modifiers: .command)
                     .help("Check for new mail (Command R)")
                     .accessibilityLabel("Check for new mail")
@@ -490,8 +499,7 @@ struct PopoverRootView: View {
 
     // MARK: - Switching accounts
 
-    /// Used by the menu and the swipe alike, so choosing from the menu travels the same way as
-    /// swiping to the same account.
+    /// The account menu: the inbox leaves the way the chosen account lies in the list.
     private func select(_ account: Account) {
         if let from = store.selectedAccount.flatMap({ current in accounts.firstIndex { $0.id == current.id } }),
            let to = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -500,22 +508,15 @@ struct PopoverRootView: View {
         store.selectedAccountID = account.id
     }
 
-    private func step(forward: Bool) {
-        guard let current = store.selectedAccount,
-              let index = accounts.firstIndex(where: { $0.id == current.id }) else { return }
-        let next = index + (forward ? 1 : -1)
-        // The ends hold instead of wrapping.
-        guard accounts.indices.contains(next) else { return }
-        select(accounts[next])
-    }
-
     /// A trackpad swipe is a run of scroll events with phases, which no SwiftUI gesture reports,
     /// so a local monitor collects them. It never consumes the event: the list still scrolls.
     private func installSwipe() {
         guard swipeMonitor == nil else { return }
         swipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-            handleSwipe(event)
-            return event
+            // Local monitors run on the main thread; the event just is not marked Sendable.
+            nonisolated(unsafe) let scroll = event
+            let consumed = MainActor.assumeIsolated { handleSwipe(scroll) }
+            return consumed ? nil : event
         }
     }
 
@@ -524,8 +525,14 @@ struct PopoverRootView: View {
         swipeMonitor = nil
     }
 
-    private func handleSwipe(_ event: NSEvent) {
-        // Inside a message the only swipe is back, fingers moving right, as in Safari.
+    /// True when the swipe paged the Today tab's day and must not also scroll the hours.
+    private func handleSwipe(_ event: NSEvent) -> Bool {
+        // On the Today tab: through the days, only for swipes inside the popover itself.
+        if store.openMessage == nil, !store.isComposing, showsTodayTab,
+           let window = store.popoverWindow, event.window === window {
+            return daySwipe.handle(event, pager: store.dayPager)
+        }
+        // In a message: back, fingers moving right, as in Safari.
         if store.openMessage != nil {
             if event.phase.contains(.began) {
                 swipe.began()
@@ -534,19 +541,8 @@ struct PopoverRootView: View {
             } else if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
                 if swipe.ended(threshold: Self.swipeThreshold) == .right { back() }
             }
-            return
         }
-        guard accounts.count > 1 else { return }
-        if event.phase.contains(.began) {
-            swipe.began()
-        } else if event.phase.contains(.changed) {
-            swipe.moved(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
-        } else if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-            // Fingers moving left bring in the next account, as with pages.
-            if let direction = swipe.ended(threshold: Self.swipeThreshold) {
-                step(forward: direction == .left)
-            }
-        }
+        return false
     }
 }
 
@@ -586,6 +582,6 @@ struct InboxListView: View {
             .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: messages.map(\.id))
         }
         // About seven rows in the popover, which must not run past the bottom of the screen.
-        .frame(maxHeight: 460)
+        .frame(maxHeight: PopoverRootView.contentHeight)
     }
 }

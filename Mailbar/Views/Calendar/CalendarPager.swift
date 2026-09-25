@@ -93,6 +93,56 @@ final class CalendarPager {
     }
 }
 
+/// A trackpad swipe turned into paging, for the popover's Today tab: the first few points decide
+/// the axis, sideways events then drive the pager and are consumed so the hours do not also
+/// scroll, and the momentum after a sideways swipe is swallowed. The calendar window does the
+/// same in `CalendarWindow.handleSwipe`.
+@MainActor
+final class PagerSwipe {
+    private enum Axis { case undecided, horizontal, vertical }
+    private var axis: Axis = .undecided
+    private var travel = CGSize.zero
+
+    /// True when the event was used for paging and must not reach the scroll view.
+    func handle(_ event: NSEvent, pager: CalendarPager) -> Bool {
+        let time = event.timestamp
+        if !event.momentumPhase.isEmpty { return axis == .horizontal }
+        if event.phase.contains(.began) {
+            axis = .undecided
+            travel = .zero
+            pager.began()
+            return false
+        }
+        if event.phase.contains(.changed) {
+            if axis == .undecided {
+                travel.width += event.scrollingDeltaX
+                travel.height += event.scrollingDeltaY
+                guard abs(travel.width) + abs(travel.height) > 4 else { return false }
+                axis = abs(travel.width) > abs(travel.height) ? .horizontal : .vertical
+                if axis == .horizontal { pager.moved(by: travel.width, at: time) }
+                return axis == .horizontal
+            }
+            guard axis == .horizontal else { return false }
+            pager.moved(by: event.scrollingDeltaX, at: time)
+            return true
+        }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            defer { if axis != .horizontal { axis = .undecided } }
+            guard axis == .horizontal else { return false }
+            pager.ended(at: time)
+            return true
+        }
+        // A mouse with a sideways wheel sends no phases: one decisive push is one page.
+        if event.phase.isEmpty,
+           let direction = SwipeTracker.direction(ofUnphasedDeltaX: event.scrollingDeltaX,
+                                                  deltaY: event.scrollingDeltaY, threshold: 40) {
+            pager.settle(forward: direction == .left)
+            return true
+        }
+        return false
+    }
+}
+
 /// Three pages side by side, -1, 0 and 1, offset by the pager. Used for the header, the all-day
 /// strip and the hour grid alike, so all three move as one.
 struct PagerStrip<Page: View>: View {

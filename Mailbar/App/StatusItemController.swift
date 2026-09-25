@@ -85,6 +85,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         // Without this the popover opens behind the frontmost app's windows.
         popover.contentViewController?.view.window?.makeKey()
+        store.popoverWindow = popover.contentViewController?.view.window
         // Opening is a check: the list should be current the moment it is looked at.
         onRefresh()
     }
@@ -120,6 +121,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         onOpenCalendar?()
     }
 
+    /// Cmd+K while the popover has focus. The tray menu's "k" only answers while that menu is
+    /// open, so the popover needs its own. Matched by key code (kVK_ANSI_K), as the editing
+    /// shortcuts are, so it also works on the Persian layout.
+    func handleCalendarShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == .command, event.keyCode == 0x28, popover.isShown,
+              let window = event.window, window === popover.contentViewController?.view.window
+        else { return false }
+        menuCalendar()
+        return true
+    }
+
     @objc private func menuSettings() { openSettings() }
 
     private func openSettings() {
@@ -137,6 +150,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         store.openMessage = nil
         store.pendingArchive = nil
         store.closeSearch()
+        store.resetDay()
     }
 
     // MARK: - Icon

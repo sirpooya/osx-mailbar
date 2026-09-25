@@ -253,36 +253,48 @@ private struct ModeSwitcher: View {
     let compact: Bool
 
     @Namespace private var pill
+    /// The segment the pill sits under. Its own state, moved inside `withAnimation`, so the pill
+    /// slides while the calendar under it cuts straight to the new view, as Apple's does
+    /// (animating the mode itself morphed every column and header between layouts).
+    @State private var shown: CalendarStore.Mode
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    init(selection: Binding<CalendarStore.Mode>, compact: Bool) {
+        _selection = selection
+        self.compact = compact
+        _shown = State(initialValue: selection.wrappedValue)
+    }
+
     var body: some View {
+        let current = shown
         HStack(spacing: 2) {
             ForEach(CalendarStore.Mode.allCases) { mode in
                 Button {
-                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) { selection = mode }
+                    selection = mode
                 } label: {
                     Text(mode.label)
-                        .font(.system(size: 13, weight: selection == mode ? .medium : .regular))
+                        .font(.system(size: 13, weight: current == mode ? .medium : .regular))
                         .foregroundStyle(.primary)
                         .padding(.horizontal, compact ? 10 : 14)
                         .frame(height: 24)
-                        .background {
-                            if selection == mode {
-                                Capsule().fill(Color.primary.opacity(0.1))
-                                    .matchedGeometryEffect(id: "pill", in: pill)
-                            }
-                        }
+                        .matchedGeometryEffect(id: mode, in: pill)
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
         }
+        // One pill that travels between the segments, rather than one per segment that appears
+        // and disappears, so there is always a frame to animate from.
+        .background {
+            Capsule().fill(Color.primary.opacity(0.1))
+                .matchedGeometryEffect(id: current, in: pill, isSource: false)
+        }
+        .onChange(of: selection) { _, mode in
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) { shown = mode }
+        }
         .padding(3)
-        .background(
-            Capsule()
-                .fill(CalendarSurface.background)
-                .shadow(color: .black.opacity(0.08), radius: 3, y: 1))
-        .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .background(Capsule().fill(CalendarSurface.background))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.16), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("View")
     }

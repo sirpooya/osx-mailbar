@@ -24,6 +24,8 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     var categories: [String] = []
     /// Minutes before the start, or nil when no reminder is set (M18).
     var reminderMinutes: Int? = nil
+    /// OWA's charm, the small icon beside the title (`EventCharm`), or nil for none.
+    var charm: Int? = nil
 
     /// Not yet answered or only tentatively: OWA draws these hatched, and so does the grid.
     var isTentative: Bool {
@@ -70,6 +72,8 @@ struct EventDetail: Equatable, Sendable {
     var reminderMinutes: Int? = nil
     /// The rooms with their addresses, for editing the booking.
     var roomBoxes: [Room] = []
+    /// Files attached to the event. Bytes are fetched only when one is opened or saved.
+    var files: [FileAttachment] = []
 }
 
 extension EWSResponse {
@@ -105,7 +109,21 @@ extension EWSResponse {
             isPrivate: item.child("Sensitivity")?.trimmedText == "Private",
             categories: (item.child("Categories")?.children ?? []).map(\.trimmedText).filter { !$0.isEmpty },
             reminderMinutes: item.child("ReminderIsSet")?.trimmedText == "true"
-                ? (item.child("ReminderMinutesBeforeStart").flatMap { Int($0.trimmedText) } ?? 15) : nil)
+                ? (item.child("ReminderMinutesBeforeStart").flatMap { Int($0.trimmedText) } ?? 15) : nil,
+            charm: charm(in: item))
+    }
+
+    /// The charm's extended property, when the event has one OWA knows.
+    static func charm(in item: XMLTreeNode) -> Int? {
+        for property in item.children where property.name == "ExtendedProperty" {
+            guard let uri = property.child("ExtendedFieldURI"),
+                  uri.attributes["PropertySetId"]?.uppercased() == EventCharm.propertySetID,
+                  uri.attributes["PropertyId"].flatMap({ Int($0) }) == EventCharm.propertyID,
+                  let value = property.child("Value").flatMap({ Int($0.trimmedText) }),
+                  EventCharm(rawValue: value) != nil else { continue }
+            return value
+        }
+        return nil
     }
 
     static func eventDetail(from data: Data) throws -> EventDetail {
@@ -137,6 +155,15 @@ extension EWSResponse {
                            rooms: rooms,
                            html: item.child("Body")?.text ?? "",
                            reminderMinutes: reminderSet ? (reminder ?? 15) : nil,
-                           roomBoxes: roomBoxes)
+                           roomBoxes: roomBoxes,
+                           files: (item.child("Attachments")?.children ?? []).compactMap { attachment in
+                               guard attachment.name == "FileAttachment",
+                                     attachment.child("IsInline")?.trimmedText != "true",
+                                     let id = attachment.child("AttachmentId")?.attributes["Id"] else { return nil }
+                               return FileAttachment(id: id,
+                                                     name: attachment.child("Name").map(\.trimmedText).flatMap { $0.isEmpty ? nil : $0 } ?? "Attachment",
+                                                     contentType: attachment.child("ContentType")?.trimmedText ?? "",
+                                                     size: attachment.child("Size").flatMap { Int($0.trimmedText) } ?? 0)
+                           })
     }
 }
