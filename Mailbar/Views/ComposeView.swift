@@ -35,8 +35,16 @@ struct ComposeView: View {
                     .frame(height: Self.editorHeight)
                 footer(draft)
             }
-            .onAppear {
-                if draft.kind == .forward || draft.kind == .new, draft.to.isEmpty { focus = .to }
+            // A new message or a forward opens with the cursor in To. Set once the composer is on
+            // screen, not in onAppear: set while it slid in, the focus was dropped and AppKit put
+            // the cursor in Cc (the user's screenshot, 2026-09-25).
+            .task {
+                guard draft.kind == .forward || draft.kind == .new, draft.to.isEmpty else { return }
+                for _ in 0..<3 {
+                    try? await Task.sleep(for: .milliseconds(120))
+                    guard !Task.isCancelled else { return }
+                    focus = .to
+                }
             }
         }
     }

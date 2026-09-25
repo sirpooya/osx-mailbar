@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The add and edit sheet.
@@ -59,9 +60,13 @@ struct AccountEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(isNew ? "Add Exchange Account" : "Edit \(draft.displayName)")
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.leading, SettingsMetrics.rowHPadding)
+            // Only a new account gets a heading; editing opens straight on its fields (the
+            // user's call, 2026-09-25).
+            if isNew {
+                Text("Add Exchange Account")
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.leading, SettingsMetrics.rowHPadding)
+            }
 
             SettingsSection(isNew && !showsDetails ? nil : "Account",
                             footnote: isNew && !showsDetails
@@ -106,6 +111,15 @@ struct AccountEditorView: View {
         }
         .onChange(of: password) {
             if password.isEmpty { usedLogin = nil }
+        }
+        // Opens with no field focused (the user's call, 2026-09-25): a sheet makes its first text
+        // field first responder by itself, so that is undone once the sheet is up.
+        .task {
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(60))
+                guard !Task.isCancelled else { return }
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
         }
         .task {
             guard isNew else { return }

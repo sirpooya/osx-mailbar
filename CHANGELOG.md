@@ -46,6 +46,7 @@ section when a release is cut.
 - In the event form's time fields, Shift with the Up or Down arrow moves the time by 10 minutes.
 - Distribution groups show as groups in the event form's People and in a message's To and Cc, with Expand to put their members in their place.
 - Settings, People directory: set the address of a JSON list of people to add a whole team or department at once when inviting people or writing mail, with their photos.
+- Command-comma opens Settings while the popover is open.
 
 ### Changed
 - The new menu bar and app icons.
@@ -88,11 +89,16 @@ section when a release is cut.
 - The event form's Description fills the space down to the buttons, attached files sit just above it, and the toolbar's icons share one size.
 - The event form opens with no field selected.
 - Recipient suggestions in the composer now include your company directory, not only people who have written to you.
+- Settings has two tabs: General (accounts, refresh, notifications, startup) and Calendar (Today tab, event reminders, people directory).
+- Settings now has three tabs, General, Accounts and Calendar, under a clean top bar with only the close button; it opens on Accounts when none is set up.
+- Settings rows drop their subtitles, account rows open their editor on a click, and the account editor opens without a heading or a focused field.
+- The people directory shows a status dot, keeps its saved address locked behind Edit with Connect to change it, and remembers how many people it last read.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
 - The pin icon in the event form's Location field.
 - The placeholder icons on the event form's Charm and Categorize buttons.
+- The Today tab switch in Settings; the Today tab is always there.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -110,4 +116,5 @@ section when a release is cut.
 - The Description label lines up with the first line of its box.
 - Dates and times in the event form sit centred in their boxes and start at the same inset as the other fields.
 - The date picker no longer shows a focus ring when it opens.
+- A new message or a forward opens with the cursor in To, not Cc.
 

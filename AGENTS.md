@@ -440,6 +440,20 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `Resources/AppIcon.icon` (needs Xcode 26). Both follow osx-jirabar.
 - 2026-09-24 Settings is an `NSWindow` this app owns, built from `SettingsComponents.swift`
   (mac-pro skill), not a SwiftUI `Settings` scene.
+- 2026-09-25 Settings tabs, the user's split: General (refresh, notifications, startup, the
+  privacy note), Accounts (the account list), Calendar (event reminders, people directory).
+  The top copies osx-launchpad's: no title strip, only the close button, the tab bar (glyph over
+  label, 72 pt items, accent when selected on a 0.04 grey pill) straight under it, movable by its
+  background. It opens on Accounts while there is none. Pickers hug their size so they end where
+  the switches do. Rows carry no subtitles (the user: "too extra"). The Today tab is always on:
+  its switch was removed. A click anywhere on an account row opens its editor; the editor has no
+  "Edit ..." heading and opens with no field focused. `--settings-tab=` (DEBUG) opens a tab.
+- 2026-09-25 The people directory's address reads like the compliance-audit plugin's endpoints
+  (the user's pick): a status dot (green read, red failed, amber only the remembered count, grey
+  unset), the saved address locked behind Edit, Connect to read a new one (it locks again only
+  once it worked; a failure stays open with the reason). Settings reads it on showing it, and
+  the last good read's count and time are kept in UserDefaults (`peopleDirectoryCount`,
+  `peopleDirectoryReadAt`, a number and a date, never the people) so "51 people" shows at once.
 - 2026-09-24 Polling, not push, for v1: every couple of minutes (Settings, 1 to 10), on popover
   open, and once on wake. Each poll is `GetFolder` for the count plus `FindItem` for the newest 50.
   **Not `SyncFolderItems`**, which the first draft of this file called for: a sync from no state
@@ -501,8 +515,8 @@ No telemetry, no analytics. Network calls, exhaustively:
   no DNS SRV lookup.
 - Remote images inside a message, only when the user clicks "Load images" for that message.
 - The people directory, only when the user has set its address in Settings: one plain GET for
-  the list (at most every ten minutes, when a picker, a People field or a recipient field needs
-  it), and GETs for photos on that same host only. No credentials are sent.
+  the list (at most every ten minutes, when a picker, a People field, a recipient field or the
+  Settings tab needs it), and GETs for photos on that same host only. No credentials are sent.
 
 Reading the login Keychain: while adding an account, the sheet looks up internet-password items
 for the address's user names, on the email's own domain only, attributes only (no prompt, no
@@ -528,7 +542,7 @@ WebKit cache, no thumbnails, no "offline" mode.
   with `GetUserPhoto` when the form opens, held by the form alone, gone when it closes. The
   people directory's photos too: fetched by the view that shows them, held by it alone.
 - The people directory's list (names, work addresses, teams) is held in memory only, read again
-  after ten minutes or a relaunch.
+  after ten minutes or a relaunch. Only the last read's count and time are stored, for Settings.
 - `URLSession` uses `URLSessionConfiguration.ephemeral` with `urlCache = nil`.
   `WKWebView` uses `WKWebsiteDataStore.nonPersistent()`, one store per reader, released on close.
 - Pre-2013 servers only: previews built from text bodies are held in memory for rows still in the

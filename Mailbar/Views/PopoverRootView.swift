@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The popover: one view, the Inbox, for one account at a time.
+/// The popover: the Inbox and Today tabs, for one account at a time.
 ///
-/// With several accounts the title becomes a menu; there is no swipe between accounts (the user
-/// took it out, 2026-09-25). With one account the title is plain text. On the Today tab a
-/// sideways swipe goes through the days.
+/// With several accounts a menu at the header's left picks one; there is no swipe between
+/// accounts (the user took it out, 2026-09-25). On the Today tab a sideways swipe goes through
+/// the days.
 struct PopoverRootView: View {
     @Bindable var store: MailStore
     let onOpenSettings: () -> Void
@@ -14,7 +14,6 @@ struct PopoverRootView: View {
     /// The Today strip's rows open their event in the calendar (M19).
     var onOpenEvent: (UUID, String) -> Void = { _, _ in }
 
-    @AppStorage(Keys.showToday) private var showToday = true
     @Namespace private var tabPill
 
     private static let width: CGFloat = 380
@@ -63,6 +62,14 @@ struct PopoverRootView: View {
         // primary text read dim grey and secondary read brighter than it (measured 2026-09-24).
         // The window background follows the appearance itself, so the text always matches it.
         .background(Color(nsColor: .windowBackgroundColor))
+        // Cmd+, opens Settings from anywhere in the popover: the list, a message or the composer.
+        .background {
+            Button("Settings", action: onOpenSettings)
+                .keyboardShortcut(",", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
         .onAppear { installSwipe() }
         .onDisappear { removeSwipe() }
     }
@@ -87,7 +94,7 @@ struct PopoverRootView: View {
             }
             // With the Today tab on, both tabs get exactly this height, so switching never resizes
             // the popover: a resize moved the whole panel and read as the header jumping.
-            .frame(height: showToday ? Self.contentHeight : nil, alignment: .top)
+            .frame(height: Self.contentHeight, alignment: .top)
             .clipped()
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: store.selectedAccount?.id)
             Divider().opacity(0.5)
@@ -158,11 +165,11 @@ struct PopoverRootView: View {
 
     /// A ZStack so the title stays centred on the panel whatever the buttons beside it measure.
     /// The Today tab is on (Settings) and chosen.
-    private var showsTodayTab: Bool { showToday && store.popoverTab == .today }
+    private var showsTodayTab: Bool { store.popoverTab == .today }
 
     private var header: some View {
         ZStack {
-            if showToday { tabSwitch } else { title }
+            tabSwitch
 
             // Compose sits at the left edge on both tabs (the user's call, 2026-09-25), then the
             // account menu when there are several accounts.
@@ -179,7 +186,7 @@ struct PopoverRootView: View {
                 .help(store.draft?.hasContent == true ? "Back to the message you are writing" : "New message (Command N)")
                 .accessibilityLabel("New message")
                 .disabled(store.selectedAccount == nil)
-                if showToday, accounts.count > 1 { accountMenu }
+                if accounts.count > 1 { accountMenu }
                 Spacer(minLength: 0)
             }
             .foregroundStyle(.secondary)
@@ -207,7 +214,7 @@ struct PopoverRootView: View {
                     Image(systemName: "gearshape").font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help("Settings")
+                .help("Settings (Command ,)")
                 .accessibilityLabel("Settings")
             }
             .animation(nil, value: showsTodayTab)
@@ -218,40 +225,6 @@ struct PopoverRootView: View {
         .frame(height: 22)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-    }
-
-    @ViewBuilder
-    private var title: some View {
-        if accounts.count > 1 {
-            Menu {
-                ForEach(accounts) { account in
-                    Button {
-                        select(account)
-                    } label: {
-                        let count = store.unreadCount(for: account.id)
-                        Label(count > 0 ? "\(account.displayName)  (\(count))" : account.displayName,
-                              systemImage: store.selectedAccount?.id == account.id ? "checkmark" : "")
-                    }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    titleText
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle())
-            }
-            // `.button` renders the whole composed label; `.borderlessButton` drops all but the
-            // first view (osx-jirabar).
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .accessibilityLabel("Inbox of \(store.selectedAccount?.displayName ?? "no account"). Choose an account.")
-        } else {
-            titleText
-        }
     }
 
     /// Inbox | Today, in the calendar's capsule style, the unread count on Inbox (M19).
@@ -328,27 +301,6 @@ struct PopoverRootView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-    }
-
-    private var titleText: some View {
-        HStack(spacing: 5) {
-            Text(accounts.count > 1 ? "Inbox · \(store.selectedAccount?.displayName ?? "")" : "Inbox")
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            let count = store.selectedAccount.map { store.unreadCount(for: $0.id) } ?? 0
-            if count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 12)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.primary.opacity(0.08)))
-                    .help(count == 1 ? "1 unread message" : "\(count) unread messages")
-            }
-        }
     }
 
     // MARK: - Content

@@ -26,8 +26,16 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
         let window = NSWindow(contentViewController: hosting)
         window.title = "Mailbar Settings"
-        window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: SettingsMetrics.windowWidth, height: QCFlags.settingsHeight ?? 480))
+        // The top after osx-launchpad's Settings (the user's pick): no title strip, the close
+        // button floating over the content and the tabs straight under it.
+        window.styleMask = [.titled, .closable, .fullSizeContentView]
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.setContentSize(NSSize(width: SettingsMetrics.windowWidth,
+                                     height: QCFlags.settingsHeight ?? 480 + SettingsMetrics.tabBarHeight + 28))
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()

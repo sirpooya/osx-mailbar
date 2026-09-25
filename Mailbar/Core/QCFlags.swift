@@ -57,6 +57,16 @@ enum QCFlags {
         #endif
     }
 
+    /// `--settings-tab=calendar`: Settings opens on that tab.
+    static var settingsTab: SettingsTab? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--settings-tab=") }
+            .flatMap { SettingsTab(rawValue: String($0.dropFirst("--settings-tab=".count)).capitalized) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--settings-height=1200`: the Settings window that tall, to photograph the lower sections.
     static var settingsHeight: CGFloat? {
         #if DEBUG

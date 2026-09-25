@@ -207,6 +207,7 @@ final class PeopleDirectory {
             loadedAt = Date()
             loadedFrom = url.absoluteString
             phase = .loaded
+            remember(count: people.count, at: loadedAt)
         } catch is CancellationError {
             phase = people.isEmpty ? .idle : .loaded
         } catch let error as DirectoryError {
@@ -226,6 +227,27 @@ final class PeopleDirectory {
         phase = .idle
         loadedAt = nil
         loadedFrom = nil
+        remember(count: nil, at: nil)
+    }
+
+    /// The last good read's size and time, kept across launches so Settings shows them at once.
+    var lastCount: Int? {
+        UserDefaults.standard.object(forKey: Keys.peopleDirectoryCount) as? Int
+    }
+
+    var lastReadAt: Date? {
+        UserDefaults.standard.object(forKey: Keys.peopleDirectoryReadAt) as? Date
+    }
+
+    private func remember(count: Int?, at date: Date?) {
+        let defaults = UserDefaults.standard
+        if let count, let date {
+            defaults.set(count, forKey: Keys.peopleDirectoryCount)
+            defaults.set(date, forKey: Keys.peopleDirectoryReadAt)
+        } else {
+            defaults.removeObject(forKey: Keys.peopleDirectoryCount)
+            defaults.removeObject(forKey: Keys.peopleDirectoryReadAt)
+        }
     }
 
     /// The person's photo from the directory. Never kept here (no image is cached anywhere):

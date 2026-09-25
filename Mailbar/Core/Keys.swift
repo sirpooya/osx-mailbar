@@ -19,11 +19,13 @@ enum Keys {
     static let notificationDetails = "mailbar.notificationDetails"
     /// Event reminders on or off (M18).
     static let eventReminders = "mailbar.eventReminders"
-    /// The Today strip above the inbox (M19).
-    static let showToday = "mailbar.showToday"
     /// The people directory's address (a JSON list of people with team and department), or
     /// empty for none. Never a default: the user types it.
     static let peopleDirectoryURL = "mailbar.peopleDirectoryURL"
+    /// How many people the directory's last good read listed, and when, so Settings can say so
+    /// before it reads again. A count and a time only, never the people.
+    static let peopleDirectoryCount = "mailbar.peopleDirectoryCount"
+    static let peopleDirectoryReadAt = "mailbar.peopleDirectoryReadAt"
 
     // Calendar (M15)
     /// Day, work week, week or month, as last chosen.
@@ -43,7 +45,6 @@ enum Keys {
             notifyNewMail: true,
             notificationDetails: true,
             eventReminders: true,
-            showToday: true,
             // The user's OWA: the week runs Saturday to Friday, the work week Saturday to
             // Wednesday, working hours 9 to 17.
             calendarWeekStart: 7,
