@@ -70,7 +70,8 @@ in mock mode. The Milestones section below is the record; none is open.
   team; department; role; avatar (relative paths resolve against the endpoint). Departed people
   are dropped. It adds a "Add a team or department" picker (department and team popups, each
   person ticked, `DirectoryPicker`) beside People and on To and Cc, puts its people and their
-  team in the type-ahead, and its photo wins over `GetUserPhoto` for any address it lists.
+  role, team and department in the type-ahead, shows each invitee's role beside free or busy in
+  the event form's People, and its photo wins over `GetUserPhoto` for any address it lists.
   Photos load only from the endpoint's own host; a file named `default` is the placeholder, not
   a face. **The URL is never in code** (public repo): the user types it; the real one is in
   `AGENTS.local.md`. **Unproven on the real server**: `ExpandDL` on a real group.

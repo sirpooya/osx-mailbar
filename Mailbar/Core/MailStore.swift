@@ -487,7 +487,7 @@ final class MailStore {
         let local = recipientSuggestions(for: token, excluding: typed)
         await directory.loadIfNeeded()
         let fromDirectory = directory.matches(token).filter { !already.contains($0.id) }
-            .map { PersonSuggestion(name: $0.name, address: $0.address, detail: $0.detail) }
+            .map { PersonSuggestion(name: $0.name, address: $0.address, detail: $0.detail, role: $0.role) }
         var fromServer: [PersonSuggestion] = []
         if token.count >= 2, let accountID, let (url, credential) = connection(for: accountID) {
             fromServer = ((try? await client.resolveNames(token, at: url, credential: credential)) ?? [])
@@ -498,7 +498,10 @@ final class MailStore {
         return (fromDirectory + fromServer + local)
             .map { person in
                 var person = person
-                if person.detail.isEmpty, let known = directory.person(for: person.address) { person.detail = known.detail }
+                if person.detail.isEmpty, let known = directory.person(for: person.address) {
+                    person.detail = known.detail
+                    person.role = known.role
+                }
                 if knownGroups[person.id] != nil { person.isGroup = true }
                 return person
             }
@@ -539,7 +542,10 @@ final class MailStore {
         learn(result.members)
         let members = result.members.map { member in
             var member = member
-            if let known = directory.person(for: member.address) { member.detail = known.detail }
+            if let known = directory.person(for: member.address) {
+                member.detail = known.detail
+                member.role = known.role
+            }
             return member
         }
         return (members, result.complete)

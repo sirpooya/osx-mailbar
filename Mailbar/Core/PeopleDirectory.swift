@@ -11,6 +11,8 @@ struct PersonSuggestion: Identifiable, Hashable, Sendable {
     var isGroup = false
     /// Team and department, from the people directory, when it knows the person.
     var detail = ""
+    /// Their role there ("Product Designer"), when the directory gives one.
+    var role = ""
 
     var id: String { address.lowercased() }
     var display: String { name.isEmpty ? address : name }

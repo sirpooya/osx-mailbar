@@ -101,7 +101,8 @@ import Testing
         let (store, account) = await makeStore()
         let found = await store.peopleSuggestions(for: "design", excluding: "", accountID: account)
         #expect(found.contains { $0.address == "designteam@example.com" && $0.isGroup })
-        #expect(found.contains { $0.address == "narges@example.com" && $0.detail == "Design · Product" })
+        #expect(found.contains { $0.address == "narges@example.com" && $0.detail == "Design · Product"
+                                  && $0.role == "Product Designer" })
         #expect(!found.contains { $0.address == "kaveh.shams@example.com" })
     }
 

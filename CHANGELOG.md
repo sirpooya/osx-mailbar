@@ -47,6 +47,7 @@ section when a release is cut.
 - Distribution groups show as groups in the event form's People and in a message's To and Cc, with Expand to put their members in their place.
 - Settings, People directory: set the address of a JSON list of people to add a whole team or department at once when inviting people or writing mail, with their photos.
 - Command-comma opens Settings while the popover is open.
+- The event form's People shows each person's role from the people directory, beside free or busy and in the suggestions.
 
 ### Changed
 - The new menu bar and app icons.
