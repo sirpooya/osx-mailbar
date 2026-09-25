@@ -10,6 +10,8 @@ section when a release is cut.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-26
+
 ### Added
 - Settings window where you add, edit, test and delete Exchange accounts. Passwords are kept in your Keychain.
 - Menu bar icon and app icon.

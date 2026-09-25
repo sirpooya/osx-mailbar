@@ -1,0 +1,10 @@
+{
+  "changelog": "CHANGELOG.md",
+  "devRepo": "sirpooya/osx-mailbar",
+  "releaseRepo": "sirpooya/osx-mailbar",
+  "updater": "none",
+  "versionFiles": ["project.yml"],
+  "buildCommand": "xcodegen generate && xcodebuild -project Mailbar.xcodeproj -scheme Mailbar -configuration Release -derivedDataPath .dd build && ditto -c -k --keepParent .dd/Build/Products/Release/Mailbar.app Mailbar-{version}.zip",
+  "artifacts": ["Mailbar-{version}.zip"],
+  "push": true
+}
