@@ -112,6 +112,8 @@ import Testing
         #expect(store.directory.phase == .loaded)
         #expect(store.directory.departments == ["Engineering", "Operations", "Product"])
         #expect(store.directory.teams(in: "Product") == ["Design"])
+        #expect(store.directory.roles(in: "Engineering", team: "Platform")
+                == ["Backend Engineer", "Engineering Manager", "iOS Engineer"])
         #expect(await store.directory.avatar(for: "narges@example.com") != nil)
         #expect(await store.directory.avatar(for: "sara.rahimi@example.com") == nil)
     }

@@ -68,10 +68,12 @@ in mock mode. The Milestones section below is the record; none is open.
   list of people. Parsed generically (`DirectoryJSON`): `items`, `users`, `people`, `data` or a
   bare array; name; the work address from `workEmail`, `email`, or any field ending in "email";
   team; department; role; avatar (relative paths resolve against the endpoint). Departed people
-  are dropped. It adds a "Add a team or department" picker (department and team popups, each
-  person ticked, `DirectoryPicker`) beside People and on To and Cc, puts its people and their
-  role, team and department in the type-ahead, shows each invitee's role beside free or busy in
-  the event form's People, and its photo wins over `GetUserPhoto` for any address it lists.
+  are dropped. It adds an "Add a team" picker (team and role popups, roles narrowed to the team;
+  no department filter, removed 2026-09-25 at the user's request; each person ticked,
+  `DirectoryPicker`) beside People and on To and Cc, and puts its people with their team and
+  department in the type-ahead. Roles appear ONLY in that
+  filter and the picker's rows, never in an invitee's or a suggestion's subtitle (the user's
+  call, 2026-09-25). Its photo wins over `GetUserPhoto` for any address it lists.
   Photos load only from the endpoint's own host; a file named `default` is the placeholder, not
   a face. **The URL is never in code** (public repo): the user types it; the real one is in
   `AGENTS.local.md`. **Unproven on the real server**: `ExpandDL` on a real group.
@@ -342,7 +344,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   33 icons, SF Symbols, shown before the title on blocks and in the detail panel); Files (Add
   Files or drop onto the form, bytes in memory until Save, 25 MB together at most); and a People
   sidebar on the right after OWA's, where typing suggests from `ResolveNames` plus inbox senders,
-  Up, Down and Return pick, and each person shows Free, Busy, Tentative, Away or No information
+  Up, Down and Return pick (no plus button beside the field, removed 2026-09-25 as useless, the
+  user's call), and each person shows Free, Busy, Tentative, Away or No information
   for the event's time (`GetUserAvailability`, UTC in the request, no zone header). Rooms are
   found by typing in Location (no separate Rooms button, the user's call): the matching rooms
   list under the field (every word, ignoring case and the Arabic and Persian ye and kaf); a click

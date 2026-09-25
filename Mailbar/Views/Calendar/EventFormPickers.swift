@@ -232,7 +232,7 @@ struct PeopleSidebar: View {
                         Avatar(name: person.display, size: 26, photo: photos[person.id], isGroup: person.isGroup)
                         VStack(alignment: .leading, spacing: 0) {
                             DirectionalText(person.display, font: .system(size: 12.5))
-                            Text(((person.isGroup ? ["Group"] : [person.role, person.detail]) + [person.address])
+                            Text(((person.isGroup ? ["Group"] : [person.detail]) + [person.address])
                                     .filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -255,7 +255,7 @@ struct PeopleSidebar: View {
     }
 
     private func personRow(name: String, address: String, note: String?, removable: (() -> Void)?) -> some View {
-        PersonRow(name: name, address: address, note: note, role: role(address), status: statuses[address.lowercased()],
+        PersonRow(name: name, address: address, note: note, status: statuses[address.lowercased()],
                   photo: photos[address.lowercased()], onRemove: removable)
     }
 
@@ -263,22 +263,17 @@ struct PeopleSidebar: View {
     private func personRow(_ person: EventDraft.Invitee) -> some View {
         let group = store.mail.isGroup(person.address)
         return PersonRow(name: group ? store.mail.groupName(person.address) ?? person.display : person.display,
-                         address: person.address, note: group ? "Group" : nil, role: group ? nil : role(person.address),
+                         address: person.address, note: group ? "Group" : nil,
                          status: group ? nil : statuses[person.id], photo: group ? nil : photos[person.id],
                          isGroup: group, isExpanding: expanding.contains(person.id),
                          onExpand: group ? { Task { await expand(person) } } : nil,
                          onRemove: { store.editor?.people.removeAll { $0 == person } })
     }
 
-    /// The person's role from the people directory, when it lists them with one.
-    private func role(_ address: String) -> String? {
-        store.mail.directory.person(for: address).flatMap { $0.role.isEmpty ? nil : $0.role }
-    }
-
     private var directoryButton: some View {
         Button { directoryOpen.toggle() } label: { Image(systemName: "person.3") }
             .buttonStyle(.borderless)
-            .help("Add a team or department")
+            .help("Add a team")
             .popover(isPresented: $directoryOpen, arrowEdge: .bottom) {
                 DirectoryPicker(directory: store.mail.directory,
                                 already: Set(draft.attendeeList.map { $0.lowercased() } + [store.account?.email.lowercased() ?? ""])) { people in
@@ -351,8 +346,6 @@ private struct PersonRow: View {
     let name: String
     let address: String
     let note: String?
-    /// From the people directory, beside free or busy.
-    var role: String? = nil
     let status: String?
     let photo: NSImage?
     var isGroup = false
@@ -373,7 +366,6 @@ private struct PersonRow: View {
                         Text(label)
                     }
                     if let note { Text(status == nil ? note : "· \(note)") }
-                    if let role { Text(status == nil && note == nil ? role : "· \(role)").lineLimit(1) }
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)

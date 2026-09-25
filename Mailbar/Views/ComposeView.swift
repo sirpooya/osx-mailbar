@@ -157,7 +157,7 @@ struct ComposeView: View {
                         Image(systemName: "person.3").font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
-                    .help("Add a team or department")
+                    .help("Add a team")
                     .popover(isPresented: Binding(get: { pickingFor == field }, set: { if !$0 { pickingFor = nil } }),
                              arrowEdge: .bottom) {
                         DirectoryPicker(directory: store.directory,

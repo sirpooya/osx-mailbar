@@ -164,6 +164,13 @@ final class PeopleDirectory {
         Self.sortedNames(people.filter { department == nil || $0.department == department }.map(\.team))
     }
 
+    /// Roles, those within a department and team when they are given.
+    func roles(in department: String?, team: String?) -> [String] {
+        Self.sortedNames(people.filter {
+            (department == nil || $0.department == department) && (team == nil || $0.team == team)
+        }.map(\.role))
+    }
+
     func person(for address: String) -> DirectoryPerson? {
         let key = address.lowercased()
         return people.first { $0.id == key }
