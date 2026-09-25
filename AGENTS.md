@@ -312,25 +312,65 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   The block is only drawn on screen: nothing reaches the server until Save or Send, and Cancel
   drops it. Double-click still makes an hour on the half hour. `--calendar-drag` (DEBUG) draws
   one for screenshots, since QC cannot synthesize a drag without Accessibility.
-- 2026-09-25 The event form, rebuilt at the user's request: a date field (with a calendar
-  popover) and a time field, then a Duration (or Days when all day), no end field; Category
+- 2026-09-25 The event form, rebuilt at the user's request, times after Outlook for Mac (the
+  user's pick after trying a lone Duration menu and a slider): a Duration menu with All day event
+  and Private on one line, then Starts and Ends, each a date box with its calendar inside and a
+  time box; the duration sets the end, editing the end updates it. Labels are right-aligned with
+  a colon throughout. Location has no icon. The series end row is "Until", so it never reads as
+  a second "Ends"; Category
   (the master list with its colours, several allowed, the first colours the event); Charm (OWA's
   33 icons, SF Symbols, shown before the title on blocks and in the detail panel); Files (Add
   Files or drop onto the form, bytes in memory until Save, 25 MB together at most); and a People
   sidebar on the right after OWA's, where typing suggests from `ResolveNames` plus inbox senders,
   Up, Down and Return pick, and each person shows Free, Busy, Tentative, Away or No information
-  for the event's time (`GetUserAvailability`, UTC in the request, no zone header). Rooms are a
-  popover with a search field matching every word, ignoring case and the Arabic and Persian ye
-  and kaf. Nothing is sent before Save or Send; Cancel sends nothing (tested).
+  for the event's time (`GetUserAvailability`, UTC in the request, no zone header). Rooms are
+  found by typing in Location (no separate Rooms button, the user's call): the matching rooms
+  list under the field (every word, ignoring case and the Arabic and Persian ye and kaf); a click
+  selects one, Add to meeting (or a double-click, or Return) books the selected one, Check
+  availability marks every listed room Free or Busy for the event's time. Nothing is sent before Save or Send; Cancel sends nothing (tested).
   **Unproven on the real server**: the charm is extended property 0x0027 in property set
   `11000E07-B51B-40D6-AF21-CAA85EDAB1D0` (Integer, 1 to 33), known from OWA and Graph, not from
   the EWS docs; and an event with files is created with `SendToNone`, given its files with
   `CreateAttachment`, then sent with `UpdateItem` `SendToAllAndSaveCopy`, so the invitations
   carry them. Edits delete and add files first, then update; changed files send to everyone.
+- 2026-09-25 The event form's Title is a bordered field with its label, like Location (the
+  user's call). The People sidebar shows each person's photo from `GetUserPhoto` (Exchange 2013
+  and later, 96 px), initials when there is none. The directory server in Outlook's settings
+  (the Global Catalog, LDAP) is still not used: `ResolveNames` and `GetUserPhoto` reach the same
+  directory through the Exchange server.
+- 2026-09-25 More event form calls by the user: Show as lists OWA's order, Free, Working
+  elsewhere, Tentative, Busy, Away, each with Outlook's swatch (`ShowAsSwatch`, untinted images).
+  A click on the form's empty space ends editing (`EndEditingArea`); labels let clicks through.
+  Layout after OWA (the user's sketch): a title bar with the form's name alone, a toolbar under
+  it with Attach, Charm and Categorize (each showing what is chosen), white like the form with no
+  line between them; the form opens with the cursor in Title; the body is "Description" (OWA's
+  word), never "Notes"; a bottom bar with the status line on the
+  left and Cancel and Send on the right. The Files row shows only when there are files.
+  Repeat follows OWA's list, worded from the start date: Never, Every day, Every Wednesday,
+  Every workday (Settings' work days), Day 23 of every month, Every fourth Wednesday, Every
+  September 23, and Other... (`RepeatPatternEditor`: daily, weekly on chosen days, monthly by
+  day or by week, yearly, every N); a repeating event gets an Until row (no end, on a date, after
+  N times: `NoEndRecurrence`, `EndDateRecurrence`, `NumberedRecurrence`). Show as and Reminder
+  moved to the toolbar (Charm and Categorize show no icon until one is chosen). Dates read
+  year/month/day (2026/09/25: the date picker takes the en_ZA locale, Gregorian, for that order
+  alone); times are 24-hour, 09:00 (en_GB), because no locale pads a 12-hour hour and the picker
+  takes no format; Shift with Up or Down moves a time by 10 minutes (`SteppingDatePicker`).
+  Repeat's Other editor offers Outlook's Daily, Weekly, Monthly, Yearly; Monthly then asks "day
+  25" or "the fourth Friday". Fields are one
+  `FieldBox` look, 28 pt tall; dates and times are
+  bezel-less `NSDatePicker`s inside it, the calendar button inside the date box; popups are
+  `NSPopUpButton`s at a set width (`PopUpMenu`), since a SwiftUI menu Picker ignores its frame.
+  OWA's Response options sit behind a light gear beside People (a plain button opening a popover
+  of two checkboxes; a menu button would not take the lighter colour): Request responses
+  (`calendar:IsResponseRequested`) and Allow forwarding (named Boolean `DoNotForward` in
+  PublicStrings, true when forwarding is off), both on by default, sent on create and every
+  update, read back for editing. `DoNotForward` is not in the EWS docs: unproven on the server.
 - 2026-09-25 The Today tab swipes through days (the user's request): the calendar window's
   paging (`CalendarPager`, `PagerStrip`, axis lock in `PagerSwipe`) on a strip of three days,
-  the day shown and its neighbours fetched in one request (`MailStore.loadNearbyDays`), only
-  those three kept, in memory. It opens on today, a "Today" capsule appears in the header once
+  the days within two of the one shown fetched ahead in one request (`MailStore.loadNearbyDays`),
+  only those within three kept, in memory. An answer is never discarded because the user swiped
+  on: over the VPN a fetch outlasts a swipe, and discarding it left the days loading for ever
+  (the user's recording). A failed day says "Could not load"; swiping back onto it retries. It opens on today, a "Today" capsule appears in the header once
   away, and closing the popover returns to today and drops the other days. Only swipes inside
   the popover's own window page it.
 - 2026-09-25 Reminders (M18) are deliberately plain: one notification per event at its
@@ -348,8 +388,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   crossing back above switches Day to Week; on opening, narrow is Day and wide turns a leftover
   Day into Week. Only crossings switch, so a view picked by hand holds until the next crossing.
   Day labels and Month weekday names use ONE format across the row, never per column.
-- 2026-09-25 Toolbar controls in Apple's style: Day, Week, Month in one capsule with a sliding
-  grey pill (`ModeSwitcher`), no shadow; Previous and Next as round grey buttons around a Today
+- 2026-09-25 Toolbar controls in Apple's style: "+ New Event" as a grey capsule (Cmd+N); Day,
+  Week, Month in one capsule with a sliding grey pill (`ModeSwitcher`), a light border, no shadow; Previous and Next as round grey buttons around a Today
   capsule.
 - 2026-09-25 Changing Day, Week, Month is a hard cut, as Apple's Calendar does it (checked frame
   by frame in a 60 fps recording): only the switcher's pill animates. Animating the mode morphed
@@ -433,7 +473,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 No telemetry, no analytics. Network calls, exhaustively:
 - Each configured account's EWS URL (mail and, since M15, the calendar: same URL, same sign-in;
   the directory search and room lists of M16, and the People sidebar's free/busy
-  (`GetUserAvailability`), go to the same URL too).
+  (`GetUserAvailability`) and people's photos (`GetUserPhoto`, 2013+), go to the same URL too).
 - While adding an account, and only when the user presses Sign In: Autodiscover at
   `https://autodiscover.<email domain>/autodiscover/autodiscover.xml`, then
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and
@@ -460,7 +500,8 @@ WebKit cache, no thumbnails, no "offline" mode.
   it dropped when the calendar window closes.
 - **Images are never cached anywhere**, memory or disk: not remote images, not inline `cid:`
   images, not sender photos. Each time a message opens they are fetched again (and remote ones only
-  after "Load images").
+  after "Load images"). People's photos in the event form's sidebar follow the same rule: fetched
+  with `GetUserPhoto` when the form opens, held by the form alone, gone when it closes.
 - `URLSession` uses `URLSessionConfiguration.ephemeral` with `urlCache = nil`.
   `WKWebView` uses `WKWebsiteDataStore.nonPersistent()`, one store per reader, released on close.
 - Pre-2013 servers only: previews built from text bodies are held in memory for rows still in the

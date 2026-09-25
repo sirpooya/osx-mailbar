@@ -9,12 +9,22 @@ struct EventEditorView: View {
     @Bindable var store: CalendarStore
     let original: EventDraft
 
-    @State private var roomsOpen = QCFlags.calendarRooms != nil
+    @State private var highlightedRoom: Room.ID?
+    @State private var roomAvailability: [String: String] = [:]
     @State private var categoriesOpen = QCFlags.calendarCategories
     @State private var charmsOpen = QCFlags.calendarCharms
     @State private var calendarOpen = false
+    /// The form opens with the cursor in the title (the user's call).
+    @FocusState private var titleFocused: Bool
+    @FocusState private var locationFocused: Bool
+    @State private var repeatEditorOpen = QCFlags.calendarRepeat
+    @State private var endCalendarOpenForSeries = false
+    @State private var endCalendarOpen = false
 
     private static let labelWidth: CGFloat = 86
+    /// Repeat, Reminder and Show as share one width (the user's call), wide enough for the
+    /// longest choice, "Working elsewhere" with its swatch.
+    private static let menuWidth: CGFloat = 190
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,37 +33,68 @@ struct EventEditorView: View {
             HStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField("Title", text: field(\.subject))
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 17, weight: .semibold))
-                            .padding(.bottom, 2)
+                        // A plain bordered field like Location, with its label (the user's call).
+                        row("Title") {
+                            FieldBox(focused: titleFocused) {
+                                TextField("Add a title", text: field(\.subject))
+                                    .textFieldStyle(.plain)
+                                    .focused($titleFocused)
+                            }
+                        }
                         location
                         Divider().opacity(0.5)
                         times
                         Divider().opacity(0.5)
                         options
                         Divider().opacity(0.5)
-                        tags
-                        Divider().opacity(0.5)
                         files
-                        Divider().opacity(0.5)
-                        row("Notes") {
-                            ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } })
+                        // The event's body, which OWA calls the description.
+                        row("Description") {
+                            ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } },
+                                          takesFocus: false)
                                 .frame(height: 110)
+                                // The text view has no baseline SwiftUI can see: its first line
+                                // sits at the 8 pt inset plus the 13 pt font's ascender, so the
+                                // label lines up with it exactly (the user's catch, twice).
+                                .alignmentGuide(.firstTextBaseline) { box in
+                                    box[.top] + 8 + NSFont.systemFont(ofSize: 13).ascender
+                                }
+                                .overlay(alignment: .topLeading) {
+                                    if draft.notes.isEmpty {
+                                        Text("Add a description")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.tertiary)
+                                            .padding(.horizontal, 13)
+                                            .padding(.vertical, 8)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
                                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
                         }
-                        footer
                     }
                     .padding(18)
+                    .background(EndEditingArea())
                 }
                 .frame(width: 540)
                 Divider().opacity(0.6)
                 PeopleSidebar(store: store, draft: draft)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            Divider().opacity(0.6)
+            bottomBar
         }
         .frame(width: 860, height: 660)
         .background(CalendarSurface.background)
+        .task {
+            // A turn after the sheet is up, or the focus has nowhere to go yet.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if let rooms = QCFlags.calendarRooms {
+                store.editor?.location = rooms
+                locationFocused = true
+            } else if QCFlags.calendarPeople == nil {
+                titleFocused = true
+            }
+        }
         // Files dropped anywhere on the form are attached.
         .dropDestination(for: URL.self) { urls, _ in
             addFiles(urls)
@@ -71,13 +112,35 @@ struct EventEditorView: View {
 
     // MARK: - Header
 
+    /// The title bar with the form's name alone, then OWA's toolbar under it: Attach, Charm and
+    /// Categorize. Cancel and Send live in the bar at the bottom (the user's layout, 2026-09-25).
     private var header: some View {
-        HStack {
+        VStack(spacing: 0) {
+            Text(draft.isNew ? "New Event" : "Edit Event")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+            // The same white as the form, no line between it and the title (the user's call).
+            HStack(spacing: 16) {
+                attachButton
+                charmButton
+                categoryButton
+                showAsMenu
+                reminderMenu
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 7)
+        }
+    }
+
+    /// What saving will do, or what stops it, on the left; Cancel and Send on the right.
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            footer
+            Spacer()
             Button("Cancel") { store.editor = nil }
                 .keyboardShortcut(.cancelAction)
-            Spacer()
-            Text(draft.isNew ? "New Event" : "Edit Event").font(.system(size: 13, weight: .semibold))
-            Spacer()
             if draft.isSaving {
                 ProgressView().controlSize(.small).frame(width: 60)
             } else {
@@ -94,18 +157,42 @@ struct EventEditorView: View {
 
     // MARK: - Fields
 
+    /// Location is also where rooms are found (the user's call, 2026-09-25: one place, not a
+    /// field and a Rooms button that did the same thing). Typing lists the organization's rooms
+    /// that match under the field; a click books one, and the bar under the list books them all
+    /// or checks which are free at the event's time.
     private var location: some View {
         VStack(alignment: .leading, spacing: 6) {
             row("Location") {
-                HStack(spacing: 6) {
-                    TextField(draft.rooms.isEmpty ? "Add a location" : draft.locationText, text: field(\.location))
-                        .textFieldStyle(.roundedBorder)
-                    roomMenu
+                FieldBox(focused: locationFocused) {
+                    TextField(draft.rooms.isEmpty ? "Add a location or a room" : draft.locationText, text: field(\.location))
+                        .textFieldStyle(.plain)
+                        .focused($locationFocused)
+                        .onKeyPress(.downArrow) { moveRoom(1); return .handled }
+                        .onKeyPress(.upArrow) { moveRoom(-1); return .handled }
+                        .onSubmit {
+                            let matches = roomMatches
+                            if let room = matches.first(where: { $0.id == highlightedRoom }) {
+                                book([room])
+                            }
+                        }
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if locationFocused, !draft.location.trimmingCharacters(in: .whitespaces).isEmpty, !roomMatches.isEmpty {
+                    RoomDropdown(rooms: roomMatches, chosen: draft.rooms, highlighted: highlightedRoom,
+                                 availability: roomAvailability,
+                                 onSelect: { highlightedRoom = $0.id },
+                                 onAdd: { book([$0]) },
+                                 onCheck: checkRooms)
+                        .padding(.leading, Self.labelWidth + 10)
+                        .offset(y: 32)
+                }
+            }
+            .zIndex(1)
             if !draft.rooms.isEmpty {
                 row("") {
-                    HStack(spacing: 5) {
+                    FlowChips {
                         ForEach(draft.rooms) { room in
                             chip(room.name, systemImage: "building.2") {
                                 store.editor?.rooms.removeAll { $0 == room }
@@ -115,96 +202,107 @@ struct EventEditorView: View {
                 }
             }
         }
+        .zIndex(1)
+        .task { await store.loadRooms() }
+        .onChange(of: draft.location) { _, _ in highlightedRoom = nil; roomAvailability = [:] }
     }
 
-    /// Rooms from the organization's room lists, loaded the first time the picker opens. A
-    /// popover with a search field rather than a menu: a real organization has too many rooms to
-    /// scroll through.
-    private var roomMenu: some View {
-        Button { roomsOpen.toggle() } label: {
-            Label("Rooms", systemImage: "building.2")
+    private var roomMatches: [Room] {
+        let query = draft.location.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        return RoomSearch.filter(store.rooms ?? [], by: query)
+    }
+
+    /// Books rooms and clears the typed words, so the location becomes the rooms' names, as OWA
+    /// fills it.
+    private func book(_ rooms: [Room]) {
+        for room in rooms where store.editor?.rooms.contains(room) == false {
+            store.editor?.rooms.append(room)
         }
-        .fixedSize()
-        .help("Book a room")
-        .popover(isPresented: $roomsOpen, arrowEdge: .bottom) {
-            RoomPicker(rooms: store.rooms, chosen: draft.rooms) { room in
-                if draft.rooms.contains(room) {
-                    store.editor?.rooms.removeAll { $0 == room }
-                } else {
-                    store.editor?.rooms.append(room)
-                }
-            }
-            .task { await store.loadRooms() }
+        store.editor?.location = ""
+        highlightedRoom = nil
+    }
+
+    private func moveRoom(_ step: Int) {
+        let matches = roomMatches
+        guard !matches.isEmpty else { return }
+        let index = matches.firstIndex { $0.id == highlightedRoom }.map { $0 + step } ?? (step > 0 ? 0 : matches.count - 1)
+        highlightedRoom = matches[max(0, min(index, matches.count - 1))].id
+    }
+
+    private func checkRooms() {
+        let addresses = roomMatches.map(\.address)
+        Task {
+            roomAvailability = await store.availability(for: addresses, start: draft.requestStart, end: draft.requestEnd)
         }
     }
 
-    /// A date and a time, each its own field, then how long (the user's call, 2026-09-25): no end
-    /// to keep in step with the start.
+    /// Start and End, each a date field with its calendar and a time field, in columns that line
+    /// up, as OWA lays them out (the user's call, 2026-09-25, after trying a length slider).
+    /// Moving the start moves the end with it; an all-day event shows dates only.
     private var times: some View {
         VStack(alignment: .leading, spacing: 8) {
-            row("Starts") {
-                HStack(spacing: 6) {
-                    DatePicker("", selection: field(\.startKeepingDuration), displayedComponents: [.date])
-                        .labelsHidden()
-                        .datePickerStyle(.field)
-                        .frame(width: 110)
-                    Button { calendarOpen.toggle() } label: { Image(systemName: "calendar") }
-                        .buttonStyle(.borderless)
-                        .help("Pick a date")
-                        .popover(isPresented: $calendarOpen, arrowEdge: .bottom) {
-                            DatePicker("", selection: field(\.startKeepingDuration), displayedComponents: [.date])
-                                .labelsHidden()
-                                .datePickerStyle(.graphical)
-                                .padding(10)
-                        }
-                    if !draft.isAllDay {
-                        DatePicker("", selection: field(\.startKeepingDuration), displayedComponents: [.hourAndMinute])
-                            .labelsHidden()
-                            .datePickerStyle(.field)
-                            .frame(width: 90)
-                            .padding(.leading, 8)
-                    }
+            // Outlook for Mac's arrangement (the user's pick): Duration and All day on one line,
+            // Starts and Ends under it. The duration sets the end; editing the end updates it.
+            row("Duration") {
+                PopUpMenu(items: durationItems, selected: durationID, width: 120) { id in
+                    if let minutes = Int(id) { store.editor?.duration = TimeInterval(minutes * 60) }
                 }
+                .disabled(draft.isAllDay)
+                Toggle("All day event", isOn: field(\.isAllDay))
+                    .toggleStyle(.checkbox)
+                    .padding(.leading, 8)
+                Toggle("Private", isOn: field(\.isPrivate))
+                    .toggleStyle(.checkbox)
+                    .padding(.leading, 8)
             }
-            row(draft.isAllDay ? "Days" : "Duration") {
-                if draft.isAllDay {
-                    Picker("", selection: field(\.days)) {
-                        ForEach(Array(Set(Array(1...14) + [draft.days])).sorted(), id: \.self) { days in
-                            Text(days == 1 ? "1 day" : "\(days) days").tag(days)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                } else {
-                    Picker("", selection: durationMinutes) {
-                        ForEach(Array(Set(EventDraft.durationChoices + [durationMinutes.wrappedValue])).sorted(), id: \.self) { minutes in
-                            Text(EventDraft.durationLabel(minutes: minutes)).tag(minutes)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    Text("until \(draft.end.formatted(date: Calendar.current.isDate(draft.end, inSameDayAs: draft.start) ? .omitted : .abbreviated, time: .shortened))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+            .onChange(of: draft.isAllDay) { _, allDay in
+                // Back from all day: an hour, not the whole span to its last day's evening.
+                if !allDay, draft.duration <= 0 || draft.duration > 24 * 3600 { store.editor?.duration = 3600 }
             }
-            row("") {
-                HStack(spacing: 18) {
-                    Toggle("All day", isOn: field(\.isAllDay))
-                    Toggle("Private", isOn: field(\.isPrivate))
-                }
-                .toggleStyle(.checkbox)
-                .onChange(of: draft.isAllDay) { _, allDay in
-                    // Back from all day: an hour, not the whole span to its last day's evening.
-                    if !allDay, draft.duration <= 0 || draft.duration > 24 * 3600 { store.editor?.duration = 3600 }
-                }
+            row("Starts") { dateTime(field(\.startKeepingDuration), calendarOpen: $calendarOpen) }
+            row("Ends") { dateTime(field(\.end), calendarOpen: $endCalendarOpen) }
+        }
+    }
+
+    private var durationMinutes: Int { Int((draft.duration / 60).rounded()) }
+    private var durationID: String { String(durationMinutes) }
+
+    /// Outlook's lengths, plus the event's own when it is none of them (a 75-minute drag).
+    private var durationItems: [PopUpMenu.Item] {
+        let minutes = Array(Set(EventDraft.durationChoices + [max(durationMinutes, 1)])).sorted()
+        return minutes.map { .init(id: String($0), title: EventDraft.durationLabel(minutes: $0)) }
+    }
+
+    /// One row's date box, with its calendar button inside it, and the time box right beside it,
+    /// at fixed widths so Start and End line up (the user's layout, 2026-09-25).
+    private func dateTime(_ date: Binding<Date>, calendarOpen: Binding<Bool>) -> some View {
+        HStack(spacing: 6) {
+            dateBox(date, calendarOpen: calendarOpen)
+            if !draft.isAllDay {
+                FieldBox { PlainDatePicker(date: date, elements: .hourMinute).fieldInset(-2.5) }
+                    .frame(width: 76)
             }
         }
     }
 
-    private var durationMinutes: Binding<Int> {
-        Binding(get: { Int((draft.duration / 60).rounded()) },
-                set: { store.editor?.duration = TimeInterval($0 * 60) })
+    private func dateBox(_ date: Binding<Date>, calendarOpen: Binding<Bool>) -> some View {
+        FieldBox {
+            PlainDatePicker(date: date, elements: .yearMonthDay).fieldInset(-3.5)
+            Spacer(minLength: 0)
+            Button { calendarOpen.wrappedValue.toggle() } label: {
+                Image(systemName: "calendar").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Pick a date")
+            .popover(isPresented: calendarOpen, arrowEdge: .bottom) {
+                DatePicker("", selection: date, displayedComponents: [.date])
+                    .labelsHidden()
+                    .datePickerStyle(.graphical)
+                    .padding(10)
+            }
+        }
+        .frame(width: 134)
     }
 
     private var options: some View {
@@ -215,123 +313,246 @@ struct EventEditorView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 } else if draft.isNew {
-                    Picker("", selection: field(\.repeatRule)) {
-                        ForEach(EventDraft.Repeat.allCases) { Text($0.label).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    PopUpMenu(items: repeatItems, selected: repeatSelection, width: Self.menuWidth,
+                              actions: ["other"], onSelect: pickRepeat)
+                        .popover(isPresented: $repeatEditorOpen, arrowEdge: .bottom) {
+                            RepeatPatternEditor(pattern: QCFlags.calendarRepeat ? RepeatPattern(kind: .monthlyWeek) : draft.repeatPattern, start: draft.start, workDays: workDays,
+                                                onSave: { store.editor?.repeatPattern = $0; repeatEditorOpen = false },
+                                                onCancel: { repeatEditorOpen = false })
+                        }
                 } else {
                     Text("Never").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            row("Reminder") {
-                Picker("", selection: field(\.reminderMinutes)) {
-                    ForEach(EventDraft.reminderChoices, id: \.self) { Text(EventDraft.reminderLabel($0)).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
+            if draft.isNew, draft.repeatPattern != nil { seriesEnd }
+        }
+    }
+
+    // MARK: - Repeat
+
+    private var workDays: Set<Int> { Keys.calendarWorkDays() }
+
+    private func reminderID(_ minutes: Int?) -> String { minutes.map(String.init) ?? "none" }
+
+    /// Never, OWA's quick choices worded from the start date, the pattern set in Other when it is
+    /// none of those, and Other itself.
+    private var repeatItems: [PopUpMenu.Item] {
+        var items: [PopUpMenu.Item] = [.init(id: "never", title: "Never")]
+        for (index, preset) in RepeatPattern.presets(workDays: workDays).enumerated() {
+            items.append(.init(id: "preset-\(index)", title: preset.label(start: draft.start, workDays: workDays)))
+        }
+        if let pattern = draft.repeatPattern, presetIndex(pattern) == nil {
+            items.append(.init(id: "custom", title: pattern.label(start: draft.start, workDays: workDays), separatorBefore: true))
+        }
+        items.append(.init(id: "other", title: "Other...", separatorBefore: true))
+        return items
+    }
+
+    private func presetIndex(_ pattern: RepeatPattern) -> Int? {
+        RepeatPattern.presets(workDays: workDays).firstIndex { preset in
+            // A weekly pattern on just the start's day is the "Every Wednesday" choice.
+            let normal: (RepeatPattern) -> RepeatPattern = { p in
+                var p = p
+                if p.kind == .weekly, p.weekdays == [Calendar.current.component(.weekday, from: draft.start)] { p.weekdays = [] }
+                return p
             }
-            row("Show as") {
-                Picker("", selection: field(\.showAs)) {
-                    ForEach(EventDraft.ShowAs.allCases) { Text($0.label).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
+            return normal(preset) == normal(pattern)
+        }
+    }
+
+    private var repeatSelection: String {
+        guard let pattern = draft.repeatPattern else { return "never" }
+        return presetIndex(pattern).map { "preset-\($0)" } ?? "custom"
+    }
+
+    private func pickRepeat(_ id: String) {
+        switch id {
+        case "never": store.editor?.repeatPattern = nil
+        case "other": repeatEditorOpen = true
+        case "custom": break
+        default:
+            if let index = Int(id.dropFirst("preset-".count)) {
+                store.editor?.repeatPattern = RepeatPattern.presets(workDays: workDays)[index]
             }
+        }
+    }
+
+    /// When the series stops: no end, on a date, or after a number of times, as OWA's To field
+    /// and Outlook's End date do.
+    private var seriesEnd: some View {
+        row("Until") {
+            PopUpMenu(items: [.init(id: "never", title: "No end date"), .init(id: "on", title: "On a date"),
+                              .init(id: "after", title: "After")],
+                      selected: seriesEndID, width: 130) { id in
+                switch id {
+                case "on":
+                    let threeMonths = Calendar.current.date(byAdding: .month, value: 3, to: draft.start) ?? draft.start
+                    store.editor?.repeatEnd = .on(threeMonths)
+                case "after": store.editor?.repeatEnd = .after(10)
+                default: store.editor?.repeatEnd = .never
+                }
+            }
+            switch draft.repeatEnd {
+            case .on(let last):
+                dateBox(Binding(get: { last }, set: { store.editor?.repeatEnd = .on($0) }),
+                        calendarOpen: $endCalendarOpenForSeries)
+            case .after(let count):
+                FieldBox {
+                    TextField("", value: Binding(get: { count }, set: { store.editor?.repeatEnd = .after(min(max($0, 1), 999)) }),
+                              format: .number)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                }
+                .frame(width: 54)
+                Text(count == 1 ? "time" : "times").foregroundStyle(.secondary)
+            case .never:
+                EmptyView()
+            }
+        }
+    }
+
+    private var seriesEndID: String {
+        switch draft.repeatEnd {
+        case .never: return "never"
+        case .on: return "on"
+        case .after: return "after"
         }
     }
 
     // MARK: - Category and charm
 
     /// OWA's Categorize and Charm. The category's colour is the master list's, the same rule the
-    /// grid draws with; the first category chosen is the one that colours the event.
-    private var tags: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            row("Category") {
-                HStack(spacing: 6) {
-                    Button { categoriesOpen.toggle() } label: {
-                        HStack(spacing: 5) {
-                            if draft.categories.isEmpty {
-                                Text("None")
-                            } else {
-                                ForEach(draft.categories, id: \.self) { name in
-                                    HStack(spacing: 4) {
-                                        RoundedRectangle(cornerRadius: 2).fill(store.categoryColor(name)).frame(width: 10, height: 10)
-                                        Text(name).lineLimit(1)
-                                    }
-                                }
-                            }
-                            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+    /// grid draws with; the first category chosen is the one that colours the event. Each button
+    /// shows what is chosen, or its own name when nothing is.
+    private var categoryButton: some View {
+        Button { categoriesOpen.toggle() } label: {
+            HStack(spacing: 5) {
+                if draft.categories.isEmpty {
+                    Text("Categorize")
+                } else {
+                    ForEach(draft.categories, id: \.self) { name in
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 2).fill(store.categoryColor(name)).frame(width: 10, height: 10)
+                            Text(name).lineLimit(1)
                         }
                     }
-                    .fixedSize()
-                    .popover(isPresented: $categoriesOpen, arrowEdge: .bottom) {
-                        CategoryPicker(names: store.categoryNames, chosen: draft.categories,
-                                       color: { store.categoryColor($0) }) { name in
-                            if let name {
-                                if draft.categories.contains(name) {
-                                    store.editor?.categories.removeAll { $0 == name }
-                                } else {
-                                    store.editor?.categories.append(name)
-                                }
-                            } else {
-                                store.editor?.categories = []
-                            }
-                        }
+                }
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.borderless)
+        .fixedSize()
+        .popover(isPresented: $categoriesOpen, arrowEdge: .bottom) {
+            CategoryPicker(names: store.categoryNames, chosen: draft.categories,
+                           color: { store.categoryColor($0) }) { name in
+                if let name {
+                    if draft.categories.contains(name) {
+                        store.editor?.categories.removeAll { $0 == name }
+                    } else {
+                        store.editor?.categories.append(name)
                     }
+                } else {
+                    store.editor?.categories = []
                 }
             }
-            row("Charm") {
-                Button { charmsOpen.toggle() } label: {
-                    HStack(spacing: 5) {
-                        if let charm = draft.charm.flatMap(EventCharm.init) {
-                            Image(systemName: charm.symbol)
-                            Text(charm.label)
-                        } else {
-                            Text("None")
-                        }
-                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                    }
+        }
+    }
+
+    /// Show as and Reminder live in the toolbar too, as in OWA (the user's layout): each shows
+    /// the current choice, and the choices carry the system checkmark.
+    private var showAsMenu: some View {
+        Menu {
+            Picker("", selection: field(\.showAs)) {
+                ForEach(EventDraft.ShowAs.allCases) { state in
+                    Label { Text(state.label) } icon: { Image(nsImage: ShowAsSwatch.image(state)) }.tag(state)
                 }
-                .fixedSize()
-                .popover(isPresented: $charmsOpen, arrowEdge: .bottom) {
-                    CharmPicker(chosen: draft.charm) { charm in
-                        store.editor?.charm = charm
-                        charmsOpen = false
-                    }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label { Text(draft.showAs.label) } icon: { Image(nsImage: ShowAsSwatch.image(draft.showAs)) }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Show as")
+    }
+
+    private var reminderMenu: some View {
+        Menu {
+            Picker("", selection: field(\.reminderMinutes)) {
+                ForEach(EventDraft.reminderChoices, id: \.self) { Text(EventDraft.reminderLabel($0)).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label(EventDraft.reminderLabel(draft.reminderMinutes),
+                  systemImage: draft.reminderMinutes == nil ? "bell.slash" : "bell")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Reminder")
+    }
+
+    private var charmButton: some View {
+        Button { charmsOpen.toggle() } label: {
+            HStack(spacing: 5) {
+                if let charm = draft.charm.flatMap(EventCharm.init) {
+                    Image(systemName: charm.symbol)
+                    Text(charm.label)
+                } else {
+                    Text("Charm")
                 }
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.borderless)
+        .fixedSize()
+        .popover(isPresented: $charmsOpen, arrowEdge: .bottom) {
+            CharmPicker(chosen: draft.charm) { charm in
+                store.editor?.charm = charm
+                charmsOpen = false
             }
         }
     }
 
     // MARK: - Files
 
-    /// Files on the event: those it has (removable) and those being added, which stay in memory
-    /// until Save sends them. Add with the button or by dropping files on the form.
+    /// OWA's Attach: pick files; dropping them on the form works too.
+    private var attachButton: some View {
+        Button {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = true
+            panel.canChooseDirectories = false
+            panel.prompt = "Attach"
+            if panel.runModal() == .OK { addFiles(panel.urls) }
+        } label: {
+            // The icon close to its word, as the toolbar's other buttons have it; a Label spaces
+            // them wider than the rest of the bar.
+            HStack(spacing: 4) {
+                Image(systemName: "paperclip")
+                Text("Attach")
+            }
+        }
+        .buttonStyle(.borderless)
+        .fixedSize()
+    }
+
+    /// Files on the event, shown only when there are some: those it has (removable) and those
+    /// being added, which stay in memory until Save sends them.
+    @ViewBuilder
     private var files: some View {
-        row("Files") {
-            VStack(alignment: .leading, spacing: 6) {
-                Button {
-                    let panel = NSOpenPanel()
-                    panel.allowsMultipleSelection = true
-                    panel.canChooseDirectories = false
-                    panel.prompt = "Attach"
-                    if panel.runModal() == .OK { addFiles(panel.urls) }
-                } label: {
-                    Label("Add Files...", systemImage: "paperclip")
-                }
-                .fixedSize()
-                if !draft.keptFiles.isEmpty || !draft.newFiles.isEmpty {
-                    FlowChips {
-                        ForEach(draft.keptFiles) { file in
-                            fileChip(file.name, size: file.sizeLabel) { store.editor?.removedFileIDs.insert(file.id) }
-                        }
-                        ForEach(draft.newFiles) { file in
-                            fileChip(file.name, size: file.sizeLabel) { store.editor?.newFiles.removeAll { $0.id == file.id } }
-                        }
+        if !draft.keptFiles.isEmpty || !draft.newFiles.isEmpty {
+            row("Files") {
+                FlowChips {
+                    ForEach(draft.keptFiles) { file in
+                        fileChip(file.name, size: file.sizeLabel) { store.editor?.removedFileIDs.insert(file.id) }
+                    }
+                    ForEach(draft.newFiles) { file in
+                        fileChip(file.name, size: file.sizeLabel) { store.editor?.newFiles.removeAll { $0.id == file.id } }
                     }
                 }
             }
+            Divider().opacity(0.5)
         }
     }
 
@@ -371,12 +592,16 @@ struct EventEditorView: View {
 
     // MARK: - Pieces
 
+    /// A label and its field, on one baseline.
     private func row<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label)
+            // Right-aligned with a colon, as Outlook for Mac lays its form out (the user's pick).
+            Text(label.isEmpty ? "" : label + ":")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-                .frame(width: Self.labelWidth, alignment: .leading)
+                .frame(width: Self.labelWidth, alignment: .trailing)
+                // Clicks on a label fall through to the empty space behind it.
+                .allowsHitTesting(false)
             HStack(alignment: .firstTextBaseline, spacing: 8) { content() }
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -392,6 +617,71 @@ struct EventEditorView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+    }
+}
+
+/// Outlook's free/busy swatches for the Show as menu: Free an empty square, Working elsewhere
+/// dotted, Tentative hatched, Busy the calendar's blue, Away purple. Drawn as untinted images,
+/// because a menu draws a template image in the text colour and the colour is the point.
+enum ShowAsSwatch {
+    static func image(_ state: EventDraft.ShowAs) -> NSImage {
+        let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
+            let box = rect.insetBy(dx: 1, dy: 1)
+            let border = NSColor(srgbRed: 0.45, green: 0.5, blue: 0.6, alpha: 1)
+            let blue = NSColor(srgbRed: 0.72, green: 0.8, blue: 0.93, alpha: 1)
+            switch state {
+            case .free:
+                NSColor.white.setFill()
+                box.fill()
+            case .elsewhere:
+                NSColor.white.setFill()
+                box.fill()
+                border.withAlphaComponent(0.8).setFill()
+                for x in stride(from: box.minX + 2, to: box.maxX, by: 3) {
+                    for y in stride(from: box.minY + 2, to: box.maxY, by: 3) {
+                        NSBezierPath(ovalIn: NSRect(x: x - 0.6, y: y - 0.6, width: 1.2, height: 1.2)).fill()
+                    }
+                }
+            case .tentative:
+                NSColor.white.setFill()
+                box.fill()
+                let hatch = NSBezierPath()
+                for offset in stride(from: -box.height, to: box.width, by: 3.5) {
+                    hatch.move(to: NSPoint(x: box.minX + offset, y: box.minY))
+                    hatch.line(to: NSPoint(x: box.minX + offset + box.height, y: box.maxY))
+                }
+                NSGraphicsContext.saveGraphicsState()
+                NSBezierPath(rect: box).addClip()
+                blue.withAlphaComponent(1).setStroke()
+                hatch.lineWidth = 1.2
+                hatch.stroke()
+                NSGraphicsContext.restoreGraphicsState()
+            case .busy:
+                blue.setFill()
+                box.fill()
+            case .away:
+                NSColor(srgbRed: 0.55, green: 0.27, blue: 0.5, alpha: 1).setFill()
+                box.fill()
+            }
+            border.setStroke()
+            let outline = NSBezierPath(rect: box)
+            outline.lineWidth = 1
+            outline.stroke()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+}
+
+/// Empty space in the form: a click there ends editing, so the field loses its focus and its
+/// selection, as everywhere on the Mac (the user's call, 2026-09-25). It sits behind the fields,
+/// so a click on a field or a control still reaches it.
+struct EndEditingArea: View {
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
     }
 }
 
@@ -425,76 +715,78 @@ private struct FlowChips: Layout {
     }
 }
 
-/// The room list with a search field on top: type any part of a room's name or address, in any
-/// order ("هفت نمونه" finds "ساختمان نمونه | طبقه هفت"). Up and Down move, Return picks, and the popover stays
-/// open so several rooms can be booked.
-private struct RoomPicker: View {
-    let rooms: [Room]?
+/// The rooms matching what is typed in Location, under the field, after Outlook's "Search
+/// Contacts and Rooms": one row each, a check on those booked. A click selects a room; Add to
+/// meeting (or a double-click, or Return) books the selected one, and Check availability asks
+/// about every room listed (the user's rule, 2026-09-25).
+private struct RoomDropdown: View {
+    let rooms: [Room]
     let chosen: [Room]
-    let toggle: (Room) -> Void
+    let highlighted: Room.ID?
+    /// Free or busy by lowercased address, once Check availability has been pressed.
+    let availability: [String: String]
+    let onSelect: (Room) -> Void
+    let onAdd: (Room) -> Void
+    let onCheck: () -> Void
 
-    @State private var query = QCFlags.calendarRooms ?? ""
-    @State private var highlighted: Room.ID?
-    @FocusState private var searchFocused: Bool
+    private var selectedRoom: Room? { rooms.first { $0.id == highlighted } }
 
     var body: some View {
-        let matches = RoomSearch.filter(rooms ?? [], by: query)
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search rooms", text: $query)
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-                    .onSubmit { if let room = matches.first(where: { $0.id == highlighted }) ?? matches.first { toggle(room) } }
-                    .onKeyPress(.downArrow) { move(1, in: matches); return .handled }
-                    .onKeyPress(.upArrow) { move(-1, in: matches); return .handled }
-                if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
-                        .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            Divider()
-            Group {
-                if rooms == nil {
-                    status("Loading rooms...")
-                } else if rooms?.isEmpty == true {
-                    status("No room lists published")
-                } else if matches.isEmpty {
-                    status("No rooms match")
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(spacing: 0) {
-                                ForEach(matches) { room in row(room).id(room.id) }
-                            }
-                            .padding(4)
-                        }
-                        .onChange(of: highlighted) { _, id in if let id { proxy.scrollTo(id) } }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(rooms) { room in row(room).id(room.id) }
                     }
+                    .padding(4)
                 }
+                .frame(maxHeight: 230)
+                .fixedSize(horizontal: false, vertical: true)
+                .onChange(of: highlighted) { _, id in if let id { proxy.scrollTo(id) } }
             }
-            .frame(height: 260)
+            Divider()
+            HStack(spacing: 10) {
+                Text(rooms.count == 1 ? "1 room" : "\(rooms.count) rooms")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Check availability", action: onCheck)
+                Button("Add to meeting") { if let selectedRoom { onAdd(selectedRoom) } }
+                    .disabled(selectedRoom == nil)
+            }
+            .controlSize(.small)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
         }
-        .frame(width: 340)
-        .onAppear { searchFocused = true }
-        .onChange(of: query) { _, _ in highlighted = nil }
+        .frame(width: 420)
+        .background(RoundedRectangle(cornerRadius: 8).fill(CalendarSurface.background)
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 4))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
     }
 
     private func row(_ room: Room) -> some View {
-        let isChosen = chosen.contains(room)
-        return Button { toggle(room) } label: {
+        let booked = chosen.contains(room)
+        let state = availability[room.address.lowercased()]
+        return Button { onSelect(room) } label: {
             HStack(spacing: 8) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .opacity(isChosen ? 1 : 0)
+                Image(systemName: booked ? "checkmark.circle.fill" : "building.2")
+                    .foregroundStyle(booked ? Color.accentColor : Color.secondary)
+                    .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     DirectionalText(room.name, font: .system(size: 12.5))
                     Text(room.address).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                if let state {
+                    HStack(spacing: 4) {
+                        Circle().fill(state == "Free" ? Color.green : state == "NoData" ? Color.gray : Color.red)
+                            .frame(width: 6, height: 6)
+                        Text(state == "Free" ? "Free" : state == "NoData" ? "No information" : "Busy")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .fixedSize()
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -503,18 +795,8 @@ private struct RoomPicker: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(isChosen ? .isSelected : [])
-    }
-
-    private func status(_ text: String) -> some View {
-        Text(text).font(.system(size: 12)).foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func move(_ step: Int, in matches: [Room]) {
-        guard !matches.isEmpty else { return }
-        let index = matches.firstIndex { $0.id == highlighted }.map { $0 + step } ?? (step > 0 ? 0 : matches.count - 1)
-        highlighted = matches[max(0, min(index, matches.count - 1))].id
+        .simultaneousGesture(TapGesture(count: 2).onEnded { onAdd(room) })
+        .accessibilityAddTraits(booked ? .isSelected : [])
     }
 }
 

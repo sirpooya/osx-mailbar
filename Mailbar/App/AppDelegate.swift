@@ -37,6 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reminders = EventReminders(mail: store)
         if QCFlags.openToday { store.popoverTab = .today }
         if let offset = QCFlags.todayOffset { store.dayOffset = offset }
+        if QCFlags.todaySwipe {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let pager = self?.store?.dayPager else { return }
+                pager.began()
+                let start = ProcessInfo.processInfo.systemUptime
+                for step in 0..<12 { pager.moved(by: -12, at: start + Double(step) / 60) }
+                pager.ended(at: start + 12.0 / 60)
+            }
+        }
         store.refreshToday = { [weak self] in
             await self?.reminders.update(force: true, schedule: MockMode.current == nil)
         }

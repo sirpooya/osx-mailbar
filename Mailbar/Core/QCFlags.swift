@@ -14,6 +14,10 @@ enum QCFlags {
     static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil || openToday }
     /// `--open-today`: the popover on its Today tab.
     static var openToday: Bool { has("--open-today") }
+    /// `--today-swipe`: with `--open-today`, a scripted sideways swipe to the next day, through the
+    /// same pager calls a trackpad makes, for screenshots of where it comes to rest.
+    static var todaySwipe: Bool { has("--today-swipe") }
+
     /// `--today-offset=1`: with `--open-today`, the Today tab on that many days from today.
     static var todayOffset: Int? {
         #if DEBUG
@@ -56,7 +60,7 @@ enum QCFlags {
     /// `--calendar-new`: the calendar with the new event form open.
     static var calendarNew: Bool { has("--calendar-new") }
 
-    /// `--calendar-rooms=هفت`: with `--calendar-new`, the room picker open, searching for that.
+    /// `--calendar-rooms=هفت`: with `--calendar-new`, that typed into Location, listing its rooms.
     static var calendarRooms: String? {
         #if DEBUG
         return CommandLine.arguments.first { $0.hasPrefix("--calendar-rooms=") }.map { String($0.dropFirst("--calendar-rooms=".count)) }
@@ -68,6 +72,18 @@ enum QCFlags {
     /// `--calendar-charms`, `--calendar-categories`: with `--calendar-new`, that picker open.
     static var calendarCharms: Bool { has("--calendar-charms") }
     static var calendarCategories: Bool { has("--calendar-categories") }
+
+    /// `--calendar-people=sar`: with `--calendar-new`, that typed into the People field.
+    static var calendarPeople: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--calendar-people=") }.map { String($0.dropFirst("--calendar-people=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
+    /// `--calendar-repeat`: with `--calendar-new`, Repeat's Other editor open, on Monthly.
+    static var calendarRepeat: Bool { has("--calendar-repeat") }
 
     /// `--calendar-drag`: the calendar with a new event being dragged out today, 10:00 to 11:30.
     static var calendarDrag: Bool { has("--calendar-drag") }

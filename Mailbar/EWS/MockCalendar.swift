@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The mock calendar (M15): a week shaped like the user's OWA screenshot, rebuilt around the
@@ -23,6 +24,8 @@ enum MockCalendar {
         var charm: Int?
         /// Attached files: id, name, size.
         var files: [(String, String, Int)] = []
+        var requestsResponses = true
+        var allowsForwarding = true
     }
 
     /// The mock mailbox's master category list: OWA's defaults plus a custom "Storybook", whose
@@ -79,6 +82,30 @@ enum MockCalendar {
         <m:GetUserAvailabilityResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">\
         <m:FreeBusyResponseArray>\(responses)</m:FreeBusyResponseArray></m:GetUserAvailabilityResponse></s:Body></s:Envelope>
         """
+    }
+
+    /// Sara and Amir have a photo (an invented one: a coloured square), everyone else has none, as a real
+    /// directory mixes the two.
+    static func photoResponse(for address: String) -> String {
+        guard address.hasPrefix("sara") || address.hasPrefix("amir.karimi") else {
+            return wrapError("GetUserPhoto", code: "ErrorItemNotFound")
+        }
+        let size = 96
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)
+        if let rep, let context = NSGraphicsContext(bitmapImageRep: rep) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            NSColor(srgbRed: 0.36, green: 0.55, blue: 0.85, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: size, height: size).fill()
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 30, y: 46, width: 36, height: 36)).fill()
+            NSBezierPath(ovalIn: NSRect(x: 14, y: -30, width: 68, height: 70)).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        let png = rep?.representation(using: .png, properties: [:]) ?? Data()
+        return wrap("GetUserPhoto", "<m:HasChanged>true</m:HasChanged><m:PictureData>\(png.base64EncodedString())</m:PictureData>")
     }
 
     static func createdResponse(id: String) -> String {
@@ -264,6 +291,7 @@ enum MockCalendar {
                       \(filesXML(event.files))
                       \(categoriesXML(event.categories))
                       \(charmXML(event.charm))
+                      <t:ExtendedProperty>\(EventCharm.doNotForwardURI)<t:Value>\(!event.allowsForwarding)</t:Value></t:ExtendedProperty>
                       <t:Start>\(formatter.string(from: event.start))</t:Start>
                       <t:End>\(formatter.string(from: event.end))</t:End>
                       <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>
@@ -272,6 +300,7 @@ enum MockCalendar {
                       <t:IsMeeting>\(event.isMeeting)</t:IsMeeting>
                       <t:IsCancelled>\(event.isCancelled)</t:IsCancelled>
                       <t:IsRecurring>\(event.isRecurring)</t:IsRecurring>
+                      <t:IsResponseRequested>\(event.requestsResponses)</t:IsResponseRequested>
                       <t:MyResponseType>\(event.response)</t:MyResponseType>
                       <t:Organizer><t:Mailbox><t:Name>\(SOAP.escape(event.organizer))</t:Name><t:EmailAddress>\(event.organizerAddress)</t:EmailAddress></t:Mailbox></t:Organizer>
                       <t:RequiredAttendees>\(attendees)</t:RequiredAttendees>

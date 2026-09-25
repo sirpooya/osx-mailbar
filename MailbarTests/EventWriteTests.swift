@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Mailbar
@@ -19,8 +20,8 @@ import Testing
         let item = try #require(root.first("CalendarItem"))
         // The schema's order: item fields first, then calendar ones.
         #expect(item.children.map(\.name) == ["Subject", "Sensitivity", "Body", "ReminderIsSet",
-                                              "ReminderMinutesBeforeStart", "Start", "End", "IsAllDayEvent",
-                                              "LegacyFreeBusyStatus", "Location"])
+                                              "ReminderMinutesBeforeStart", "ExtendedProperty", "Start", "End",
+                                              "IsAllDayEvent", "LegacyFreeBusyStatus", "Location", "IsResponseRequested"])
     }
 
     @Test func peopleAndRoomsMakeItAMeetingThatSendsInvitations() throws {
@@ -44,10 +45,37 @@ import Testing
     }
 
     @Test func aWeeklyRepeatNamesItsDay() throws {
-        let body = CalendarSOAP.createEvent(draft { $0.repeatRule = .weekly })
+        let body = CalendarSOAP.createEvent(draft { $0.repeatPattern = RepeatPattern(kind: .weekly) })
         let root = try XMLTree.parse(SOAP.envelope(.exchange2010SP2, body: body))
         #expect(root.first("WeeklyRecurrence")?.child("DaysOfWeek") != nil)
         #expect(root.first("NoEndRecurrence")?.child("StartDate") != nil)
+    }
+
+    @Test func repeatChoicesAreWordedFromTheStartAsOWADoes() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        // Wednesday 23 September 2026: the fourth Wednesday of the month.
+        let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 13))!
+        let workDays: Set<Int> = [7, 1, 2, 3, 4]
+        let labels = RepeatPattern.presets(workDays: workDays).map { $0.label(start: start, workDays: workDays, calendar: calendar) }
+        #expect(labels == ["Every day", "Every Wednesday", "Every workday", "Day 23 of every month",
+                           "Every fourth Wednesday", "Every September 23"])
+        let custom = RepeatPattern(kind: .weekly, interval: 2, weekdays: [2, 4])
+        #expect(custom.label(start: start, workDays: workDays, calendar: calendar) == "Every 2 weeks on Monday and Wednesday")
+        #expect(RepeatPattern(kind: .monthlyWeek).xml(start: start, calendar: calendar)
+            .contains("<t:DaysOfWeek>Wednesday</t:DaysOfWeek><t:DayOfWeekIndex>Fourth</t:DayOfWeekIndex>"))
+    }
+
+    @Test func aSeriesEndsOnADateOrAfterSomeTimesOrNever() throws {
+        let until = Date(timeIntervalSince1970: 1_800_000_000)
+        func range(_ end: RepeatEnd) throws -> XMLTreeNode? {
+            let body = CalendarSOAP.createEvent(draft { $0.repeatPattern = RepeatPattern(kind: .daily); $0.repeatEnd = end })
+            return try XMLTree.parse(SOAP.envelope(.exchange2010SP2, body: body)).first("Recurrence")
+        }
+        #expect(try range(.never)?.child("NoEndRecurrence") != nil)
+        #expect(try range(.on(until))?.first("EndDate") != nil)
+        #expect(try range(.after(5))?.first("NumberOfOccurrences")?.trimmedText == "5")
+        #expect(draft { $0.repeatPattern = RepeatPattern(kind: .daily); $0.repeatEnd = .on($0.start.addingTimeInterval(-86_400 * 3)) }.problem != nil)
     }
 
     @Test func deletingAMeetingSendsTheCancellationAndAnAppointmentDoesNot() {
@@ -80,6 +108,17 @@ import Testing
         let cleared = CalendarSOAP.updateEvent(draft(), id: "ev-1")
         #expect(cleared.contains(#"<t:DeleteItemField><t:FieldURI FieldURI="item:Categories"/></t:DeleteItemField>"#))
         #expect(cleared.contains("<t:DeleteItemField>\(EventCharm.fieldURI)</t:DeleteItemField>"))
+    }
+
+    @Test func responseOptionsAreSentOnCreateAndUpdate() throws {
+        let off = draft { $0.requestResponses = false; $0.allowForwarding = false }
+        let root = try XMLTree.parse(SOAP.envelope(.exchange2010SP2, body: CalendarSOAP.createEvent(off)))
+        #expect(root.first("IsResponseRequested")?.trimmedText == "false")
+        let forward = root.all("ExtendedProperty").first { $0.child("ExtendedFieldURI")?.attributes["PropertyName"] == "DoNotForward" }
+        #expect(forward?.child("Value")?.trimmedText == "true")
+        let update = CalendarSOAP.updateEvent(draft(), id: "ev-1")
+        #expect(update.contains(#"FieldURI="calendar:IsResponseRequested"/><t:CalendarItem><t:IsResponseRequested>true"#))
+        #expect(update.contains(#"PropertyName="DoNotForward" PropertyType="Boolean"/><t:Value>false</t:Value>"#))
     }
 
     @Test func startAndDurationMoveTogether() {
@@ -226,6 +265,21 @@ import Testing
         #expect(detail.files.first?.size == 1200)
     }
 
+    @Test func responseOptionsSurviveASaveAndComeBackForEditing() async throws {
+        let store = try await makeStore()
+        store.startNewEvent(at: Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date()))
+        store.editor?.subject = "Private sync"
+        store.editor?.people = [.init(name: "Sara Rahimi", address: "sara.rahimi@example.com")]
+        store.editor?.requestResponses = false
+        store.editor?.allowForwarding = false
+        await store.saveEditor()
+        let created = try #require(store.events.first { $0.subject == "Private sync" })
+        await store.select(created)
+        store.startEditing()
+        #expect(store.editor?.requestResponses == false)
+        #expect(store.editor?.allowForwarding == false)
+    }
+
     @Test func aCancelledFormSendsNothing() async throws {
         let store = try await makeStore()
         let transport = try #require(store.mail.client.transport as? MockTransport)
@@ -237,6 +291,14 @@ import Testing
         #expect(!store.events.contains { $0.subject == "Never saved" })
     }
 
+    @Test func photosComeFromTheServerAndThoseWithoutOneGetNone() async throws {
+        let store = try await makeStore()
+        let sara = await store.photo(for: "sara.rahimi@example.com")
+        #expect(sara?.size.width ?? 0 > 0)
+        #expect(await store.photo(for: "omid@example.org") == nil)
+        #expect(CalendarSOAP.getUserPhoto("a&b@example.com").contains("<m:Email>a&amp;b@example.com</m:Email>"))
+    }
+
     @Test func peopleSuggestionsComeFromTheDirectoryToo() async throws {
         let store = try await makeStore()
         let found = await store.peopleSuggestions(for: "amir", excluding: "")
@@ -245,5 +307,26 @@ import Testing
         #expect(addresses.contains("amirhossein.nadiri@example.com"))
         await store.loadRooms()
         #expect(store.rooms?.prefix(2).map(\.name) == ["Room Blue", "Room Green"])
+    }
+}
+
+@MainActor
+@Suite struct TimeFieldTests {
+    private func key(_ code: UInt16, shift: Bool) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: shift ? [.shift] : [], timestamp: 0,
+                         windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                         isARepeat: false, keyCode: code)!
+    }
+
+    @Test func shiftWithAnArrowMovesTheTimeByTenMinutes() {
+        let picker = SteppingDatePicker()
+        picker.shiftStep = 600
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        picker.dateValue = start
+        picker.keyDown(with: key(126, shift: true))
+        #expect(picker.dateValue == start.addingTimeInterval(600))
+        picker.keyDown(with: key(125, shift: true))
+        picker.keyDown(with: key(125, shift: true))
+        #expect(picker.dateValue == start.addingTimeInterval(-600))
     }
 }

@@ -39,6 +39,11 @@ section when a release is cut.
 - Files can be attached to events, from Add Files or by dropping them on the form, and an event's files open or save from its detail panel.
 - Search the room list in the event form by any part of a room's name.
 - Swipe sideways with two fingers on the popover's Today tab to go through the days; a Today button brings you back.
+- The event form's People list shows each person's photo from Exchange.
+- People suggestions in the event form show each person's photo from Exchange.
+- The event form has OWA's Response options: choose whether to request responses and whether invitees may forward the invitation.
+- Repeat offers OWA's choices worded from the start date (every day, every Wednesday, every workday, day 23 of every month, every fourth Wednesday, every September 23) and Other for any pattern, with an end date or a number of times.
+- In the event form's time fields, Shift with the Up or Down arrow moves the time by 10 minutes.
 
 ### Changed
 - The new menu bar and app icons.
@@ -61,9 +66,27 @@ section when a release is cut.
 - The calendar's Day, Week, Month switcher no longer casts a shadow.
 - Switching the calendar between Day, Week and Month now changes view at once, as Apple's Calendar does, instead of morphing the grid; Day and Week keep the hours you had scrolled to.
 - The event form sets a date, a start time and a duration instead of an end time.
+- The event title is a normal text field with a Title label, like Location.
+- The event form sets its length with a dotted slider, in half hours up to 8 hours, instead of a menu.
+- Show as lists Free, Working elsewhere, Tentative, Busy and Away, each with Outlook's colour swatch.
+- The event form has Attach, Charm and Categorize in a toolbar at the top, and Cancel and Send at the bottom.
+- The event form's Attach, Charm and Categorize sit in their own toolbar under the title.
+- The event form is back to separate Start and End fields, each with a date, a calendar and a time, and the length shown beside End.
+- The event form opens with the cursor in the title, and its body field is called Description.
+- The event form's toolbar is white, with no line under the title.
+- Rooms are found by typing in Location: pick one and press Add to meeting, or check which of the listed rooms are free.
+- Show as and Reminder moved into the event form's toolbar; the fields are taller, and each date box holds its own calendar button.
+- The event form's times follow Outlook for Mac: a Duration menu beside All day event, then Starts and Ends; labels are right-aligned.
+- Event dates read year/month/day, as 2026/09/25.
+- The event form's Response options gear is lighter, and the Attach button's icon sits closer to its word.
+- Event times are 24-hour with a leading zero, such as 09:00, so they line up.
+- Repeat's Other editor offers Daily, Weekly, Monthly and Yearly as Outlook does, with Monthly on a day or on a weekday of the month.
+- The calendar toolbar's add button reads New Event, and the Day, Week, Month switcher has a lighter border.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
+- The pin icon in the event form's Location field.
+- The placeholder icons on the event form's Charm and Categorize buttons.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -75,4 +98,9 @@ section when a release is cut.
 - Inbox and Today are the same height, so switching tabs no longer resizes the popover or makes it jump.
 - Cmd+K opens the calendar from the popover; before, it only worked while the menu bar icon's right-click menu was open.
 - A new event started at a minute past the half hour instead of on it.
+- Swiping through days on the Today tab no longer leaves the other days loading for ever on a slow connection.
+- On the Today tab the date now moves with its day during a swipe, instead of sliding ahead of the grid and under the Today button.
+- Clicking empty space in the event form now ends editing the field you were typing in.
+- The Description label lines up with the first line of its box.
+- Dates and times in the event form sit centred in their boxes and start at the same inset as the other fields.
 

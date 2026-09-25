@@ -176,11 +176,16 @@ struct CalendarRootView: View {
             }
 
             // New event, as Apple's Calendar puts its "+" in the toolbar.
+            // A capsule with its word, like Today beside it (the user's call); the plus stays.
             Button { store.startNewEvent() } label: {
-                Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(CalendarControl.fill))
-                    .contentShape(Circle())
+                HStack(spacing: 4) {
+                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                    Text("New Event").font(.system(size: 13))
+                }
+                .padding(.horizontal, compact ? 10 : 12)
+                .frame(height: 26)
+                .background(Capsule().fill(CalendarControl.fill))
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .keyboardShortcut("n", modifiers: .command)
@@ -294,7 +299,7 @@ private struct ModeSwitcher: View {
         }
         .padding(3)
         .background(Capsule().fill(CalendarSurface.background))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.16), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.09), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("View")
     }

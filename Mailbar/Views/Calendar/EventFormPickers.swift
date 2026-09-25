@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// OWA's Categorize list: every category in the master list with its colour, a check on the ones
@@ -92,15 +93,23 @@ struct PeopleSidebar: View {
     @Bindable var store: CalendarStore
     let draft: EventDraft
 
-    @State private var query = ""
+    @State private var query = QCFlags.calendarPeople ?? ""
     @State private var suggestions: [(name: String, address: String)] = []
     @State private var highlighted = 0
     @State private var statuses: [String: String] = [:]
+    /// Photos by lowercased address, held only while the form is open.
+    @State private var photos: [String: NSImage] = [:]
+    @State private var photoAsked: Set<String> = []
+    @State private var optionsOpen = false
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("People").font(.system(size: 17, weight: .semibold))
+            HStack {
+                Text("People").font(.system(size: 17, weight: .semibold)).allowsHitTesting(false)
+                Spacer()
+                responseOptions
+            }
             HStack(spacing: 4) {
                 TextField("Add people", text: $query)
                     .textFieldStyle(.plain)
@@ -118,23 +127,30 @@ struct PeopleSidebar: View {
             .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(fieldFocused ? 0.35 : 0.18)))
 
             ZStack(alignment: .top) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let account = store.account {
-                            personRow(name: account.fullName.isEmpty ? account.email : account.fullName,
-                                      address: account.email, note: "Organizer", removable: nil)
-                        }
-                        ForEach(draft.people) { person in
-                            personRow(name: person.display, address: person.address, note: nil) {
-                                store.editor?.people.removeAll { $0 == person }
+                GeometryReader { geometry in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let account = store.account {
+                                personRow(name: account.fullName.isEmpty ? account.email : account.fullName,
+                                          address: account.email, note: "Organizer", removable: nil)
+                            }
+                            ForEach(draft.people) { person in
+                                personRow(name: person.display, address: person.address, note: nil) {
+                                    store.editor?.people.removeAll { $0 == person }
+                                }
                             }
                         }
+                        // The whole height, so a click under the list also ends editing.
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
+                        .background(EndEditingArea())
                     }
                 }
                 if fieldFocused, !suggestions.isEmpty { dropdown }
             }
         }
         .padding(16)
+        .background(EndEditingArea())
+        .task { if QCFlags.calendarPeople != nil { try? await Task.sleep(nanoseconds: 800_000_000); fieldFocused = true } }
         .task(id: query) {
             let token = query.trimmingCharacters(in: .whitespaces)
             guard token.count >= 2 else { suggestions = []; return }
@@ -144,6 +160,21 @@ struct PeopleSidebar: View {
             guard !Task.isCancelled else { return }
             suggestions = found
             highlighted = 0
+            // Photos for the suggestions too, as OWA shows them, all at once rather than one by one.
+            let wanted = found.map { $0.address.lowercased() }.filter { !photoAsked.contains($0) }
+            photoAsked.formUnion(wanted)
+            await withTaskGroup(of: (String, NSImage?).self) { group in
+                for address in wanted { group.addTask { (address, await store.photo(for: address)) } }
+                for await (address, image) in group { if let image { photos[address] = image } }
+            }
+        }
+        .task(id: draft.attendeeList.joined(separator: ",")) {
+            var addresses = draft.attendeeList
+            if let own = store.account?.email, !own.isEmpty { addresses.insert(own, at: 0) }
+            for address in addresses.map({ $0.lowercased() }) where !photoAsked.contains(address) {
+                photoAsked.insert(address)
+                if let image = await store.photo(for: address) { photos[address] = image }
+            }
         }
         .task(id: availabilityKey) {
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -153,6 +184,28 @@ struct PeopleSidebar: View {
             let found = await store.availability(for: addresses, start: draft.requestStart, end: draft.requestEnd)
             guard !Task.isCancelled else { return }
             statuses = found
+        }
+    }
+
+    /// OWA's gear beside People, as light as the field's plus (the user's call): a plain button,
+    /// because a menu button ignores the colour of its icon. It opens Response options, Request
+    /// responses and Allow forwarding.
+    private var responseOptions: some View {
+        Button { optionsOpen.toggle() } label: {
+            Image(systemName: "gearshape").foregroundStyle(.tertiary)
+        }
+        .buttonStyle(.borderless)
+        .help("Response options")
+        .popover(isPresented: $optionsOpen, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Response options").font(.system(size: 12, weight: .semibold))
+                Toggle("Request responses", isOn: Binding(get: { draft.requestResponses },
+                                                          set: { store.editor?.requestResponses = $0 }))
+                Toggle("Allow forwarding", isOn: Binding(get: { draft.allowForwarding },
+                                                         set: { store.editor?.allowForwarding = $0 }))
+            }
+            .toggleStyle(.checkbox)
+            .padding(14)
         }
     }
 
@@ -166,7 +219,8 @@ struct PeopleSidebar: View {
             ForEach(Array(suggestions.enumerated()), id: \.element.address) { index, person in
                 Button { add(name: person.name, address: person.address) } label: {
                     HStack(spacing: 8) {
-                        Avatar(name: person.name.isEmpty ? person.address : person.name, size: 26)
+                        Avatar(name: person.name.isEmpty ? person.address : person.name, size: 26,
+                               photo: photos[person.address.lowercased()])
                         VStack(alignment: .leading, spacing: 0) {
                             DirectionalText(person.name.isEmpty ? person.address : person.name, font: .system(size: 12.5))
                             Text(person.address).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
@@ -190,7 +244,8 @@ struct PeopleSidebar: View {
     }
 
     private func personRow(name: String, address: String, note: String?, removable: (() -> Void)?) -> some View {
-        PersonRow(name: name, address: address, note: note, status: statuses[address.lowercased()], onRemove: removable)
+        PersonRow(name: name, address: address, note: note, status: statuses[address.lowercased()],
+                  photo: photos[address.lowercased()], onRemove: removable)
     }
 
     private func personRow(name: String, address: String, note: String?, onRemove: @escaping () -> Void) -> some View {
@@ -232,13 +287,14 @@ private struct PersonRow: View {
     let address: String
     let note: String?
     let status: String?
+    let photo: NSImage?
     let onRemove: (() -> Void)?
 
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 10) {
-            Avatar(name: name, size: 36)
+            Avatar(name: name, size: 36, photo: photo)
             VStack(alignment: .leading, spacing: 1) {
                 DirectionalText(name, font: .system(size: 13))
                 HStack(spacing: 4) {
@@ -289,15 +345,29 @@ private struct PersonRow: View {
     }
 }
 
-/// A neutral circle with the person's initials.
+/// The person's photo from Exchange, else a neutral circle with their initials.
 private struct Avatar: View {
     let name: String
     let size: CGFloat
+    var photo: NSImage? = nil
 
     var body: some View {
+        if let photo {
+            Image(nsImage: photo)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .accessibilityHidden(true)
+        } else {
+            initials
+        }
+    }
+
+    private var initials: some View {
         let words = name.split(whereSeparator: { $0.isWhitespace || $0 == "." || $0 == "@" })
         let initials = words.prefix(2).compactMap(\.first).map { String($0).uppercased() }.joined()
-        Circle()
+        return Circle()
             .fill(Color.primary.opacity(0.12))
             .frame(width: size, height: size)
             .overlay(Text(initials.isEmpty ? "?" : initials)

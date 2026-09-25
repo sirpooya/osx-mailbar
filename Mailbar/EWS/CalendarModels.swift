@@ -74,6 +74,10 @@ struct EventDetail: Equatable, Sendable {
     var roomBoxes: [Room] = []
     /// Files attached to the event. Bytes are fetched only when one is opened or saved.
     var files: [FileAttachment] = []
+    /// OWA's Response options: whether answers are asked for, and whether the invitation may
+    /// be forwarded.
+    var requestsResponses = true
+    var allowsForwarding = true
 }
 
 extension EWSResponse {
@@ -164,6 +168,12 @@ extension EWSResponse {
                                                      name: attachment.child("Name").map(\.trimmedText).flatMap { $0.isEmpty ? nil : $0 } ?? "Attachment",
                                                      contentType: attachment.child("ContentType")?.trimmedText ?? "",
                                                      size: attachment.child("Size").flatMap { Int($0.trimmedText) } ?? 0)
+                           },
+                           requestsResponses: item.child("IsResponseRequested")?.trimmedText != "false",
+                           allowsForwarding: !item.children.contains { property in
+                               property.name == "ExtendedProperty"
+                                   && property.child("ExtendedFieldURI")?.attributes["PropertyName"] == "DoNotForward"
+                                   && property.child("Value")?.trimmedText == "true"
                            })
     }
 }

@@ -136,6 +136,8 @@ enum SOAP {
                   <t:FieldURI FieldURI="item:DateTimeReceived"/>
                   <t:FieldURI FieldURI="item:Body"/>
                   <t:FieldURI FieldURI="item:Attachments"/>
+                  <t:FieldURI FieldURI="calendar:IsResponseRequested"/>
+                  \(EventCharm.doNotForwardURI)
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>

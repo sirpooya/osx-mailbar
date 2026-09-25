@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Creating, changing, deleting and answering calendar events (M16, M17), plus the directory and
 /// room lookups the event form uses. Every write is to the signed-in user's own calendar.
@@ -52,6 +53,11 @@ enum CalendarSOAP {
         changes.append(draft.categories.isEmpty
             ? #"              <t:DeleteItemField><t:FieldURI FieldURI="item:Categories"/></t:DeleteItemField>"#
             : set("item:Categories", categories(draft.categories)))
+        changes.append(set("calendar:IsResponseRequested",
+                           "<t:IsResponseRequested>\(draft.requestResponses)</t:IsResponseRequested>"))
+        changes.append("""
+                      <t:SetItemField>\(EventCharm.doNotForwardURI)<t:CalendarItem>\(doNotForward(draft))</t:CalendarItem></t:SetItemField>
+        """)
         changes.append(draft.charm.map { charm in
             """
                           <t:SetItemField>\(EventCharm.fieldURI)<t:CalendarItem>\(charmProperty(charm))</t:CalendarItem></t:SetItemField>
@@ -144,6 +150,19 @@ enum CalendarSOAP {
         """
     }
 
+    // MARK: - Photos
+
+    /// A person's photo as Exchange 2013 and later keep it (from the mailbox or the directory),
+    /// 96 pixels square.
+    static func getUserPhoto(_ address: String) -> String {
+        """
+            <m:GetUserPhoto>
+              <m:Email>\(SOAP.escape(address))</m:Email>
+              <m:SizeRequested>HR96x96</m:SizeRequested>
+            </m:GetUserPhoto>
+        """
+    }
+
     // MARK: - Answering (M17)
 
     enum Answer: String, CaseIterable, Sendable {
@@ -233,12 +252,15 @@ enum CalendarSOAP {
             lines.append("<t:ReminderMinutesBeforeStart>\(minutes)</t:ReminderMinutesBeforeStart>")
         }
         if let charm = draft.charm { lines.append(charmProperty(charm)) }
+        lines.append(doNotForward(draft))
         lines += [
             "<t:Start>\(SOAP.isoDate(draft.requestStart))</t:Start>",
             "<t:End>\(SOAP.isoDate(draft.requestEnd))</t:End>",
             "<t:IsAllDayEvent>\(draft.isAllDay)</t:IsAllDayEvent>",
             "<t:LegacyFreeBusyStatus>\(draft.showAs.rawValue)</t:LegacyFreeBusyStatus>",
             "<t:Location>\(SOAP.escape(draft.locationText))</t:Location>",
+            // After Location and before the attendees, in CalendarItemType's order.
+            "<t:IsResponseRequested>\(draft.requestResponses)</t:IsResponseRequested>",
         ]
         if !draft.attendeeList.isEmpty {
             lines.append("<t:RequiredAttendees>\(attendees(draft.attendeeList))</t:RequiredAttendees>")
@@ -253,6 +275,10 @@ enum CalendarSOAP {
         "<t:Categories>" + names.map { "<t:String>\(SOAP.escape($0))</t:String>" }.joined() + "</t:Categories>"
     }
 
+    private static func doNotForward(_ draft: EventDraft) -> String {
+        "<t:ExtendedProperty>\(EventCharm.doNotForwardURI)<t:Value>\(!draft.allowForwarding)</t:Value></t:ExtendedProperty>"
+    }
+
     private static func charmProperty(_ charm: Int) -> String {
         "<t:ExtendedProperty>\(EventCharm.fieldURI)<t:Value>\(charm)</t:Value></t:ExtendedProperty>"
     }
@@ -262,28 +288,24 @@ enum CalendarSOAP {
     }
 
     private static func recurrence(_ draft: EventDraft) -> String {
-        guard draft.id == nil, draft.repeatRule != .never else { return "" }
-        var calendar = Calendar.current
-        calendar.timeZone = .current
+        guard draft.id == nil, let pattern = draft.repeatPattern else { return "" }
         let start = draft.requestStart
-        let day = calendar.component(.day, from: start)
-        let weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][calendar.component(.weekday, from: start) - 1]
-        let month = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
-                     "October", "November", "December"][calendar.component(.month, from: start) - 1]
-        let pattern: String
-        switch draft.repeatRule {
-        case .never: return ""
-        case .daily: pattern = "<t:DailyRecurrence><t:Interval>1</t:Interval></t:DailyRecurrence>"
-        case .weekly: pattern = "<t:WeeklyRecurrence><t:Interval>1</t:Interval><t:DaysOfWeek>\(weekday)</t:DaysOfWeek></t:WeeklyRecurrence>"
-        case .monthly: pattern = "<t:AbsoluteMonthlyRecurrence><t:Interval>1</t:Interval><t:DayOfMonth>\(day)</t:DayOfMonth></t:AbsoluteMonthlyRecurrence>"
-        case .yearly: pattern = "<t:AbsoluteYearlyRecurrence><t:DayOfMonth>\(day)</t:DayOfMonth><t:Month>\(month)</t:Month></t:AbsoluteYearlyRecurrence>"
-        }
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = .current
         formatter.dateFormat = "yyyy-MM-dd"
-        return "          <t:Recurrence>\(pattern)<t:NoEndRecurrence><t:StartDate>\(formatter.string(from: start))</t:StartDate></t:NoEndRecurrence></t:Recurrence>"
+        let from = "<t:StartDate>\(formatter.string(from: start))</t:StartDate>"
+        let range: String
+        switch draft.repeatEnd {
+        case .never:
+            range = "<t:NoEndRecurrence>\(from)</t:NoEndRecurrence>"
+        case .on(let last):
+            range = "<t:EndDateRecurrence>\(from)<t:EndDate>\(formatter.string(from: last))</t:EndDate></t:EndDateRecurrence>"
+        case .after(let count):
+            range = "<t:NumberedRecurrence>\(from)<t:NumberOfOccurrences>\(max(count, 1))</t:NumberOfOccurrences></t:NumberedRecurrence>"
+        }
+        return "          <t:Recurrence>\(pattern.xml(start: start))\(range)</t:Recurrence>"
     }
 }
 
@@ -372,6 +394,8 @@ extension EWSResponse {
 }
 
 extension EWSClient {
+    static let photoLog = Logger(subsystem: "in.pooya.mailbar", category: "photos")
+
     /// With files, three steps, as Exchange's own API does it: save the event telling nobody,
     /// attach the files, then send the invitations, so they arrive with the files in them.
     func createEvent(_ draft: EventDraft, at url: URL, credential: EWSCredential) async throws {
@@ -401,6 +425,22 @@ extension EWSClient {
         }
         try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id, sendToAll: draft.changesFiles),
                                 url: url, credential: credential)
+    }
+
+    /// The photo's bytes, or nil when the person has none (Exchange answers with an error then).
+    /// Needs Exchange 2013; the caller checks the version first.
+    func userPhoto(_ address: String, at url: URL, credential: EWSCredential) async throws -> Data? {
+        let data = try await sendRaw(SOAP.envelope(.exchange2013, body: CalendarSOAP.getUserPhoto(address)),
+                                     to: url, credential: credential)
+        let root = try EWSResponse.parse(data)
+        guard let picture = root.first("PictureData")?.trimmedText, !picture.isEmpty else {
+            // Why there is none, for Console: a person without a photo says ErrorItemNotFound,
+            // anything else is the server refusing. The address stays private in the log.
+            let code = root.first("ResponseCode")?.trimmedText ?? "no ResponseCode"
+            Self.photoLog.info("No photo for \(address, privacy: .private): \(code, privacy: .public)")
+            return nil
+        }
+        return Data(base64Encoded: picture)
     }
 
     /// Each address's state over the event's time: the busiest thing they have in it.

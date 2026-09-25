@@ -104,9 +104,14 @@ final class MailStore {
     let dayPager = CalendarPager()
     /// The popover's window, so only swipes inside it page the day (the calendar window has its own).
     @ObservationIgnored weak var popoverWindow: NSWindow?
-    /// Events of the days around the one shown, per account, keyed by start of day. Only those
-    /// three days are kept, in memory, and all of it goes when the popover closes.
+    /// Events of the days around the one shown, per account, keyed by start of day. Only the
+    /// days within three of the one shown are kept, in memory, and all of it goes when the
+    /// popover closes.
     private(set) var nearbyDays: [UUID: [Date: [CalendarEvent]]] = [:]
+    /// Days whose fetch failed, so the header says so instead of spinning for ever.
+    private(set) var failedDays: [UUID: Set<Date>] = [:]
+    @ObservationIgnored private var loadingDays: [UUID: Set<Date>] = [:]
+    /// Bumped when the popover closes, so an answer arriving afterwards is not kept.
     @ObservationIgnored private var nearbyGeneration = 0
 
     func day(offset: Int) -> Date {
@@ -122,24 +127,44 @@ final class MailStore {
         return nearbyDays[accountID]?[calendar.startOfDay(for: day)]
     }
 
-    /// The day shown and its two neighbours, in one request, so a swipe lands on a filled page.
+    func dayFailed(_ day: Date, for accountID: UUID) -> Bool {
+        failedDays[accountID]?.contains(Calendar.current.startOfDay(for: day)) == true
+    }
+
+    /// Fetches the days within two of the one shown that are not in memory yet, in one request.
+    /// An answer is never thrown away because the user swiped on while it was coming: over a
+    /// slow link each swipe used to discard the fetch that held the very day being swiped to,
+    /// so a day never arrived (the user's recording, 2026-09-25).
     func loadNearbyDays(for accountID: UUID) async {
-        guard let (url, credential) = connection(for: accountID) else { return }
-        nearbyGeneration += 1
-        let mine = nearbyGeneration
-        let days = (-1...1).map { day(offset: dayOffset + $0) }
-        guard let first = days.first, let last = days.last,
-              let end = Calendar.current.date(byAdding: .day, value: 1, to: last),
-              let events = try? await client.calendarEvents(from: first, to: end, at: url, credential: credential),
-              mine == nearbyGeneration else { return }
-        var byDay: [Date: [CalendarEvent]] = [:]
-        for day in days { byDay[day] = TodayAgenda.all(of: events, on: day) }
-        nearbyDays[accountID] = byDay
+        let calendar = Calendar.current
+        let wanted = (-2...2).map { day(offset: dayOffset + $0) }.filter { !calendar.isDateInToday($0) }
+        let missing = wanted.filter { nearbyDays[accountID]?[$0] == nil && loadingDays[accountID]?.contains($0) != true }
+        guard let first = missing.min(), let last = missing.max(),
+              let end = calendar.date(byAdding: .day, value: 1, to: last),
+              let (url, credential) = connection(for: accountID) else { return }
+        let generation = nearbyGeneration
+        loadingDays[accountID, default: []].formUnion(missing)
+        failedDays[accountID]?.subtract(missing)
+        defer { loadingDays[accountID]?.subtract(missing) }
+        do {
+            let events = try await client.calendarEvents(from: first, to: end, at: url, credential: credential)
+            guard generation == nearbyGeneration else { return }
+            var days = nearbyDays[accountID] ?? [:]
+            for day in missing { days[day] = TodayAgenda.all(of: events, on: day) }
+            // Keep only what is near the day on screen now.
+            let keep = Set((-3...3).map { self.day(offset: dayOffset + $0) })
+            nearbyDays[accountID] = days.filter { keep.contains($0.key) }
+        } catch {
+            guard generation == nearbyGeneration else { return }
+            failedDays[accountID, default: []].formUnion(missing)
+        }
     }
 
     func resetDay() {
         dayOffset = 0
         nearbyDays = [:]
+        failedDays = [:]
+        loadingDays = [:]
         nearbyGeneration += 1
     }
 

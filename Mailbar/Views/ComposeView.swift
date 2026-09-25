@@ -195,6 +195,8 @@ struct ComposeView: View {
 struct ComposeEditor: NSViewRepresentable {
     @Binding var text: String
     var onSend: () -> Void
+    /// The mail composer starts typing here; the event form starts at its title instead.
+    var takesFocus = true
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SendingTextView()
@@ -214,7 +216,7 @@ struct ComposeEditor: NSViewRepresentable {
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
-        DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
+        if takesFocus { DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) } }
         return scrollView
     }
 

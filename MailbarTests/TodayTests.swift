@@ -67,7 +67,7 @@ import Testing
     }
 
     @MainActor
-    @Test func swipingToOtherDaysFetchesThemWithTheirNeighboursAndClosingForgetsThem() async throws {
+    @Test func swipingToOtherDaysFetchesThemAheadAndClosingForgetsThem() async throws {
         let accounts = AccountStore(inMemory: [MockMode.accounts[0]], passwords: MockMode.passwords)
         let mail = MailStore(accounts: accounts, client: EWSClient(transport: MockTransport(mode: .inbox, newMailAfter: 0)))
         let id = MockMode.accounts[0].id
@@ -79,10 +79,36 @@ import Testing
             let events = try #require(mail.events(onDay: day, for: id))
             #expect(events.allSatisfy { $0.end > day && $0.start < calendar.date(byAdding: .day, value: 1, to: day)! })
         }
-        // Only the three days around the one shown are kept.
+        // Two days ahead on each side are fetched too; nothing far away.
+        #expect(mail.events(onDay: mail.day(offset: -5), for: id) != nil)
         #expect(mail.events(onDay: mail.day(offset: 5), for: id) == nil)
+        // A swipe on keeps what was fetched and only asks for the new far day.
+        mail.dayOffset = -4
+        await mail.loadNearbyDays(for: id)
+        #expect(mail.events(onDay: mail.day(offset: -6), for: id) != nil)
+        #expect(mail.events(onDay: mail.day(offset: -3), for: id) != nil)
         mail.resetDay()
         #expect(mail.dayOffset == 0)
         #expect(mail.events(onDay: mail.day(offset: -3), for: id) == nil)
+    }
+
+    /// The user's recording: over a slow link, swiping on while a fetch was still out threw that
+    /// fetch away, so the days never arrived and the spinner turned for ever.
+    @MainActor
+    @Test func aSwipeWhileAFetchIsOutDoesNotLoseIt() async throws {
+        let accounts = AccountStore(inMemory: [MockMode.accounts[0]], passwords: MockMode.passwords)
+        let mail = MailStore(accounts: accounts, client: EWSClient(transport: MockTransport(mode: .inbox, newMailAfter: 0)))
+        let id = MockMode.accounts[0].id
+        let first = Task { await mail.loadNearbyDays(for: id) }
+        // The mock answers after 250 ms; swipe twice before it does.
+        try await Task.sleep(nanoseconds: 50_000_000)
+        mail.dayOffset = 1
+        let second = Task { await mail.loadNearbyDays(for: id) }
+        mail.dayOffset = 2
+        let third = Task { await mail.loadNearbyDays(for: id) }
+        _ = await (first.value, second.value, third.value)
+        for offset in 1...4 {
+            #expect(mail.events(onDay: mail.day(offset: offset), for: id) != nil, "day \(offset)")
+        }
     }
 }

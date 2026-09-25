@@ -3,22 +3,9 @@ import Foundation
 
 /// An event being created or edited (M16). In memory only, like a mail draft.
 struct EventDraft: Equatable, Identifiable {
-    enum Repeat: String, CaseIterable, Identifiable {
-        case never, daily, weekly, monthly, yearly
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .never: return "Never"
-            case .daily: return "Every day"
-            case .weekly: return "Every week"
-            case .monthly: return "Every month"
-            case .yearly: return "Every year"
-            }
-        }
-    }
-
     enum ShowAs: String, CaseIterable, Identifiable {
-        case busy = "Busy", free = "Free", tentative = "Tentative", away = "OOF", elsewhere = "WorkingElsewhere"
+        // OWA's order.
+        case free = "Free", elsewhere = "WorkingElsewhere", tentative = "Tentative", busy = "Busy", away = "OOF"
         var id: String { rawValue }
         var label: String {
             switch self {
@@ -73,7 +60,9 @@ struct EventDraft: Equatable, Identifiable {
     var end: Date
     var isAllDay = false
     var isPrivate = false
-    var repeatRule: Repeat = .never
+    /// Nil for a single event. Set only when creating: edits apply to one occurrence.
+    var repeatPattern: RepeatPattern?
+    var repeatEnd: RepeatEnd = .never
     var reminderMinutes: Int? = 15
     var showAs: ShowAs = .busy
     var notes = ""
@@ -86,6 +75,9 @@ struct EventDraft: Equatable, Identifiable {
     var existingFiles: [FileAttachment] = []
     var removedFileIDs: Set<String> = []
     var newFiles: [NewFile] = []
+    /// OWA's Response options, both on by default as there.
+    var requestResponses = true
+    var allowForwarding = true
     /// Editing one occurrence of a series: the repeat rule is the series', not changeable here.
     var isOccurrence = false
     var isSaving = false
@@ -116,6 +108,10 @@ struct EventDraft: Equatable, Identifiable {
 
     var problem: String? {
         if !isAllDay && end <= start { return "The event has to end after it starts." }
+        if repeatPattern != nil, case .on(let last) = repeatEnd,
+           Calendar.current.startOfDay(for: last) < Calendar.current.startOfDay(for: start) {
+            return "The series has to end after it starts."
+        }
         if let bad = attendeeList.first(where: { !Recipients.isValid($0) }) {
             return "\u{201C}\(bad)\u{201D} is not an email address."
         }
@@ -203,6 +199,8 @@ struct EventDraft: Equatable, Identifiable {
         draft.categories = event.categories
         draft.charm = event.charm
         draft.existingFiles = detail.files
+        draft.requestResponses = detail.requestsResponses
+        draft.allowForwarding = detail.allowsForwarding
         draft.isOccurrence = event.isRecurring
         return draft
     }

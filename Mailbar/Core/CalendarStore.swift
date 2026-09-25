@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -412,6 +413,24 @@ final class CalendarStore {
 
     func categoryColor(_ name: String) -> Color {
         CategoryColors.color(forName: name, colors: categoryColors)
+    }
+
+    /// A person's photo from the server, for the People sidebar. Never kept here: the sidebar
+    /// holds it while the form is open and it goes when the form closes (no image is cached,
+    /// the user's rule). Nil on servers older than 2013, which have no photos to give.
+    func photo(for address: String) async -> NSImage? {
+        guard let account, let (url, credential) = mail.connection(for: account.id) else { return nil }
+        guard mail.isModern(account.id) else {
+            EWSClient.photoLog.info("No photos: the server is older than Exchange 2013")
+            return nil
+        }
+        do {
+            guard let data = try await mail.client.userPhoto(address, at: url, credential: credential) else { return nil }
+            return NSImage(data: data)
+        } catch {
+            EWSClient.photoLog.error("Photo request failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
     }
 
     /// Free or busy over the event's time for each address (lowercased keys). Empty when the

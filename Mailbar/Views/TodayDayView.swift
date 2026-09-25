@@ -27,9 +27,16 @@ struct TodayDayView: View {
             (store.events(onDay: day(page), for: accountID) ?? []).filter(\.isAllDay).count
         }.max() ?? 0
         VStack(spacing: 0) {
-            PagerStrip(pager: store.dayPager) { page in dayHeader(day(page)) }
-                .frame(height: 30)
-                .overlay(alignment: .trailing) { backToToday }
+            // Exactly as wide as the hour grid's strip, gutter and margin kept out, so the date
+            // travels with its day. A wider strip moved by the same points drifted off its page
+            // and slid the date under the Today button (the user's screenshot, 2026-09-25).
+            HStack(spacing: 0) {
+                Color.clear.frame(width: Self.gutter, height: 1)
+                PagerStrip(pager: store.dayPager) { page in dayHeader(day(page)) }
+                    .overlay(alignment: .trailing) { backToToday }
+            }
+            .frame(height: 30)
+            .padding(.trailing, 6)
             if allDayRows > 0 {
                 HStack(spacing: 0) {
                     Text("all day").font(.system(size: 9)).foregroundStyle(.tertiary)
@@ -62,11 +69,18 @@ struct TodayDayView: View {
             Text(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                 .font(.system(size: 12, weight: .semibold))
             if store.events(onDay: day, for: accountID) == nil {
-                ProgressView().controlSize(.mini)
+                if store.dayFailed(day, for: accountID) {
+                    // Swiping back onto the day tries again.
+                    Label("Could not load", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                } else {
+                    ProgressView().controlSize(.mini)
+                }
             }
             Spacer()
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 4)
     }
 
     /// Away from today, one click comes back.
@@ -81,8 +95,10 @@ struct TodayDayView: View {
             .font(.system(size: 11, weight: .medium))
             .padding(.horizontal, 9)
             .frame(height: 20)
+            // Opaque underneath: the dates slide under it during a swipe.
             .background(Capsule().fill(Color.primary.opacity(0.08)))
-            .padding(.trailing, 10)
+            .background(Capsule().fill(Color(nsColor: .windowBackgroundColor)))
+            .padding(.trailing, 4)
             .help("Back to today")
         }
     }

@@ -200,6 +200,8 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                     event.isRecurring = request.contains("<t:Recurrence>")
                     event.categories = Self.categories(in: request)
                     event.charm = Self.charm(in: request)
+                    event.requestsResponses = !request.contains("<t:IsResponseRequested>false</t:IsResponseRequested>")
+                    event.allowsForwarding = !request.contains(#"PropertyName="DoNotForward" PropertyType="Boolean"/><t:Value>true</t:Value>"#)
                     createdEvents.append(event)
                     return ok(MockCalendar.createdResponse(id: event.id))
                 }
@@ -230,6 +232,9 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 sent.append(request)
                 removedFiles.formUnion(Self.matches(#"AttachmentId Id="([^"]+)""#, in: request))
                 return ok(MockFixtures.success("DeleteAttachment"))
+            }
+            if request.contains("<m:GetUserPhoto>") {
+                return ok(MockCalendar.photoResponse(for: Self.firstMatch("<m:Email>([^<]*)</m:Email>", in: request) ?? ""))
             }
             if request.contains("<m:GetUserAvailabilityRequest>") {
                 let addresses = Self.matches("<t:Address>([^<]*)</t:Address>", in: request).map(Self.unescape)

@@ -19,6 +19,11 @@ enum EventCharm: Int, CaseIterable, Identifiable, Sendable {
     /// The `ExtendedFieldURI` element, for reading and writing it.
     static let fieldURI = #"<t:ExtendedFieldURI PropertySetId="\#(propertySetID)" PropertyId="\#(propertyID)" PropertyType="Integer"/>"#
 
+    /// Outlook's "Allow forwarding" switch, stored inverted as a named Boolean "DoNotForward" in
+    /// the public-strings property set. Like the charm, not in the EWS documentation and unproven
+    /// on the user's server until a real meeting goes out.
+    static let doNotForwardURI = #"<t:ExtendedFieldURI DistinguishedPropertySetId="PublicStrings" PropertyName="DoNotForward" PropertyType="Boolean"/>"#
+
     /// SF Symbols as close to OWA's glyphs as the set has.
     var symbol: String {
         switch self {
