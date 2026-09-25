@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// Outlook's Scheduling Assistant (the user's request, 2026-09-25): everyone on the event, you
+/// The event form's Schedule view, Outlook's Scheduling Assistant (the user's request,
+/// 2026-09-25), a segment beside Event in the form, never a sheet of its own: everyone on the event, you
 /// first, then the people and rooms invited, one row each across the day's hours with their busy
 /// blocks from the server's free/busy (`GetUserAvailability`). The meeting is the accent band; a
 /// click on the grid moves it there, in half hours, keeping its length. Next free time finds the
 /// first slot everyone has open that day. Nothing is kept: the blocks live while the sheet is up.
 struct SchedulingAssistant: View {
     @Bindable var store: CalendarStore
-    let onClose: () -> Void
 
     @State private var day = Date()
     @State private var blocks: [String: [BusyBlock]?] = [:]
@@ -117,10 +117,8 @@ struct SchedulingAssistant: View {
                     }
                 }
             }
-            Divider().opacity(0.6)
-            footer
         }
-        .frame(width: 900, height: 460)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CalendarSurface.background)
         .task(id: Calendar.current.startOfDay(for: day)) { await load() }
         .onAppear { if let start = draft?.start { day = start } }
@@ -128,19 +126,25 @@ struct SchedulingAssistant: View {
 
     // MARK: - Pieces
 
+    /// The day and its arrows on the left, Next free time on the right. Cancel and Send are the
+    /// form's own, in its bottom bar.
     private var header: some View {
-        HStack(spacing: 10) {
-            Text("Scheduling Assistant").font(.system(size: 13, weight: .semibold))
-            Spacer()
+        HStack(spacing: 8) {
             Button { shiftDay(-1) } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.borderless)
                 .help("Previous day")
             Text(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                 .font(.system(size: 12, weight: .medium))
-                .frame(minWidth: 170)
+                .frame(minWidth: 150)
             Button { shiftDay(1) } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.borderless)
                 .help("Next day")
+            if failed {
+                Text("Free/busy could not be read.").font(.system(size: 11)).foregroundStyle(.orange)
+            }
+            Spacer()
+            Button("Next free time", action: nextFree)
+                .disabled(loading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
@@ -216,10 +220,8 @@ struct SchedulingAssistant: View {
             }
             ForEach(Array(list.enumerated()), id: \.offset) { _, block in
                 if let frame = span(block.start, block.end, dayStart: dayStart) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Self.color(block.type))
-                        .frame(width: max(frame.width - 1, 2), height: Self.rowHeight - 7)
-                        .offset(x: frame.x + 1, y: 3)
+                    Image(nsImage: ShowAsSwatch.image(Self.state(block.type), width: max(frame.width, 4), height: Self.rowHeight - 5))
+                        .offset(x: frame.x, y: 2)
                         .help("\(Self.label(block.type)), \(block.start.formatted(date: .omitted, time: .shortened)) to \(block.end.formatted(date: .omitted, time: .shortened))")
                 }
             }
@@ -256,30 +258,17 @@ struct SchedulingAssistant: View {
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 12) {
-            legend("Busy", "Busy")
-            legend("Tentative", "Tentative")
-            legend("OOF", "Away")
-            legend("WorkingElsewhere", "Working elsewhere")
-            if failed {
-                Text("Free/busy could not be read.").font(.system(size: 11)).foregroundStyle(.orange)
+    /// The Show as menu's swatches, in its order, for the form's bottom bar.
+    struct Legend: View {
+        var body: some View {
+            HStack(spacing: 12) {
+                ForEach([EventDraft.ShowAs.elsewhere, .tentative, .busy, .away], id: \.self) { state in
+                    HStack(spacing: 4) {
+                        Image(nsImage: ShowAsSwatch.image(state, size: 13))
+                        Text(state.label).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
             }
-            Spacer()
-            Button("Next free time", action: nextFree)
-                .disabled(loading)
-            Button("Done", action: onClose)
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private func legend(_ type: String, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 2).fill(Self.color(type)).frame(width: 10, height: 10)
-            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 
@@ -342,13 +331,9 @@ struct SchedulingAssistant: View {
         return (lo * Self.hourWidth, (hi - lo) * Self.hourWidth)
     }
 
-    static func color(_ type: String) -> Color {
-        switch type {
-        case "Tentative": return Color(.sRGB, red: 0.72, green: 0.8, blue: 0.93).opacity(0.55)
-        case "OOF": return Color(.sRGB, red: 0.55, green: 0.27, blue: 0.5)
-        case "WorkingElsewhere": return Color.teal.opacity(0.6)
-        default: return Color(.sRGB, red: 0.45, green: 0.6, blue: 0.85)
-        }
+    /// A free/busy type as the Show as menu knows it; anything unknown reads as busy.
+    static func state(_ type: String) -> EventDraft.ShowAs {
+        EventDraft.ShowAs(rawValue: type) ?? .busy
     }
 
     static func label(_ type: String) -> String {

@@ -87,9 +87,13 @@ in mock mode. The Milestones section below is the record; none is open.
   2. People suggestions from the server's directory search (`ResolveNames`) plus inbox senders.
   3. A room picker from the organization's room lists, free-text location always possible.
   4. A Scheduling Assistant after all (the user's request, 2026-09-25, reversing the early "no"):
-     `SchedulingAssistant`, a sheet from the form's bottom bar, rows for you, the invitees and
+     `SchedulingAssistant`, shown as **Schedule**, the second view of the event form beside
+     Event (an "Event | Schedule" switch in the title bar, as Outlook for Mac has it), never a
+     sheet over the form: a sheet on a sheet was the user's objection. Same window size in both,
+     the People sidebar giving way to the grid; the form's Cancel and Send serve both, so there
+     is no Done, and the legend sits in the bottom bar's left. Rows for you, the invitees and
      rooms with their busy blocks from `GetUserAvailability` for the day, the meeting as a band,
-     a click moves it, Next free time finds the first open slot. Charm and Categorize were left out at first (crossed off in an
+     a click moves it, Next free time finds the first open slot. Dense, after Outlook's (the user's call): 24 pt rows under Attendees and Rooms bands, thin hour and half-hour lines, and busy blocks and legend drawn with the Show as menu's own swatches (`ShowAsSwatch`: dotted, hatched, blue, purple), never colours of their own. Charm and Categorize were left out at first (crossed off in an
      early screenshot) and added 2026-09-25 when the user asked for them.
 - No calendar library: checked 2026-09-25. KVKCalendar is UIKit and reaches the Mac only through
   Catalyst; swift-week-view and CalendarKit are iOS; GECalendar and Mijick's CalendarView are date
@@ -139,7 +143,7 @@ Testing rule for the calendar: never create, change, cancel or answer a real eve
 user names it; an event with people sends real invitations.
 
 ## Status
-2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and the Scheduling Assistant (163 tests green); the popover has Inbox and
+2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and its Schedule view (163 tests green); the popover has Inbox and
 Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
 Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
@@ -359,7 +363,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   found by typing in Location (no separate Rooms button, the user's call): the matching rooms
   list under the field (every word, ignoring case and the Arabic and Persian ye and kaf); a click
   selects one, Add to meeting (or a double-click, or Return) books the selected one, and Check
-  availability puts every listed room in the Scheduling Assistant as a candidate (not booked,
+  availability puts every listed room in Schedule as a candidate (not booked,
   never sent; `EventDraft.candidateRooms`), where ticking a room books it, after Outlook (the
   user's call; showing Free or Busy badges in the list was dropped). Nothing is sent before Save or Send; Cancel sends nothing (tested).
   **Unproven on the real server**: the charm is extended property 0x0027 in property set
@@ -375,7 +379,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-25 More event form calls by the user: Show as lists OWA's order, Free, Working
   elsewhere, Tentative, Busy, Away, each with Outlook's swatch (`ShowAsSwatch`, untinted images).
   A click on the form's empty space ends editing (`EndEditingArea`); labels let clicks through.
-  Layout after OWA (the user's sketch): a title bar with the form's name alone, a toolbar under
+  Layout after OWA (the user's sketch): a title bar holding the Event and Schedule switch (it replaced the form's name), a toolbar under
   it with Attach, Charm and Categorize (each showing what is chosen), white like the form with no
   line between them; the form opens with no field focused or selected, not even for a frame
   (`FocusSink`, as in the account editor; the user's call, after first asking for the cursor in

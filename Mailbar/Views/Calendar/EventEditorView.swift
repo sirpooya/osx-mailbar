@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Creating or editing an event (M16): the fields of the user's OWA form, minus the scheduling
-/// assistant. Notes are plain text, like the mail composer. People sit in a sidebar on the right,
-/// as in OWA, each with whether they are free at that time.
+/// Creating or editing an event (M16): the fields of the user's OWA form. Notes are plain text,
+/// like the mail composer. People sit in a sidebar on the right, as in OWA, each with whether
+/// they are free at that time. Event and Schedule are two views of the one form, switched at the
+/// top as Outlook for Mac does, never a sheet over it (the user's call, 2026-09-25).
 struct EventEditorView: View {
     @Bindable var store: CalendarStore
     let original: EventDraft
@@ -12,7 +13,7 @@ struct EventEditorView: View {
     @State private var highlightedRoom: Room.ID?
     @State private var categoriesOpen = QCFlags.calendarCategories
     @State private var showAsOpen = false
-    @State private var schedulingOpen = false
+    @State private var pane: Pane = QCFlags.calendarAssistant ? .schedule : .event
     @State private var reminderOpen = false
     @State private var charmsOpen = QCFlags.calendarCharms
     @State private var calendarOpen = false
@@ -45,99 +46,16 @@ struct EventEditorView: View {
             FocusSink().frame(width: 0, height: 0)
             header
             Divider().opacity(0.6)
-            HStack(spacing: 0) {
-                // No scrolling when it fits, which it does unless files, rooms and a series end
-                // all show at once (the user's call: no scroll on the main section).
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 12) {
-                      VStack(alignment: .leading, spacing: 12) {
-                        // A plain bordered field like Location, with its label (the user's call).
-                        row("Title") {
-                            FieldBox(focused: titleFocused) {
-                                TextField("Add a title", text: field(\.subject))
-                                    .textFieldStyle(.plain)
-                                    .focused($titleFocused)
-                            }
-                        }
-                        location
-                        Divider().opacity(0.5)
-                        times
-                        Divider().opacity(0.5)
-                        options
-                        Divider().opacity(0.5)
-                        files
-                      }
-                      .background(GeometryReader { box in
-                          Color.clear
-                              .onAppear { fieldsHeight = box.size.height }
-                              .onChange(of: box.size.height) { _, height in fieldsHeight = height }
-                      })
-                      // Above Description, so the room list under Location covers the box and its
-                      // placeholder entirely (the user's catch: a z-index inside this group only
-                      // ordered its own rows).
-                      .zIndex(1)
-                        // The event's body, which OWA calls the description. It fills what the
-                        // form leaves, down to the bottom bar, never shorter than 60 pt (the
-                        // user's catch: a fixed box left dead space under it).
-                        row("Description", firstLine: true) {
-                            // A text view is AppKit and draws above any SwiftUI overlay, whatever
-                            // the z-index: while the room list covers it, an empty box of the same
-                            // size stands in (the user's catch).
-                            Group {
-                                if roomListShown {
-                                    Color.clear
-                                } else {
-                                    ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } },
-                                                  takesFocus: false)
-                                }
-                            }
-                                .frame(height: max(60, formHeight - 36 - fieldsHeight - 12))
-                                // The text view has no baseline SwiftUI can see: its first line
-                                // sits at the 8 pt inset plus the 13 pt font's ascender, so the
-                                // label lines up with it exactly (the user's catch, twice).
-                                .alignmentGuide(.firstTextBaseline) { box in
-                                    box[.top] + 8 + NSFont.systemFont(ofSize: 13).ascender
-                                }
-                                .overlay(alignment: .topLeading) {
-                                    if draft.notes.isEmpty {
-                                        Text("Add a description")
-                                            .font(.system(size: 13))
-                                            .foregroundStyle(.tertiary)
-                                            .padding(.horizontal, 13)
-                                            .padding(.vertical, 8)
-                                            .allowsHitTesting(false)
-                                    }
-                                }
-                                // The same light grey as every field above it.
-                                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(FieldBoxFill.color))
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 18)
-                    .background(EndEditingArea())
-                }
-                .background(GeometryReader { box in
-                    Color.clear
-                        .onAppear { formHeight = box.size.height }
-                        .onChange(of: box.size.height) { _, height in formHeight = height }
-                })
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(width: Self.mainWidth)
-                Divider().opacity(0.6)
-                PeopleSidebar(store: store, draft: draft)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The same size either way, so switching never moves the window.
+            if pane == .event {
+                eventPane
+            } else {
+                SchedulingAssistant(store: store)
             }
             Divider().opacity(0.6)
             bottomBar
         }
         .frame(width: Self.formSize.width, height: Self.formSize.height)
-        .task {
-            if QCFlags.calendarAssistant { try? await Task.sleep(nanoseconds: 1_200_000_000); schedulingOpen = true }
-        }
-        .sheet(isPresented: $schedulingOpen) {
-            SchedulingAssistant(store: store) { schedulingOpen = false }
-        }
         .background(CalendarSurface.background)
         .task {
             // A turn after the sheet is up, or the focus has nowhere to go yet.
@@ -156,6 +74,98 @@ struct EventEditorView: View {
 
     private var draft: EventDraft { store.editor ?? original }
 
+    enum Pane: String, CaseIterable, Identifiable {
+        case event = "Event", schedule = "Schedule"
+        var id: String { rawValue }
+    }
+
+    /// The fields on the left, People on the right.
+    private var eventPane: some View {
+        HStack(spacing: 0) {
+            // No scrolling when it fits, which it does unless files, rooms and a series end
+            // all show at once (the user's call: no scroll on the main section).
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 12) {
+                  VStack(alignment: .leading, spacing: 12) {
+                    // A plain bordered field like Location, with its label (the user's call).
+                    row("Title") {
+                        FieldBox(focused: titleFocused) {
+                            TextField("Add a title", text: field(\.subject))
+                                .textFieldStyle(.plain)
+                                .focused($titleFocused)
+                        }
+                    }
+                    location
+                    Divider().opacity(0.5)
+                    times
+                    Divider().opacity(0.5)
+                    options
+                    Divider().opacity(0.5)
+                    files
+                  }
+                  .background(GeometryReader { box in
+                      Color.clear
+                          .onAppear { fieldsHeight = box.size.height }
+                          .onChange(of: box.size.height) { _, height in fieldsHeight = height }
+                  })
+                  // Above Description, so the room list under Location covers the box and its
+                  // placeholder entirely (the user's catch: a z-index inside this group only
+                  // ordered its own rows).
+                  .zIndex(1)
+                    // The event's body, which OWA calls the description. It fills what the
+                    // form leaves, down to the bottom bar, never shorter than 60 pt (the
+                    // user's catch: a fixed box left dead space under it).
+                    row("Description", firstLine: true) {
+                        // A text view is AppKit and draws above any SwiftUI overlay, whatever
+                        // the z-index: while the room list covers it, an empty box of the same
+                        // size stands in (the user's catch).
+                        Group {
+                            if roomListShown {
+                                Color.clear
+                            } else {
+                                ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } },
+                                              takesFocus: false)
+                            }
+                        }
+                            .frame(height: max(60, formHeight - 36 - fieldsHeight - 12))
+                            // The text view has no baseline SwiftUI can see: its first line
+                            // sits at the 8 pt inset plus the 13 pt font's ascender, so the
+                            // label lines up with it exactly (the user's catch, twice).
+                            .alignmentGuide(.firstTextBaseline) { box in
+                                box[.top] + 8 + NSFont.systemFont(ofSize: 13).ascender
+                            }
+                            .overlay(alignment: .topLeading) {
+                                if draft.notes.isEmpty {
+                                    Text("Add a description")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.tertiary)
+                                        .padding(.horizontal, 13)
+                                        .padding(.vertical, 8)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            // The same light grey as every field above it.
+                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(FieldBoxFill.color))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 18)
+                .background(EndEditingArea())
+            }
+            .background(GeometryReader { box in
+                Color.clear
+                    .onAppear { formHeight = box.size.height }
+                    .onChange(of: box.size.height) { _, height in formHeight = height }
+            })
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(width: Self.mainWidth)
+            Divider().opacity(0.6)
+            PeopleSidebar(store: store, draft: draft)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     /// A binding into the open draft, so every field edits `store.editor` directly.
     private func field<Value>(_ path: WritableKeyPath<EventDraft, Value>) -> Binding<Value> {
         Binding(get: { (store.editor ?? original)[keyPath: path] },
@@ -164,14 +174,14 @@ struct EventEditorView: View {
 
     // MARK: - Header
 
-    /// The title bar with the form's name alone, then OWA's toolbar under it: Attach, Charm and
-    /// Categorize. Cancel and Send live in the bar at the bottom (the user's layout, 2026-09-25).
+    /// The title bar with the Event and Schedule switch where the form's name was, then OWA's
+    /// toolbar under it: Attach, Charm and Categorize. Cancel and Send live in the bar at the
+    /// bottom (the user's layout, 2026-09-25).
     private var header: some View {
         VStack(spacing: 0) {
-            Text(draft.isNew ? "New Event" : "Edit Event")
-                .font(.system(size: 13, weight: .semibold))
+            PaneSwitcher(selection: $pane)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .padding(.vertical, 7)
             // The same white as the form, no line between it and the title (the user's call).
             HStack(spacing: 16) {
                 attachButton
@@ -192,15 +202,7 @@ struct EventEditorView: View {
     /// What saving will do, or what stops it, on the left; Cancel and Send on the right.
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            // Outlook's Scheduling Assistant, where the "Saving sends the invitations" note was:
-            // Send already says that (the user's call).
-            Button { schedulingOpen = true } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar.day.timeline.left")
-                    Text("Scheduling Assistant")
-                }
-            }
-            .help("See when everyone is free")
+            if pane == .schedule { SchedulingAssistant.Legend() }
             footer
             Spacer()
             Button("Cancel") { store.editor = nil }
@@ -256,11 +258,11 @@ struct EventEditorView: View {
             .zIndex(1)
             if !draft.candidateRooms.isEmpty {
                 row("") {
-                    Button { schedulingOpen = true } label: {
+                    Button { pane = .schedule } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "calendar.day.timeline.left")
-                            Text(draft.candidateRooms.count == 1 ? "1 room to compare in Scheduling Assistant"
-                                 : "\(draft.candidateRooms.count) rooms to compare in Scheduling Assistant")
+                            Text(draft.candidateRooms.count == 1 ? "1 room to compare in Schedule"
+                                 : "\(draft.candidateRooms.count) rooms to compare in Schedule")
                         }
                         .font(.system(size: 12))
                     }
@@ -774,10 +776,60 @@ struct EventEditorView: View {
 
 /// Outlook's free/busy swatches for the Show as menu: Free an empty square, Working elsewhere
 /// dotted, Tentative hatched, Busy the calendar's blue, Away purple. Drawn as untinted images,
-/// because a menu draws a template image in the text colour and the colour is the point.
+/// Event or Schedule, drawn like the calendar's Day, Week, Month switch: a grey pill that slides
+/// between the segments inside a lightly bordered capsule.
+private struct PaneSwitcher: View {
+    @Binding var selection: EventEditorView.Pane
+
+    @Namespace private var pill
+    @State private var shown: EventEditorView.Pane
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(selection: Binding<EventEditorView.Pane>) {
+        _selection = selection
+        _shown = State(initialValue: selection.wrappedValue)
+    }
+
+    var body: some View {
+        let current = shown
+        HStack(spacing: 2) {
+            ForEach(EventEditorView.Pane.allCases) { pane in
+                Button { selection = pane } label: {
+                    Text(pane.rawValue)
+                        .font(.system(size: 13, weight: current == pane ? .medium : .regular))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 14)
+                        .frame(height: 24)
+                        .matchedGeometryEffect(id: pane, in: pill)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background {
+            Capsule().fill(Color.primary.opacity(0.1))
+                .matchedGeometryEffect(id: current, in: pill, isSource: false)
+        }
+        .onChange(of: selection) { _, pane in
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) { shown = pane }
+        }
+        .padding(3)
+        .background(Capsule().fill(CalendarSurface.background))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.09), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("View")
+    }
+}
+
+/// because a menu draws a template image in the text colour and the colour is the point. The
+/// Scheduling Assistant draws its blocks and legend with the same art, at any width.
 enum ShowAsSwatch {
     static func image(_ state: EventDraft.ShowAs, size: CGFloat = 14) -> NSImage {
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+        image(state, width: size, height: size)
+    }
+
+    static func image(_ state: EventDraft.ShowAs, width: CGFloat, height: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { rect in
             let box = rect.insetBy(dx: 1, dy: 1)
             let border = NSColor(srgbRed: 0.45, green: 0.5, blue: 0.6, alpha: 1)
             let blue = NSColor(srgbRed: 0.72, green: 0.8, blue: 0.93, alpha: 1)

@@ -119,7 +119,7 @@ packages; Apple frameworks only.
 | Calendar | `FindItem` with `CalendarView`, `GetItem`, `CreateItem`, `UpdateItem`, `DeleteItem` |
 | Answer invitations | `AcceptItem`, `TentativelyAcceptItem`, `DeclineItem` |
 | People and rooms | `ResolveNames`, `GetRoomLists`, `GetRooms`, `GetUserPhoto` |
-| Free or busy, Scheduling Assistant | `GetUserAvailability` |
+| Free or busy, the event form's Schedule view | `GetUserAvailability` |
 | Files on events | `CreateAttachment`, `DeleteAttachment` |
 | Category colours | `GetUserConfiguration` (`CategoryList`) |
 
