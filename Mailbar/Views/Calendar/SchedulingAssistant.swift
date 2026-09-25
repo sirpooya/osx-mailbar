@@ -24,16 +24,13 @@ struct SchedulingAssistant: View {
     private static let rowHeight: CGFloat = 24
     private static let sectionHeight: CGFloat = 20
     private static let timelineHeight: CGFloat = 20
-    private static let nameWidth: CGFloat = 200
-    /// 07:00 to 21:00, stretched to take in the meeting when it falls outside.
-    private var hours: Range<Int> {
-        guard let draft else { return 7..<21 }
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: day)
-        let from = Int(draft.start.timeIntervalSince(dayStart) / 3600)
-        let to = Int((draft.end.timeIntervalSince(dayStart) / 3600).rounded(.up))
-        return max(0, min(7, from))..<min(24, max(21, to))
-    }
+    /// Wide enough for a room's full name ("building | floor | room"), the user's call.
+    private static let nameWidth: CGFloat = 270
+    /// The whole day, always. A range stretched around the meeting shifted the grid under the
+    /// hand while the band was dragged across an hour (the user's recording); the view scrolls
+    /// to the meeting instead.
+    private let hours = 0..<24
+    private static let gridSpace = "scheduleGrid"
 
     private var draft: EventDraft? { store.editor }
 
@@ -182,7 +179,7 @@ struct SchedulingAssistant: View {
                 Toggle("", isOn: bookedBinding(room)).toggleStyle(FieldCheckboxStyle()).labelsHidden()
                     .help("Book this room")
             }
-            DirectionalText(person.name, font: .system(size: 12))
+            DirectionalText(person.name, font: .system(size: 12), truncation: person.room != nil ? .head : .tail)
                 .foregroundStyle(person.room != nil && store.editor?.rooms.contains(person.room!) != true
                                  ? Color.secondary : Color.primary)
         }
@@ -224,6 +221,7 @@ struct SchedulingAssistant: View {
                 if loading { ProgressView().controlSize(.small).padding(4) }
             }
             .frame(width: width)
+            .coordinateSpace(name: Self.gridSpace)
             .contentShape(Rectangle())
             .onTapGesture { location in moveMeeting(toX: location.x, dayStart: dayStart) }
         }
@@ -284,10 +282,12 @@ struct SchedulingAssistant: View {
                     case .ended: NSCursor.arrow.set()
                     }
                 }
-                .gesture(DragGesture(minimumDistance: 2)
+                // Measured in the grid's space: the band's own moves with it, so the drag shrank
+                // as the band followed the hand.
+                .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.gridSpace))
                     .onChanged { value in
                         if dragOrigin == nil {
-                            dragOrigin = (draft.start, draft.end, Self.part(at: value.startLocation.x, width: frame.width))
+                            dragOrigin = (draft.start, draft.end, Self.part(at: value.startLocation.x - frame.x, width: frame.width))
                         }
                         guard let origin = dragOrigin else { return }
                         Self.cursor(for: origin.part, dragging: true).set()
@@ -307,7 +307,10 @@ struct SchedulingAssistant: View {
                     }
                     .onEnded { value in
                         dragOrigin = nil
-                        Self.cursor(for: Self.part(at: value.location.x, width: frame.width)).set()
+                        // Let go outside the band, the arrow: no hover end will come to reset it.
+                        let x = value.location.x - frame.x
+                        let inside = (0...frame.width).contains(x) && (0...linesHeight).contains(value.location.y)
+                        (inside ? Self.cursor(for: Self.part(at: x, width: frame.width)) : NSCursor.arrow).set()
                     })
                 .offset(x: frame.x)
                 .help("Drag to move the meeting, or drag an edge to change its length")

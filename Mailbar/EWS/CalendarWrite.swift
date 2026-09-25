@@ -387,7 +387,13 @@ struct BusyBlock: Equatable, Sendable {
 struct Room: Equatable, Hashable, Identifiable, Sendable {
     let name: String
     let address: String
-    var id: String { address }
+    /// One room is one address, whatever its case or display name: the room lists and an event's
+    /// booked rooms can spell the same address differently, which listed one room twice (the
+    /// user's catch, the same meeting room ticked twice in Schedule).
+    var id: String { address.lowercased() }
+
+    static func == (a: Room, b: Room) -> Bool { a.id == b.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 extension EWSResponse {
@@ -610,10 +616,17 @@ extension EWSClient {
     func rooms(at url: URL, credential: EWSCredential) async throws -> [Room] {
         let lists = try EWSResponse.roomAddresses(from: try await raw(CalendarSOAP.getRoomLists, url: url, credential: credential),
                                                   element: "Address")
-        var rooms: [Room] = []
-        for list in lists {
-            let data = try await raw(CalendarSOAP.getRooms(list: list.address), url: url, credential: credential)
-            rooms += try EWSResponse.roomAddresses(from: data, element: "Room")
+        // Every list at once: one after another took long over the VPN.
+        let rooms = try await withThrowingTaskGroup(of: [Room].self) { group in
+            for list in lists {
+                group.addTask {
+                    let data = try await self.raw(CalendarSOAP.getRooms(list: list.address), url: url, credential: credential)
+                    return try EWSResponse.roomAddresses(from: data, element: "Room")
+                }
+            }
+            var all: [Room] = []
+            for try await part in group { all += part }
+            return all
         }
         return Array(Set(rooms)).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }

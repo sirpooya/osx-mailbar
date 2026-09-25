@@ -178,12 +178,17 @@ struct DirectionalText: View {
     /// starts where every other subject starts (the user's call, 2026-09-25), the words still in
     /// Persian order.
     var pinnedLeading = false
+    /// Where a line too long for its room is cut. Room names cut at the head, so "building |
+    /// floor | room" keeps the room and loses the building (the user's call).
+    var truncation: Text.TruncationMode = .tail
 
-    init(_ text: String, font: Font, lines: Int = 1, pinnedLeading: Bool = false) {
+    init(_ text: String, font: Font, lines: Int = 1, pinnedLeading: Bool = false,
+         truncation: Text.TruncationMode = .tail) {
         self.text = text
         self.font = font
         self.lines = lines
         self.pinnedLeading = pinnedLeading
+        self.truncation = truncation
     }
 
     private var isRightToLeft: Bool {
@@ -194,7 +199,7 @@ struct DirectionalText: View {
         Text(text)
             .font(font)
             .lineLimit(lines)
-            .truncationMode(.tail)
+            .truncationMode(truncation)
             .multilineTextAlignment(isRightToLeft && !pinnedLeading ? .trailing : .leading)
             .frame(maxWidth: .infinity, alignment: isRightToLeft && !pinnedLeading ? .trailing : .leading)
     }

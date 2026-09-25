@@ -323,6 +323,8 @@ final class CalendarStore {
     var notice: String?
     /// Rooms the organization publishes, loaded the first time the room menu opens.
     private(set) var rooms: [Room]?
+    /// The room lists are being read, for the spinner in Location.
+    private(set) var roomsLoading = false
 
     func startNewEvent(at slot: Date? = nil, until end: Date? = nil) {
         guard let account else { return }
@@ -458,6 +460,9 @@ final class CalendarStore {
     func loadRooms() async {
         // Again when an earlier read came back empty (a slow VPN, a hiccup), not only the first time.
         guard rooms?.isEmpty != false, let account, let (url, credential) = mail.connection(for: account.id) else { return }
+        guard !roomsLoading else { return }
+        roomsLoading = true
+        defer { roomsLoading = false }
         rooms = (try? await mail.client.rooms(at: url, credential: credential)) ?? []
     }
 

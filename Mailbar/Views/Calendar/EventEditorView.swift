@@ -267,6 +267,10 @@ struct EventEditorView: View {
                                 book([room])
                             }
                         }
+                    // Reading the organization's rooms: say so while the list is not in yet.
+                    if store.roomsLoading, !draft.location.trimmingCharacters(in: .whitespaces).isEmpty {
+                        ProgressView().controlSize(.small).help("Loading rooms")
+                    }
                 }
             }
             .overlay(alignment: .topLeading) {
@@ -310,14 +314,19 @@ struct EventEditorView: View {
         .task { await store.loadRooms() }
         .onChange(of: draft.location) { _, text in
             highlightedRoom = nil
-            if !text.trimmingCharacters(in: .whitespaces).isEmpty { roomQueryActive = true }
+            if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                roomQueryActive = true
+                // No rooms yet (still loading, or an earlier read came back empty): read them now.
+                if store.rooms?.isEmpty != false, !store.roomsLoading { Task { await store.loadRooms() } }
+            }
         }
         .onChange(of: locationFocused) { was, now in if was, !now { roomQueryActive = false } }
     }
 
     /// The room list is up: typing in Location, with rooms matching.
     private var roomListShown: Bool {
-        roomQueryActive && !draft.location.trimmingCharacters(in: .whitespaces).isEmpty && !roomMatches.isEmpty
+        roomQueryActive && !draft.location.trimmingCharacters(in: .whitespaces).isEmpty
+            && (!roomMatches.isEmpty || store.rooms != nil && !store.roomsLoading)
     }
 
     private var roomMatches: [Room] {
@@ -971,6 +980,11 @@ private struct RoomDropdown: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        if rooms.isEmpty {
+                            Text("No rooms match").font(.system(size: 12)).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10).padding(.vertical, 8)
+                        }
                         ForEach(rooms) { room in row(room).id(room.id) }
                     }
                     .padding(4)
@@ -1009,7 +1023,7 @@ private struct RoomDropdown: View {
                     .foregroundStyle(booked ? Color.accentColor : Color.secondary)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    DirectionalText(room.name, font: .system(size: 12.5))
+                    DirectionalText(room.name, font: .system(size: 12.5), truncation: .head)
                     Text(room.address).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
