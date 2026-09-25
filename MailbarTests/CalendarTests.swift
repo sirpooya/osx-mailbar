@@ -66,15 +66,14 @@ private func event(_ id: String, _ start: Date, minutes: Int, allDay: Bool = fal
         return CalendarStore(mail: mail)
     }
 
-    @Test func theWeekRunsSaturdayToFridayAndTheWorkWeekToWednesday() {
+    @Test func theWeekRunsSaturdayToFriday() {
         let store = makeStore()
         store.mode = .week
         let calendar = store.calendar
         #expect(store.visibleDays.count == 7)
         #expect(calendar.component(.weekday, from: store.visibleDays[0]) == 7)
         #expect(calendar.component(.weekday, from: store.visibleDays[6]) == 6)
-        store.mode = .workWeek
-        #expect(store.visibleDays.map { calendar.component(.weekday, from: $0) } == [7, 1, 2, 3, 4])
+
     }
 
     /// The crash of 2026-09-25: the month grid indexed six weeks while the mode was already Week.
@@ -98,7 +97,12 @@ private func event(_ id: String, _ start: Date, minutes: Int, allDay: Bool = fal
         let store = makeStore()
         store.mode = .week
         store.anchor = Date()
+        // Setting the mode and the anchor each start a refresh of their own, and the newest one
+        // wins by design, so wait for the store to settle rather than on one particular call.
         await store.refresh()
+        for _ in 0..<50 where store.phase != .loaded {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
         #expect(store.phase == .loaded)
         let workflow = try #require(store.events.first { $0.subject == "Design System Workflow Demo" })
         #expect(workflow.isTentative)
@@ -127,6 +131,75 @@ private func event(_ id: String, _ start: Date, minutes: Int, allDay: Bool = fal
         let view = try #require(root.first("CalendarView"))
         #expect(view.attributes["StartDate"] == SOAP.isoDate(start))
         #expect(root.first("DistinguishedFolderId")?.attributes["Id"] == "calendar")
+    }
+
+    /// What a swipe pages between: the neighbours on either side, a view's own unit apart.
+    @Test func swipeStepsMoveByTheViewsOwnUnit() {
+        let store = makeStore()
+        let calendar = store.calendar
+        store.mode = .week
+        let week = store.visibleRange.start
+        #expect(store.days(page: 1).first == store.calendar.date(byAdding: .day, value: 7, to: week))
+        #expect(store.days(page: -1).first == store.calendar.date(byAdding: .day, value: -7, to: week))
+        // What is fetched covers both neighbours, so a swipe never slides in an empty week.
+        #expect(store.fetchRange.start == store.days(page: -1).first)
+        store.step(forward: true)
+        #expect(calendar.dateComponents([.day], from: week, to: store.visibleRange.start).day == 7)
+        store.step(forward: false)
+        #expect(store.visibleRange.start == week)
+
+        store.mode = .day
+        let day = store.visibleRange.start
+        store.step(forward: true)
+        #expect(calendar.dateComponents([.day], from: day, to: store.visibleRange.start).day == 1)
+    }
+
+    /// The spring's decision on release: far enough or fast enough commits, otherwise back.
+    @Test func thePagerCommitsOnDistanceOrFlickAndOtherwiseSpringsBack() async throws {
+        let pager = CalendarPager()
+        pager.width = 900
+        var committed: [Bool] = []
+        pager.onCommit = { committed.append($0) }
+
+        pager.began()
+        for step in 0..<10 {                    // slow and short, then a rest: back to rest
+            pager.moved(by: -10, at: Double(step) * 0.1)
+        }
+        pager.ended(at: 1.0)
+        try await Task.sleep(nanoseconds: 900_000_000)
+        #expect(committed.isEmpty)
+        #expect(pager.offset == 0)
+
+        pager.began()
+        pager.moved(by: -400, at: 1.0)          // past a third of the page: next
+        pager.ended(at: 1.5)
+        try await Task.sleep(nanoseconds: 900_000_000)
+        #expect(committed == [true])
+
+        pager.began()
+        pager.moved(by: 30, at: 2.0)
+        pager.moved(by: 40, at: 2.02)           // short but fast to the right: previous
+        pager.ended(at: 2.03)
+        try await Task.sleep(nanoseconds: 900_000_000)
+        #expect(committed == [true, false])
+        #expect(pager.offset == 0)
+    }
+
+    /// Category colours: from the master list for a custom name, from the name for a default one,
+    /// and the accent for an event with none.
+    @Test func eventsTakeTheirCategoryColour() async throws {
+        let store = makeStore()
+        store.mode = .week
+        await store.refresh()
+        for _ in 0..<50 where store.phase != .loaded { try await Task.sleep(nanoseconds: 100_000_000) }
+        #expect(store.categoryColors["Storybook"] == 9)
+        let demo = try #require(store.events.first { $0.subject == "ds demo alignment" })
+        #expect(demo.categories == ["Storybook"])
+        #expect(store.tint(for: demo) == CategoryColors.color(index: 9))
+        let daily = try #require(store.events.first { $0.subject == "Shopping Design Daily" })
+        #expect(store.tint(for: daily) == .accentColor)
+        #expect(CategoryColors.guessedIndex(forName: "Green category") == 4)
+        #expect(CategoryColors.parseMasterList(Data(MockCalendar.categoryListXML.utf8))["Red category"] == 0)
     }
 
     @Test func theStreamAlsoWatchesTheCalendar() {

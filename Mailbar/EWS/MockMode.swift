@@ -130,6 +130,9 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 sent.append(request)
                 return ok(MockFixtures.success("CreateItem"))
             }
+            if request.contains("<m:GetUserConfiguration>") {
+                return ok(MockCalendar.categoryListResponse)
+            }
             // The calendar (M15). Checked before the inbox, since both are FindItem and GetItem.
             if request.contains("<m:CalendarView") {
                 guard !isTeam else { return ok(MockCalendar.findResponse(start: .distantPast, end: .distantPast, events: [])) }

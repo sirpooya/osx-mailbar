@@ -156,6 +156,17 @@ struct EWSClient: Sendable {
         return try EWSResponse.eventDetail(from: data)
     }
 
+    /// Category name to Outlook colour index. Empty when the mailbox has no list or refuses.
+    func categoryColors(at url: URL, credential: EWSCredential) async throws -> [String: Int] {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.getCategoryList),
+                                  to: url, credential: credential)
+        let root = try EWSResponse.parse(data)
+        _ = try EWSResponse.responseMessages(in: root)
+        guard let base64 = root.first("XmlData")?.trimmedText,
+              let xml = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else { return [:] }
+        return CategoryColors.parseMasterList(xml)
+    }
+
     // MARK: - Streaming (M11)
 
     func subscribeToInbox(at url: URL, credential: EWSCredential) async throws -> String {

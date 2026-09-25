@@ -8,18 +8,45 @@ struct CalendarWeekView: View {
 
     static let hourHeight: CGFloat = 54
     static let gutterWidth: CGFloat = 52
+    static let headerHeight: CGFloat = 38
+    static let allDayRowHeight: CGFloat = 22
 
     var body: some View {
-        let days = store.visibleDays
+        // The all-day strip is as tall as the busiest day on any of the three pages, so it does
+        // not change height as a swipe brings in a week with more (or fewer) all-day events.
+        let allDayRows = (-1...1).flatMap { store.days(page: $0) }.map { store.allDayEvents(on: $0).count }.max() ?? 0
         VStack(spacing: 0) {
-            header(days)
-            if days.contains(where: { !store.allDayEvents(on: $0).isEmpty }) {
-                allDayStrip(days)
+            HStack(spacing: 0) {
+                Color.clear.frame(width: Self.gutterWidth, height: 1)
+                PagerStrip(pager: store.pager) { page in header(store.days(page: page)) }
+            }
+            .frame(height: Self.headerHeight)
+            if allDayRows > 0 {
+                HStack(spacing: 0) {
+                    Text("all day")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: Self.gutterWidth - 6, alignment: .trailing)
+                        .padding(.trailing, 6)
+                    PagerStrip(pager: store.pager) { page in allDayStrip(store.days(page: page)) }
+                }
+                .frame(height: CGFloat(allDayRows) * Self.allDayRowHeight + 6)
                 Divider().opacity(0.6)
             }
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    grid(days)
+                    HStack(alignment: .top, spacing: 0) {
+                        hourGutter
+                        PagerStrip(pager: store.pager, measures: true) { page in
+                            HStack(spacing: 0) {
+                                ForEach(store.days(page: page), id: \.self) { day in
+                                    DayColumn(store: store, day: day)
+                                }
+                            }
+                        }
+                    }
+                    .frame(height: Self.hourHeight * 24)
+                    .padding(.top, 8)
                 }
                 .onAppear {
                     // Start of the working day at the top, as OWA opens. A turn later, once the
@@ -35,11 +62,10 @@ struct CalendarWeekView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Pieces
 
     private func header(_ days: [Date]) -> some View {
         HStack(spacing: 0) {
-            Color.clear.frame(width: Self.gutterWidth, height: 1)
             ForEach(days, id: \.self) { day in
                 let isToday = store.calendar.isDateInToday(day)
                 VStack(alignment: .leading, spacing: 0) {
@@ -48,62 +74,50 @@ struct CalendarWeekView: View {
                         .foregroundStyle(isToday ? Color.accentColor : Color.secondary)
                         .lineLimit(1)
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .frame(maxHeight: .infinity, alignment: .center)
                     Rectangle()
                         .fill(isToday ? Color.accentColor : Color.clear)
                         .frame(height: 3)
                 }
+                // No fill: a plain row of day names over the grid, as in Apple's Calendar (the user
+                // asked for the grey band gone, 2026-09-25).
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03))
             }
         }
     }
 
     private func allDayStrip(_ days: [Date]) -> some View {
         HStack(alignment: .top, spacing: 0) {
-            Text("all day")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .frame(width: Self.gutterWidth, alignment: .trailing)
-                .padding(.trailing, 6)
-                .padding(.top, 4)
             ForEach(days, id: \.self) { day in
                 VStack(spacing: 2) {
                     ForEach(store.allDayEvents(on: day)) { event in
-                        EventBlock(event: event, isSelected: store.selectedEventID == event.id, compact: true)
-                            .frame(height: 20)
+                        EventBlock(event: event, isSelected: store.selectedEventID == event.id, compact: true,
+                                   tint: store.tint(for: event))
+                            .frame(height: Self.allDayRowHeight - 2)
                             .onTapGesture { Task { await store.select(event) } }
                     }
                 }
                 .padding(3)
-                .frame(maxWidth: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
     }
 
-    // MARK: - Grid
-
-    private func grid(_ days: [Date]) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            // Hour labels: "9a", "12p", as OWA writes them.
-            VStack(spacing: 0) {
-                ForEach(0..<24, id: \.self) { hour in
-                    Text(Self.hourLabel(hour))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(width: Self.gutterWidth - 10, height: Self.hourHeight, alignment: .topLeading)
-                        .padding(.leading, 10)
-                        .offset(y: -7)
-                        .id("hour-\(hour)")
-                }
-            }
-            ForEach(days, id: \.self) { day in
-                DayColumn(store: store, day: day)
-                    .frame(maxWidth: .infinity)
+    /// Hour labels: "9a", "12p", as OWA writes them. Fixed: it does not slide with the days.
+    private var hourGutter: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<24, id: \.self) { hour in
+                Text(Self.hourLabel(hour))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: Self.gutterWidth - 10, height: Self.hourHeight, alignment: .topLeading)
+                    .padding(.leading, 10)
+                    .offset(y: -7)
+                    .id("hour-\(hour)")
             }
         }
-        .frame(height: Self.hourHeight * 24)
-        .padding(.top, 8)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .zIndex(1)
     }
 
     static func hourLabel(_ hour: Int) -> String {
@@ -130,23 +144,7 @@ private struct DayColumn: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             ZStack(alignment: .topLeading) {
-                // Off-hours and weekend shading: the user's OWA tints everything that is not work.
-                VStack(spacing: 0) {
-                    ForEach(0..<24, id: \.self) { hour in
-                        let working = isWorkDay && store.workHours.lowerBound <= hour && hour < store.workHours.upperBound
-                        Rectangle()
-                            .fill(working ? Color.clear : Color.accentColor.opacity(0.06))
-                            .frame(height: hourHeight)
-                            .overlay(alignment: .top) {
-                                Rectangle().fill(Color.primary.opacity(0.09)).frame(height: 1)
-                            }
-                            .overlay(alignment: .center) {
-                                // The half-hour line, fainter, as in OWA.
-                                Rectangle().fill(Color.primary.opacity(0.04)).frame(height: 1)
-                            }
-                    }
-                }
-                Rectangle().fill(Color.primary.opacity(0.09)).frame(width: 1).frame(maxHeight: .infinity)
+                HourBackground(isWorkDay: isWorkDay, workHours: store.workHours, hourHeight: hourHeight)
 
                 ForEach(EventLayout.place(store.timedEvents(on: day), on: day, calendar: calendar)) { placed in
                     let x = CGFloat(placed.column) / CGFloat(placed.columns) * (width - 6) + 3
@@ -154,7 +152,7 @@ private struct DayColumn: View {
                     let y = placed.startHour * hourHeight
                     let h = max((placed.endHour - placed.startHour) * hourHeight - 2, 18)
                     EventBlock(event: placed.event, isSelected: store.selectedEventID == placed.event.id,
-                               compact: h < 36)
+                               compact: h < 36, tint: store.tint(for: placed.event))
                         .frame(width: max(w, 10), height: h)
                         .offset(x: x, y: y)
                         .onTapGesture { Task { await store.select(placed.event) } }
@@ -167,6 +165,34 @@ private struct DayColumn: View {
             .contentShape(Rectangle())
             .onTapGesture { Task { await store.select(nil) } }
         }
+    }
+}
+
+/// The day's shading and lines in one drawing pass instead of a hundred views per column, so the
+/// strip stays smooth while it follows the fingers. Weekends and hours outside work are a neutral
+/// grey (the user's call, 2026-09-25), not a tint of the accent colour.
+private struct HourBackground: View {
+    let isWorkDay: Bool
+    let workHours: ClosedRange<Int>
+    let hourHeight: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let offHours = Color.primary.opacity(0.05)
+            let line = Color.primary.opacity(0.09)
+            let halfLine = Color.primary.opacity(0.04)
+            for hour in 0..<24 {
+                let y = CGFloat(hour) * hourHeight
+                let working = isWorkDay && workHours.lowerBound <= hour && hour < workHours.upperBound
+                if !working {
+                    context.fill(Path(CGRect(x: 0, y: y, width: size.width, height: hourHeight)), with: .color(offHours))
+                }
+                context.fill(Path(CGRect(x: 0, y: y, width: size.width, height: 1)), with: .color(line))
+                context.fill(Path(CGRect(x: 0, y: y + hourHeight / 2, width: size.width, height: 1)), with: .color(halfLine))
+            }
+            context.fill(Path(CGRect(x: 0, y: 0, width: 1, height: size.height)), with: .color(line))
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -196,9 +222,22 @@ struct EventBlock: View {
     let event: CalendarEvent
     let isSelected: Bool
     var compact = false
+    /// The event's category colour, or the accent (`CalendarStore.tint(for:)`).
+    var tint: Color = .accentColor
+
+    /// Outlook's category colours are pastels, so a categorised event is filled much more
+    /// strongly than the accent's light wash, or the colour would barely show.
+    private var fillOpacity: Double {
+        let categorised = !event.categories.isEmpty && !event.isCancelled
+        switch (categorised, isSelected) {
+        case (true, false): return 0.55
+        case (true, true): return 0.8
+        case (false, false): return 0.18
+        case (false, true): return 0.34
+        }
+    }
 
     var body: some View {
-        let tint = event.isCancelled ? Color.gray : Color.accentColor
         HStack(spacing: 0) {
             Rectangle().fill(event.isTentative ? tint.opacity(0.45) : tint).frame(width: 4)
             VStack(alignment: .leading, spacing: 1) {
@@ -227,7 +266,7 @@ struct EventBlock: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             ZStack {
-                tint.opacity(isSelected ? 0.34 : 0.18)
+                tint.opacity(fillOpacity)
                 if event.isTentative { Hatching(color: tint.opacity(0.18)) }
             })
         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))

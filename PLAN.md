@@ -35,9 +35,14 @@ Creating an event with attendees sends real invitations.
 ---
 
 ## M15. See the calendar (done 2026-09-25)
-- [x] Views: Day, Work week, Week, Month, with Today and previous/next, as in OWA
-- [x] The week starts Saturday; work week is Saturday to Wednesday; Thursday and Friday shaded;
-      working hours shaded, the rest dimmed (read from the server's working hours when available)
+- [x] Views: Day, Week, Month (Work week removed at the user's request), with "‹ Today ›" at the
+      right of the toolbar
+- [x] Swipe as Apple's Calendar does: the week follows the fingers, springs on or back by
+      distance and speed; neighbours prefetched so they slide in with their events
+- [x] Events in their Outlook category colours, from the mailbox's master category list
+      (`GetUserConfiguration` CategoryList), falling back to the name ("Green category")
+- [x] The week starts Saturday; Thursday, Friday and hours outside 9 to 17 in neutral grey (the
+      user's call, not the accent tint); the day names on a plain background, as Apple's Calendar
 - [x] Events as blocks by time, overlaps side by side; all-day events in a strip at the top;
       recurring icon; Persian titles and locations right to left
 - [x] EWS `FindItem` with a `CalendarView` (start, end) on the `calendar` folder, which expands

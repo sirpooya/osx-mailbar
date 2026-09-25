@@ -299,8 +299,16 @@ enum SOAP {
         "item:Subject", "calendar:Start", "calendar:End", "calendar:IsAllDayEvent",
         "calendar:Location", "calendar:Organizer", "calendar:IsRecurring", "calendar:IsMeeting",
         "calendar:IsCancelled", "calendar:MyResponseType", "calendar:LegacyFreeBusyStatus",
-        "calendar:CalendarItemType", "item:Sensitivity",
+        "calendar:CalendarItemType", "item:Sensitivity", "item:Categories",
     ].map { "          <t:FieldURI FieldURI=\"\($0)\"/>" }.joined(separator: "\n")
+
+    /// The mailbox's master category list: each category's name and colour (see `CategoryColors`).
+    static let getCategoryList = """
+        <m:GetUserConfiguration>
+          <m:UserConfigurationName Name="CategoryList"><t:DistinguishedFolderId Id="calendar"/></m:UserConfigurationName>
+          <m:UserConfigurationProperties>XmlData</m:UserConfigurationProperties>
+        </m:GetUserConfiguration>
+    """
 
     static func isoDate(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()

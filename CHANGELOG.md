@@ -27,11 +27,16 @@ section when a release is cut.
 - Launch at login, in Settings, General.
 - Reply, Reply All and Forward from an open message, and a new message from the pencil button. Plain writing, right to left for Persian, Command Return to send. Your server adds the quoted original and keeps a copy in Sent Items.
 - Calendar. Right-click the menu bar icon and choose Calendar (Command K) for Day, Work week, Week and Month views of your Exchange calendar, laid out like Outlook on the web, with the week starting Saturday. Click an event to see who is invited and how they answered.
+- Swipe left or right with two fingers in the calendar to go to the next or previous day, week or month.
+- Calendar events show their Outlook category colours.
 
 ### Changed
 - The new menu bar and app icons.
 - Adding an account now needs only your email and password: Sign In finds your Exchange server, your name and the right user name by itself, and tests the connection. You can still enter the server by hand.
 - New mail now appears the moment it arrives, instead of at the next check. Mailbar keeps one quiet connection to your server open and checks the old way only every 10 minutes as a backup.
+- While the calendar is open, Mailbar shows in the Dock and in Command Tab. Close the calendar and it is back to the menu bar only.
+- Swiping in the calendar now follows your fingers and settles on the next or previous week the way Apple's Calendar does, with the neighbouring weeks already filled in.
+- Calendar weekends and off-hours are shaded grey, the day names sit on a plain background, and Previous, Today and Next sit together at the right. Work week view is removed.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".

@@ -19,6 +19,9 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     /// `Free`, `Tentative`, `Busy`, `OOF`, `WorkingElsewhere`, `NoData`.
     let showAs: String
     let isPrivate: Bool
+    /// Category names, as the user set them in Outlook or OWA. Their colours come from
+    /// `CategoryColors` and the mailbox's master list.
+    var categories: [String] = []
 
     /// Not yet answered or only tentatively: OWA draws these hatched, and so does the grid.
     var isTentative: Bool {
@@ -93,7 +96,8 @@ extension EWSResponse {
             isCancelled: item.child("IsCancelled")?.trimmedText == "true",
             myResponse: item.child("MyResponseType")?.trimmedText ?? "Unknown",
             showAs: item.child("LegacyFreeBusyStatus")?.trimmedText ?? "Busy",
-            isPrivate: item.child("Sensitivity")?.trimmedText == "Private")
+            isPrivate: item.child("Sensitivity")?.trimmedText == "Private",
+            categories: (item.child("Categories")?.children ?? []).map(\.trimmedText).filter { !$0.isEmpty })
     }
 
     static func eventDetail(from data: Data) throws -> EventDetail {

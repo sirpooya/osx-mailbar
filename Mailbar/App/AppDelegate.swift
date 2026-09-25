@@ -252,7 +252,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool { false }
+    /// The Dock icon only exists while the calendar is open (M15), so a click on it means the
+    /// calendar.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        CalendarWindow.shared.bringForward()
+        return false
+    }
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 }

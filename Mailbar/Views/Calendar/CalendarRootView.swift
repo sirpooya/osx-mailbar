@@ -22,6 +22,7 @@ struct CalendarRootView: View {
                 }
             }
             .animation(.snappy(duration: 0.22), value: store.selectedEventID)
+            .clipped()
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 760, minHeight: 520)
@@ -31,21 +32,6 @@ struct CalendarRootView: View {
 
     private var toolbar: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 6) {
-                Button { store.step(forward: false) } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 13, weight: .medium))
-                }
-                .keyboardShortcut(.leftArrow, modifiers: .command)
-                .help("Previous")
-                Button { store.step(forward: true) } label: {
-                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .medium))
-                }
-                .keyboardShortcut(.rightArrow, modifiers: .command)
-                .help("Next")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-
             Button { showsDatePicker.toggle() } label: {
                 HStack(spacing: 6) {
                     Text(store.title).font(.system(size: 19, weight: .regular))
@@ -60,6 +46,9 @@ struct CalendarRootView: View {
                            displayedComponents: .date)
                     .datePickerStyle(.graphical)
                     .labelsHidden()
+                    // No focus ring: taking focus as the popover opened drew a blue frame round
+                    // the whole month, so it looked selected (2026-09-25).
+                    .focusEffectDisabled()
                     .environment(\.calendar, store.calendar)
                     .padding(10)
             }
@@ -88,10 +77,25 @@ struct CalendarRootView: View {
                         .foregroundStyle(store.mode == mode ? Color.accentColor : Color.primary)
                 }
                 Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 16)
-                Button("Today") { store.goToday() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 14))
-                    .keyboardShortcut("t", modifiers: .command)
+                // Previous, Today, Next, in that order (the user's layout, 2026-09-25).
+                HStack(spacing: 10) {
+                    Button { store.slide(forward: false) } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 13, weight: .medium))
+                    }
+                    .keyboardShortcut(.leftArrow, modifiers: .command)
+                    .help("Previous")
+                    .foregroundStyle(.secondary)
+                    Button("Today") { store.goToday() }
+                        .font(.system(size: 14))
+                        .keyboardShortcut("t", modifiers: .command)
+                    Button { store.slide(forward: true) } label: {
+                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .medium))
+                    }
+                    .keyboardShortcut(.rightArrow, modifiers: .command)
+                    .help("Next")
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
                 Button { Task { await store.refresh() } } label: {
                     Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .medium))
                 }
@@ -117,7 +121,7 @@ struct CalendarRootView: View {
             switch store.mode {
             case .month:
                 CalendarMonthView(store: store)
-            case .day, .week, .workWeek:
+            case .day, .week:
                 CalendarWeekView(store: store)
             }
         }

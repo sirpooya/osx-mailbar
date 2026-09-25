@@ -8,12 +8,10 @@ struct CalendarMonthView: View {
     private static let perCell = 3
 
     var body: some View {
-        let days = store.monthGridDays
         let calendar = store.calendar
-        let month = calendar.component(.month, from: store.anchor)
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                ForEach(days.prefix(7), id: \.self) { day in
+                ForEach(store.monthGridDays.prefix(7), id: \.self) { day in
                     Text(day.formatted(.dateTime.weekday(.wide)))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -22,19 +20,25 @@ struct CalendarMonthView: View {
                         .padding(.vertical, 6)
                 }
             }
-            .background(Color.primary.opacity(0.03))
-            GeometryReader { proxy in
-                let rowHeight = proxy.size.height / 6
-                VStack(spacing: 0) {
-                    ForEach(0..<6, id: \.self) { row in
-                        HStack(spacing: 0) {
-                            ForEach(days[(row * 7)..<(row * 7 + 7)], id: \.self) { day in
-                                cell(day, inMonth: calendar.component(.month, from: day) == month, calendar: calendar)
-                                    .frame(maxWidth: .infinity, maxHeight: rowHeight, alignment: .topLeading)
-                            }
+            // Months slide as weeks do: the grid follows the fingers and springs to the next.
+            PagerStrip(pager: store.pager, measures: true) { page in
+                grid(days: store.monthGridDays(page: page), month: store.month(page: page), calendar: calendar)
+            }
+        }
+    }
+
+    private func grid(days: [Date], month: Int, calendar: Calendar) -> some View {
+        GeometryReader { proxy in
+            let rowHeight = proxy.size.height / 6
+            VStack(spacing: 0) {
+                ForEach(0..<6, id: \.self) { row in
+                    HStack(spacing: 0) {
+                        ForEach(days[(row * 7)..<(row * 7 + 7)], id: \.self) { day in
+                            cell(day, inMonth: calendar.component(.month, from: day) == month, calendar: calendar)
+                                .frame(maxWidth: .infinity, maxHeight: rowHeight, alignment: .topLeading)
                         }
-                        .frame(height: rowHeight)
                     }
+                    .frame(height: rowHeight)
                 }
             }
         }
@@ -52,7 +56,7 @@ struct CalendarMonthView: View {
                 .background(Circle().fill(isToday ? Color.accentColor : Color.clear))
             ForEach(events.prefix(Self.perCell)) { event in
                 HStack(spacing: 4) {
-                    Circle().fill(event.isCancelled ? Color.gray : Color.accentColor).frame(width: 5, height: 5)
+                    Circle().fill(store.tint(for: event)).frame(width: 6, height: 6)
                     if !event.isAllDay {
                         Text(event.start.formatted(date: .omitted, time: .shortened))
                             .font(.system(size: 10))
@@ -79,7 +83,8 @@ struct CalendarMonthView: View {
         .padding(5)
         // The whole cell, before the fill and the border, or both shrink to the text inside.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(isWorkDay ? Color.clear : Color.accentColor.opacity(0.06))
+        // Weekends in neutral grey, as in the week grid (the user's call, 2026-09-25).
+        .background(isWorkDay ? Color.clear : Color.primary.opacity(0.05))
         .overlay {
             Rectangle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
         }

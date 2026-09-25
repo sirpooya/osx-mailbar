@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// What the calendar window shows (M15): which account, which days, and the events on them.
 ///
@@ -9,12 +10,13 @@ import Observation
 @Observable
 final class CalendarStore {
     enum Mode: String, CaseIterable, Identifiable {
-        case day, workWeek, week, month
+        // No work week: the user took it out of the toolbar (2026-09-25). A saved "workWeek" from
+        // before no longer decodes, so the window opens in Week.
+        case day, week, month
         var id: String { rawValue }
         var label: String {
             switch self {
             case .day: return "Day"
-            case .workWeek: return "Work week"
             case .week: return "Week"
             case .month: return "Month"
             }
@@ -56,6 +58,22 @@ final class CalendarStore {
     var selectedEventID: String?
     private(set) var detail: DetailPhase = .idle
 
+    /// Category name to Outlook colour index, read once per account from its master list.
+    private(set) var categoryColors: [String: Int] = [:]
+    @ObservationIgnored private var categoriesLoadedFor: UUID?
+
+    /// The colour an event is drawn in: its first category's, as OWA does, else the accent.
+    func tint(for event: CalendarEvent) -> Color {
+        if event.isCancelled { return .gray }
+        for name in event.categories {
+            if let index = categoryColors[name] ?? CategoryColors.guessedIndex(forName: name),
+               let color = CategoryColors.color(index: index) {
+                return color
+            }
+        }
+        return .accentColor
+    }
+
     /// A newer refresh supersedes an older one still in flight.
     @ObservationIgnored private var generation = 0
 
@@ -64,6 +82,7 @@ final class CalendarStore {
         self.mode = Mode(rawValue: UserDefaults.standard.string(forKey: Keys.calendarMode) ?? "") ?? .week
         self.anchor = Date()
         self.accountID = mail.selectedAccount?.id
+        pager.onCommit = { [weak self] forward in self?.step(forward: forward) }
     }
 
     // MARK: - The calendar and its days
@@ -84,38 +103,68 @@ final class CalendarStore {
     }
 
     /// The columns the grid draws, or for Month every day of the six weeks shown.
-    var visibleDays: [Date] {
-        let calendar = self.calendar
-        let day = calendar.startOfDay(for: anchor)
-        switch mode {
-        case .day:
-            return [day]
-        case .week, .workWeek:
-            let start = calendar.dateInterval(of: .weekOfYear, for: day)?.start ?? day
-            let week = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
-            return mode == .week ? week : week.filter { workDays.contains(calendar.component(.weekday, from: $0)) }
-        case .month:
-            return monthGridDays
-        }
-    }
+    var visibleDays: [Date] { days(page: 0) }
 
     /// Always exactly 42 days, six weeks from the week the anchor's month starts in. The month
     /// grid reads these, never `visibleDays`: switching from Month to Week renders the month grid
     /// one last time after `mode` has changed, and indexing a 7-day list as 42 crashed the app
     /// (2026-09-25).
-    var monthGridDays: [Date] {
+    var monthGridDays: [Date] { monthGridDays(page: 0) }
+
+    /// The anchor moved by `page` of the current view's own unit: days, weeks or months.
+    func anchor(page: Int) -> Date {
+        guard page != 0 else { return anchor }
         let calendar = self.calendar
-        let day = calendar.startOfDay(for: anchor)
+        switch mode {
+        case .day: return calendar.date(byAdding: .day, value: page, to: anchor) ?? anchor
+        case .week: return calendar.date(byAdding: .weekOfYear, value: page, to: anchor) ?? anchor
+        case .month: return calendar.date(byAdding: .month, value: page, to: anchor) ?? anchor
+        }
+    }
+
+    /// The days of a page: 0 is what is on screen, -1 and 1 the neighbours the swipe slides in.
+    func days(page: Int) -> [Date] {
+        let calendar = self.calendar
+        let day = calendar.startOfDay(for: anchor(page: page))
+        switch mode {
+        case .day:
+            return [day]
+        case .week:
+            let start = calendar.dateInterval(of: .weekOfYear, for: day)?.start ?? day
+            return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+        case .month:
+            return monthGridDays(page: page)
+        }
+    }
+
+    func monthGridDays(page: Int) -> [Date] {
+        let calendar = self.calendar
+        let day = calendar.startOfDay(for: anchor(page: page))
         let monthStart = calendar.dateInterval(of: .month, for: day)?.start ?? day
         let gridStart = calendar.dateInterval(of: .weekOfYear, for: monthStart)?.start ?? monthStart
         let days = (0..<42).compactMap { calendar.date(byAdding: .day, value: $0, to: gridStart) }
         return days.count == 42 ? days : (0..<42).map { gridStart.addingTimeInterval(TimeInterval($0) * 86_400) }
     }
 
+    /// The month a month page belongs to, for dimming the days of the months around it.
+    func month(page: Int) -> Int {
+        calendar.component(.month, from: anchor(page: page))
+    }
+
     var visibleRange: (start: Date, end: Date) {
         let days = visibleDays
         let start = days.first ?? calendar.startOfDay(for: anchor)
         let end = days.last.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) } ?? start
+        return (start, end)
+    }
+
+    /// What is fetched: the page on screen and both neighbours, so a swipe slides in a week that
+    /// already has its events, as Calendar does, instead of an empty one that fills in after.
+    var fetchRange: (start: Date, end: Date) {
+        let before = days(page: -1)
+        let after = days(page: 1)
+        let start = before.first ?? visibleRange.start
+        let end = after.last.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) } ?? visibleRange.end
         return (start, end)
     }
 
@@ -133,7 +182,7 @@ final class CalendarStore {
             return first.formatted(style().weekday(.wide).month(.wide).day().year())
         case .month:
             return anchor.formatted(style().month(.wide).year())
-        case .week, .workWeek:
+        case .week:
             let sameMonth = calendar.isDate(first, equalTo: last, toGranularity: .month)
             let year = last.formatted(style().year())
             if sameMonth {
@@ -147,15 +196,20 @@ final class CalendarStore {
         anchor = Date()
     }
 
+    /// Moves one page, at once. The swipe and the arrows call `slide(forward:)` instead, which
+    /// animates the pager and then calls this.
     func step(forward: Bool) {
-        let sign = forward ? 1 : -1
-        let calendar = self.calendar
-        switch mode {
-        case .day: anchor = calendar.date(byAdding: .day, value: sign, to: anchor) ?? anchor
-        case .week, .workWeek: anchor = calendar.date(byAdding: .weekOfYear, value: sign, to: anchor) ?? anchor
-        case .month: anchor = calendar.date(byAdding: .month, value: sign, to: anchor) ?? anchor
-        }
+        anchor = anchor(page: forward ? 1 : -1)
     }
+
+    /// The arrow buttons and Cmd+arrow: the same slide the swipe ends with.
+    func slide(forward: Bool) {
+        pager.settle(forward: forward)
+    }
+
+    /// The horizontal position of the three pages (M15, swipe). Read only by the page strips, so
+    /// following the fingers moves pixels without rebuilding the grid.
+    let pager = CalendarPager()
 
     /// Month view: clicking a day opens that day.
     func open(day: Date) {
@@ -198,7 +252,13 @@ final class CalendarStore {
         generation += 1
         let mine = generation
         if events.isEmpty { phase = .loading }
-        let range = visibleRange
+        let range = fetchRange
+        if categoriesLoadedFor != account.id {
+            categoriesLoadedFor = account.id
+            // Colours are a nicety: a mailbox without a list, or a server that refuses, keeps the
+            // name-based guess and the accent colour.
+            categoryColors = (try? await mail.client.categoryColors(at: url, credential: credential)) ?? [:]
+        }
         do {
             let found = try await mail.client.calendarEvents(from: range.start, to: range.end,
                                                              at: url, credential: credential)

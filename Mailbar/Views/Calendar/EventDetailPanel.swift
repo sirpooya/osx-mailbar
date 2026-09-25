@@ -60,6 +60,18 @@ struct EventDetailPanel: View {
                 Label { DirectionalText(event.location, font: .system(size: 12)) } icon: { Image(systemName: "mappin.and.ellipse") }
                     .font(.system(size: 12))
             }
+            if !event.categories.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(event.categories, id: \.self) { name in
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(store.tint(for: CalendarEventCategoryProbe.event(name)))
+                                .frame(width: 10, height: 10)
+                            Text(name).font(.system(size: 11))
+                        }
+                    }
+                }
+            }
             if event.isMeeting, !event.isOrganizer {
                 Label(responseText(event.myResponse), systemImage: responseSymbol(event.myResponse))
                     .font(.system(size: 12))
@@ -133,5 +145,15 @@ struct EventDetailPanel: View {
         case "Organizer": return "person.crop.circle"
         default: return "circle.dashed"
         }
+    }
+}
+
+/// A stand-in event carrying one category, so the detail panel can ask the store for that single
+/// category's colour with the same rule the grid uses.
+enum CalendarEventCategoryProbe {
+    static func event(_ category: String) -> CalendarEvent {
+        CalendarEvent(id: "", changeKey: "", subject: "", start: .distantPast, end: .distantPast,
+                      isAllDay: false, location: "", organizer: "", isRecurring: false, isMeeting: false,
+                      isCancelled: false, myResponse: "", showAs: "", isPrivate: false, categories: [category])
     }
 }

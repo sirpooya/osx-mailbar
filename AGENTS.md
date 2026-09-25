@@ -89,7 +89,7 @@ real-account column is what is still unproven. Work in progress is planned in `P
 | M12 | Reply and reply all | a real send |
 | M13 | Forward | a real send |
 | M14 | New message, suggestions from inbox senders | a real send |
-| M15 | Calendar window: Day, Work week, Week, Month, detail panel (tray menu, Cmd+K) | the real calendar |
+| M15 | Calendar window: Day, Week, Month, swipe paging, category colours, detail panel (tray menu, Cmd+K) | the real calendar |
 
 Testing rule for sending: **never send real mail** unless the user names the exact message and
 recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
@@ -244,9 +244,23 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   and delete are the only operations that move mail. No general "move to folder".
 - 2026-09-24 Menu bar: `NSStatusItem` + `NSPopover`, centred under the icon. Pattern follows
   osx-jirabar.
-- 2026-09-24 `LSUIElement: true` and `.accessory` for the life of the process: no Dock tile ever,
-  Settings included. osx-jirabar learned that flipping to `.regular` was never what let a window
-  take focus; activating the app is. The user asked for the Dock tile gone there, same here.
+- 2026-09-24 `LSUIElement: true` and `.accessory`: no Dock tile for the menu bar popover or
+  Settings. osx-jirabar learned that flipping to `.regular` was never what let a window take
+  focus; activating the app is.
+- 2026-09-25 **The calendar window is the one exception** (the user's request): while it is open
+  the app is `.regular`, so the calendar is in the Dock and Cmd+Tab; closing it returns to
+  `.accessory`. A Dock click brings the calendar forward. Do not extend this to Settings.
+- 2026-09-25 Calendar swipe copies Apple's Calendar, not a transition: three pages (-1, 0, 1)
+  side by side in `PagerStrip`s that the header, all-day strip and hour grid share; the strip
+  follows the fingers (`CalendarPager`), and on release a spring starting at the fingers' speed
+  carries it on (a third of a page, or a flick over 350 pt/s) or back. The axis locks after 4 pt
+  and sideways events are consumed so the hours do not also scroll. Neighbours are fetched with
+  the visible page (`fetchRange`). The earlier fade-and-slide transition was janky and is gone.
+- 2026-09-25 Calendar look, the user's calls: weekend and off-hours shading neutral grey, never
+  an accent tint; no band behind the day names; toolbar "‹ Today ›" on the right; no Work week.
+- 2026-09-25 Event colour is the first category's Outlook colour: names from `item:Categories`,
+  colours from the master list (`GetUserConfiguration` "CategoryList" on the calendar folder,
+  presets 0 to 24 in `CategoryColors`), else guessed from a default name, else the accent.
 - 2026-09-24 The popover activates the app when it opens and draws an opaque window-background
   surface. On macOS 26 the popover glass adapts to the luminance behind it, not to Light or Dark,
   so over a dark wallpaper in Light mode it went dark under light-mode text and inverted the

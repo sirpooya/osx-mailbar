@@ -19,6 +19,31 @@ enum MockCalendar {
         var showAs = "Busy"
         var attendees: [(String, String, String)] = []
         var notes = ""
+        var categories: [String] = []
+    }
+
+    /// The mock mailbox's master category list: OWA's defaults plus a custom "Storybook", whose
+    /// colour only the list can supply (its name says nothing).
+    static let categoryListXML = """
+    <?xml version="1.0"?><categories default="Blue category" lastSavedSession="1">\
+    <category name="Blue category" color="7"/><category name="Green category" color="4"/>\
+    <category name="Orange category" color="1"/><category name="Purple category" color="8"/>\
+    <category name="Red category" color="0"/><category name="Storybook" color="9"/>\
+    <category name="Yellow category" color="3"/></categories>
+    """
+
+    static var categoryListResponse: String {
+        wrap("GetUserConfiguration", """
+                  <m:UserConfiguration>
+                    <t:UserConfigurationName Name="CategoryList"/>
+                    <t:XmlData>\(Data(categoryListXML.utf8).base64EncodedString())</t:XmlData>
+                  </m:UserConfiguration>
+        """)
+    }
+
+    private static func categoriesXML(_ names: [String]) -> String {
+        guard !names.isEmpty else { return "" }
+        return "<t:Categories>" + names.map { "<t:String>\(SOAP.escape($0))</t:String>" }.joined() + "</t:Categories>"
     }
 
     /// Three weeks around today: last week, this week, next week.
@@ -51,7 +76,8 @@ enum MockCalendar {
                   organizerAddress: "narges@example.com", isCancelled: true),
             Event(id: "ev-sun-demo", subject: "ds demo alignment", start: at(0, sunday, 18),
                   end: at(0, sunday, 19), location: room, response: "Organizer",
-                  attendees: [("Omid Karimi", "omid@example.org", "Accept"), ("Sara Rahimi", "sara.rahimi@example.com", "Tentative")]),
+                  attendees: [("Omid Karimi", "omid@example.org", "Accept"), ("Sara Rahimi", "sara.rahimi@example.com", "Tentative")],
+                  categories: ["Storybook"]),
             Event(id: "ev-mon-concerns", subject: "دغدغه‌های شما در مورد دیزاین‌سیستم", start: at(0, monday, 12),
                   end: at(0, monday, 13), location: room,
                   attendees: [("Omid Karimi", "omid@example.org", "Accept")],
@@ -64,19 +90,24 @@ enum MockCalendar {
                   end: minutes(at(0, monday, 16), 30), location: room, response: "NoResponseReceived",
                   showAs: "Tentative",
                   attendees: [("Sample User", "sample.user@example.com", "NoResponseReceived"), ("Omid Karimi", "omid@example.org", "Accept")],
-                  notes: "<p>Walkthrough of the new token pipeline. Bring questions.</p>"),
+                  notes: "<p>Walkthrough of the new token pipeline. Bring questions.</p>",
+                  categories: ["Orange category"]),
             Event(id: "ev-tue-room", subject: "Room For Weekly", start: at(0, tuesday, 17),
-                  end: minutes(at(0, tuesday, 18), 15), location: room, isRecurring: true, response: "Organizer"),
+                  end: minutes(at(0, tuesday, 18), 15), location: room, isRecurring: true, response: "Organizer",
+                  categories: ["Yellow category"]),
             Event(id: "ev-tue-weekly", subject: "Design Weekly", start: at(0, tuesday, 17),
                   end: minutes(at(0, tuesday, 18), 15), location: "اتاق سبز", organizer: "Mostafa Nouri",
-                  organizerAddress: "mostafa@example.com", response: "Tentative", showAs: "Tentative"),
+                  organizerAddress: "mostafa@example.com", response: "Tentative", showAs: "Tentative",
+                  categories: ["Green category"]),
             Event(id: "ev-wed-farewell", subject: "Nima's Farewell", start: at(0, wednesday, 17),
-                  end: minutes(at(0, wednesday, 17), 30), organizer: "Mahan Rostami", organizerAddress: "mahan@example.com"),
+                  end: minutes(at(0, wednesday, 17), 30), organizer: "Mahan Rostami", organizerAddress: "mahan@example.com",
+                  categories: ["Red category"]),
             Event(id: "ev-thu-holiday", subject: "Company holiday", start: at(0, thursday, 0),
                   end: at(0, thursday + 1, 0), isAllDay: true, isMeeting: false, response: "Organizer", showAs: "Free"),
             Event(id: "ev-next-planning", subject: "Quarterly planning", start: at(1, sunday, 10),
                   end: at(1, sunday, 12), location: room, organizer: "Omid Karimi",
-                  organizerAddress: "omid@example.org", response: "NoResponseReceived", showAs: "Tentative"),
+                  organizerAddress: "omid@example.org", response: "NoResponseReceived", showAs: "Tentative",
+                  categories: ["Purple category"]),
         ]
         return list
     }
@@ -89,6 +120,7 @@ enum MockCalendar {
                         <t:ItemId Id="\(event.id)" ChangeKey="ck"/>
                         <t:Subject>\(SOAP.escape(event.subject))</t:Subject>
                         <t:Sensitivity>Normal</t:Sensitivity>
+                        \(categoriesXML(event.categories))
                         <t:Start>\(formatter.string(from: event.start))</t:Start>
                         <t:End>\(formatter.string(from: event.end))</t:End>
                         <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>
@@ -123,6 +155,7 @@ enum MockCalendar {
                       <t:ItemId Id="\(event.id)" ChangeKey="ck"/>
                       <t:Subject>\(SOAP.escape(event.subject))</t:Subject>
                       <t:Body BodyType="HTML">\(SOAP.escape(event.notes))</t:Body>
+                      \(categoriesXML(event.categories))
                       <t:Start>\(formatter.string(from: event.start))</t:Start>
                       <t:End>\(formatter.string(from: event.end))</t:End>
                       <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>

@@ -23,7 +23,7 @@ enum QCFlags {
         #endif
     }
 
-    /// `--open-calendar` or `--open-calendar=month` (day, workWeek, week, month): the calendar window.
+    /// `--open-calendar` or `--open-calendar=month` (day, week, month): the calendar window.
     static var openCalendar: String? {
         #if DEBUG
         if has("--open-calendar") { return "" }
