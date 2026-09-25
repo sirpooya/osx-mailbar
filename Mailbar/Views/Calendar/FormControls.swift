@@ -245,9 +245,10 @@ struct RepeatPatternEditor: View {
             Text("Repeat").font(.system(size: 15, weight: .semibold))
             HStack(spacing: 10) {
                 Text("Occurs").foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
-                // Outlook's four: Daily, Weekly, Monthly, Yearly; Monthly then asks which way.
+                // Daily, Weekly, Monthly; Monthly then asks which way.
+                // No Yearly, here or in the Repeat menu (the user's call).
                 PopUpMenu(items: [.init(id: "daily", title: "Daily"), .init(id: "weekly", title: "Weekly"),
-                                  .init(id: "monthly", title: "Monthly"), .init(id: "yearly", title: "Yearly")],
+                                  .init(id: "monthly", title: "Monthly")],
                           selected: occursID, width: 150) { id in
                     switch id {
                     case "daily": pattern.kind = .daily

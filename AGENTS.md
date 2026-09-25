@@ -86,7 +86,10 @@ in mock mode. The Milestones section below is the record; none is open.
   1. Its own resizable window from the tray menu, or Cmd+K in the popover, not a popover tab.
   2. People suggestions from the server's directory search (`ResolveNames`) plus inbox senders.
   3. A room picker from the organization's room lists, free-text location always possible.
-  4. No scheduling assistant. Charm and Categorize were left out at first (crossed off in an
+  4. A Scheduling Assistant after all (the user's request, 2026-09-25, reversing the early "no"):
+     `SchedulingAssistant`, a sheet from the form's bottom bar, rows for you, the invitees and
+     rooms with their busy blocks from `GetUserAvailability` for the day, the meeting as a band,
+     a click moves it, Next free time finds the first open slot. Charm and Categorize were left out at first (crossed off in an
      early screenshot) and added 2026-09-25 when the user asked for them.
 - No calendar library: checked 2026-09-25. KVKCalendar is UIKit and reaches the Mac only through
   Catalyst; swift-week-view and CalendarKit are iOS; GECalendar and Mijick's CalendarView are date
@@ -136,7 +139,7 @@ Testing rule for the calendar: never create, change, cancel or answer a real eve
 user names it; an event with people sends real invitations.
 
 ## Status
-2026-09-25 (latest): **everything built, M0 to M19**, plus groups and the people directory (160 tests green); the popover has Inbox and
+2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and the Scheduling Assistant (163 tests green); the popover has Inbox and
 Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
 Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
@@ -355,8 +358,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   for the event's time (`GetUserAvailability`, UTC in the request, no zone header). Rooms are
   found by typing in Location (no separate Rooms button, the user's call): the matching rooms
   list under the field (every word, ignoring case and the Arabic and Persian ye and kaf); a click
-  selects one, Add to meeting (or a double-click, or Return) books the selected one, Check
-  availability marks every listed room Free or Busy for the event's time. Nothing is sent before Save or Send; Cancel sends nothing (tested).
+  selects one, Add to meeting (or a double-click, or Return) books the selected one, and Check
+  availability puts every listed room in the Scheduling Assistant as a candidate (not booked,
+  never sent; `EventDraft.candidateRooms`), where ticking a room books it, after Outlook (the
+  user's call; showing Free or Busy badges in the list was dropped). Nothing is sent before Save or Send; Cancel sends nothing (tested).
   **Unproven on the real server**: the charm is extended property 0x0027 in property set
   `11000E07-B51B-40D6-AF21-CAA85EDAB1D0` (Integer, 1 to 33), known from OWA and Graph, not from
   the EWS docs; and an event with files is created with `SendToNone`, given its files with
@@ -386,10 +391,14 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   year/month/day (2026/09/25: the date picker takes the en_ZA locale, Gregorian, for that order
   alone); times are 24-hour, 09:00 (en_GB), because no locale pads a 12-hour hour and the picker
   takes no format; Shift with Up or Down moves a time by 10 minutes (`SteppingDatePicker`).
-  Repeat's Other editor offers Outlook's Daily, Weekly, Monthly, Yearly; Monthly then asks "day
-  25" or "the fourth Friday". Fields are one
+  Repeat's quick list is Never, Daily, Weekly, Monthly, Custom...; the Custom editor offers
+  Daily, Weekly, Monthly (no Yearly anywhere, the user's call); Monthly then asks "day 25" or
+  "the fourth Friday". Until offers None, After, By. Fields are one
   `FieldBox` look, 28 pt tall, and popups are large-size `NSPopUpButton`s of the same height,
-  every row at least 28 pt so Until never shifts the form; the form is 690 x 556 (440 pt of
+  every row at least 28 pt and its label CENTRED on the row (baseline alignment let each native
+  control move the label, the user's recording), only Description aligned on its first line;
+  Repeat and Until one width (150); no scroll bars, and Description (60 pt at least) fills the
+  rest so the form does not scroll; the form is 690 x 556 (440 pt of
   fields, a 250 pt People sidebar, the user's marks); lengths and reminders use short units
   (30m, 1h 30m; reminders 15m, 1d, "At start", no "before"); every control shares one look, light
   grey with no border (`FieldBoxFill`, the Description box's grey; white was a misreading the
@@ -444,8 +453,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   which flips the stack's alignment guide and throws the time to the wrong side (see
   `DirectionalText`).
 - 2026-09-25 Popover details, the user's calls: a Persian SUBJECT in a row starts at the left
-  edge (`pinnedLeading`) while sender and preview stay right-aligned; refresh and its spinner
-  live in the footer beside "Updated", not the header; compose sits at the header's left edge on
+  edge (`pinnedLeading`) while sender and preview stay right-aligned; refresh lives in the
+  footer beside "Updated", not the header, and while a check runs the time gives way to a
+  shimmering "Updating..." (`ShimmerText`, ported from osx-autoconnect, held for at least one
+  0.9 s pass) instead of a spinner; compose sits at the header's left edge on
   both tabs; both tabs share one content height (`contentHeight`, 460) so the popover never
   resizes on a switch, and search comes and goes without a transition, so
   Inbox and Today never shift it (search shows on Inbox only); the Today tab's header is the

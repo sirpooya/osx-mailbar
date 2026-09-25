@@ -22,6 +22,8 @@ struct PopoverRootView: View {
     /// Which way the next account change travels, so the inbox leaves the way the swipe went.
     @State private var goesForward = true
     @State private var swipeMonitor: Any?
+    @State private var showsUpdating = false
+    @State private var updatingSince: Date?
     @FocusState private var searchFocused: Bool
     @State private var swipe = SwipeTracker()
     @State private var daySwipe = PagerSwipe()
@@ -408,28 +410,27 @@ struct PopoverRootView: View {
                 Text(account.email).lineLimit(1).truncationMode(.middle)
                 Text("·")
             }
-            if let last = store.lastRefresh {
-                Text("Updated \(last.formatted(date: .omitted, time: .shortened))")
+            // While a check runs, the time gives way to a shimmering "Updating..." (osx-autoconnect's
+            // status shimmer, the user's pick over a spinner); refresh sits beside the time
+            // otherwise, not in the header (the user's call, 2026-09-25).
+            if showsUpdating {
+                ShimmerText(text: "Updating...")
             } else {
-                Text("Not updated yet")
-            }
-            // Refresh sits with the time it refreshes, not in the header (the user's call,
-            // 2026-09-25). One fixed box for both states, so the spinner cannot shift the line.
-            Group {
-                if store.isRefreshing {
-                    ProgressView().controlSize(.mini).scaleEffect(0.8)
+                if let last = store.lastRefresh {
+                    Text("Updated \(last.formatted(date: .omitted, time: .shortened))")
                 } else {
-                    Button(action: onRefresh) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
-                    .keyboardShortcut("r", modifiers: .command)
-                    .help("Check for new mail (Command R)")
-                    .accessibilityLabel("Check for new mail")
+                    Text("Not updated yet")
                 }
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Check for new mail (Command R)")
+                .accessibilityLabel("Check for new mail")
+                .frame(width: 12, height: 12)
             }
-            .frame(width: 12, height: 12)
             Spacer(minLength: 4)
             Button("Quit", action: onQuit)
                 .buttonStyle(.plain)
@@ -439,6 +440,20 @@ struct PopoverRootView: View {
         .foregroundStyle(.tertiary)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        // Held for at least one pass of the shimmer, so a quick check does not flash it.
+        .onChange(of: store.isRefreshing) { _, refreshing in
+            if refreshing {
+                updatingSince = Date()
+                showsUpdating = true
+            } else {
+                let shown = Date().timeIntervalSince(updatingSince ?? .distantPast)
+                Task {
+                    if shown < 0.9 { try? await Task.sleep(for: .seconds(0.9 - shown)) }
+                    if !store.isRefreshing { showsUpdating = false }
+                }
+            }
+        }
+        .onAppear { showsUpdating = store.isRefreshing }
     }
 
     // MARK: - Switching accounts

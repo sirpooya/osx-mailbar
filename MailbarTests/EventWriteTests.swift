@@ -58,7 +58,8 @@ import Testing
         let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 13))!
         let workDays: Set<Int> = [7, 1, 2, 3, 4]
         let labels = RepeatPattern.presets(workDays: workDays).map { $0.label(start: start, workDays: workDays, calendar: calendar) }
-        #expect(labels == ["Every day", "Every Wednesday", "Day 23 of every month", "Every September 23"])
+        #expect(labels == ["Every day", "Every Wednesday", "Day 23 of every month"])
+        #expect(RepeatPattern(kind: .yearly).label(start: start, workDays: workDays, calendar: calendar) == "Every September 23")
         #expect(RepeatPattern(kind: .weekly, weekdays: workDays).label(start: start, workDays: workDays, calendar: calendar) == "Every workday")
         #expect(RepeatPattern(kind: .monthlyWeek).label(start: start, workDays: workDays, calendar: calendar) == "Every fourth Wednesday")
         let custom = RepeatPattern(kind: .weekly, interval: 2, weekdays: [2, 4])
@@ -333,5 +334,19 @@ import Testing
         picker.keyDown(with: key(125, shift: true))
         picker.keyDown(with: key(125, shift: true))
         #expect(picker.dateValue == start.addingTimeInterval(-600))
+    }
+}
+
+@MainActor
+@Suite struct SchedulingAssistantTests {
+    @Test func busyBlocksComeBackForTheDay() async throws {
+        let accounts = AccountStore(inMemory: [MockMode.accounts[0]], passwords: MockMode.passwords)
+        let mail = MailStore(accounts: accounts, client: EWSClient(transport: MockTransport(mode: .inbox, newMailAfter: 0)))
+        await mail.refresh()
+        let store = CalendarStore(mail: mail)
+        let found = try #require(await store.busyBlocks(for: ["sara.rahimi@example.com", "omid@example.org"], on: Date()))
+        let sara = try #require(found["sara.rahimi@example.com"] ?? nil)
+        #expect(!sara.isEmpty)
+        #expect((found["omid@example.org"] ?? nil)?.isEmpty == true)
     }
 }

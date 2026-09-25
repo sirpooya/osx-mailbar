@@ -49,6 +49,7 @@ section when a release is cut.
 - Command-comma opens Settings while the popover is open.
 - The team picker filters by department, team and role, each list holding only what the one before leaves.
 - Click a person in the event form's People to see their contact card from the Exchange directory: job title, department, office, manager, phones and address.
+- Scheduling Assistant in the event form: everyone's busy times across the day, click a time to move the meeting there, or jump to the next free time.
 
 ### Changed
 - The new menu bar and app icons.
@@ -110,6 +111,14 @@ section when a release is cut.
 - The event form's menus, checkbox and Description share the text fields' white look.
 - The contact card shows the people directory's role, team and department under the name, and the Exchange directory's details below the line.
 - The event form's fields, menus, checkbox and Description are one light grey, without borders.
+- The event form's button always reads Send; the note about invitations is gone.
+- Repeat offers Daily, Weekly, Monthly and Custom; Until offers None, After and By.
+- Private, when on, is a neutral grey pill; the People heading is quieter; the Add people field matches the other fields.
+- The event form's People heading is black, and the toolbar sits closer to the fields.
+- While Mailbar checks for mail, the footer shows a shimmering "Updating..." instead of a spinner.
+- Check availability in the room list adds the rooms to the Scheduling Assistant to compare; tick one there to book it.
+- Booked rooms show as neutral grey chips.
+- The event form's scroll bars are hidden, and the form no longer scrolls unless its content is taller than the window.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
@@ -119,6 +128,7 @@ section when a release is cut.
 - The plus button in the event form's People field; Return or a click on a suggestion adds a person.
 - The "Show sender and subject" switch; notifications and reminders always show them.
 - The note under Notifications in Settings.
+- Yearly from Repeat's Custom editor.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -142,4 +152,8 @@ section when a release is cut.
 - The event form no longer flashes its Title field focused as it opens.
 - Wide Persian emails fit the reader instead of being cut off on the left.
 - The room list under Location is no longer covered by the Description box.
+- The room list under Location is as wide as the field and sits above everything below it.
+- People's photos are drawn smoothly instead of jagged.
+- Changing Until no longer shifts its label or the row's height; Repeat and Until are the same width.
+- The repeat summary beside Repeat stays on one line.
 

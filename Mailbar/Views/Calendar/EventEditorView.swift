@@ -10,10 +10,9 @@ struct EventEditorView: View {
     let original: EventDraft
 
     @State private var highlightedRoom: Room.ID?
-    @State private var roomAvailability: [String: String] = [:]
     @State private var categoriesOpen = QCFlags.calendarCategories
     @State private var showAsOpen = false
-    @State private var schedulingOpen = QCFlags.calendarAssistant
+    @State private var schedulingOpen = false
     @State private var reminderOpen = false
     @State private var charmsOpen = QCFlags.calendarCharms
     @State private var calendarOpen = false
@@ -35,7 +34,7 @@ struct EventEditorView: View {
     private static let formSize = CGSize(width: mainWidth + sidebarWidth, height: 556)
     /// Repeat, Reminder and Show as share one width (the user's call), wide enough for the
     /// longest choice, "Working elsewhere" with its swatch.
-    private static let menuWidth: CGFloat = 190
+    private static let menuWidth: CGFloat = 150
     /// The toolbar's charm glyph, category square and Show as square share one size (the user's
     /// catch: they were 14, 10 and 14 pt).
     private static let toolbarIcon: CGFloat = 12
@@ -47,7 +46,9 @@ struct EventEditorView: View {
             header
             Divider().opacity(0.6)
             HStack(spacing: 0) {
-                ScrollView {
+                // No scrolling when it fits, which it does unless files, rooms and a series end
+                // all show at once (the user's call: no scroll on the main section).
+                ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 12) {
                       VStack(alignment: .leading, spacing: 12) {
                         // A plain bordered field like Location, with its label (the user's call).
@@ -71,10 +72,14 @@ struct EventEditorView: View {
                               .onAppear { fieldsHeight = box.size.height }
                               .onChange(of: box.size.height) { _, height in fieldsHeight = height }
                       })
+                      // Above Description, so the room list under Location covers the box and its
+                      // placeholder entirely (the user's catch: a z-index inside this group only
+                      // ordered its own rows).
+                      .zIndex(1)
                         // The event's body, which OWA calls the description. It fills what the
-                        // form leaves, down to the bottom bar, never shorter than 110 pt (the
+                        // form leaves, down to the bottom bar, never shorter than 60 pt (the
                         // user's catch: a fixed box left dead space under it).
-                        row("Description") {
+                        row("Description", firstLine: true) {
                             // A text view is AppKit and draws above any SwiftUI overlay, whatever
                             // the z-index: while the room list covers it, an empty box of the same
                             // size stands in (the user's catch).
@@ -86,7 +91,7 @@ struct EventEditorView: View {
                                                   takesFocus: false)
                                 }
                             }
-                                .frame(height: max(110, formHeight - 36 - fieldsHeight - 12))
+                                .frame(height: max(60, formHeight - 36 - fieldsHeight - 12))
                                 // The text view has no baseline SwiftUI can see: its first line
                                 // sits at the 8 pt inset plus the 13 pt font's ascender, so the
                                 // label lines up with it exactly (the user's catch, twice).
@@ -117,6 +122,7 @@ struct EventEditorView: View {
                         .onAppear { formHeight = box.size.height }
                         .onChange(of: box.size.height) { _, height in formHeight = height }
                 })
+                .scrollBounceBehavior(.basedOnSize)
                 .frame(width: Self.mainWidth)
                 Divider().opacity(0.6)
                 PeopleSidebar(store: store, draft: draft)
@@ -126,6 +132,9 @@ struct EventEditorView: View {
             bottomBar
         }
         .frame(width: Self.formSize.width, height: Self.formSize.height)
+        .task {
+            if QCFlags.calendarAssistant { try? await Task.sleep(nanoseconds: 1_200_000_000); schedulingOpen = true }
+        }
         .sheet(isPresented: $schedulingOpen) {
             SchedulingAssistant(store: store) { schedulingOpen = false }
         }
@@ -176,7 +185,7 @@ struct EventEditorView: View {
             // Room above and below, between the title and the divider (the user's call).
             .padding(.horizontal, 14)
             .padding(.top, 4)
-            .padding(.bottom, 12)
+            .padding(.bottom, 6)
         }
     }
 
@@ -236,7 +245,7 @@ struct EventEditorView: View {
             .overlay(alignment: .topLeading) {
                 if roomListShown {
                     RoomDropdown(rooms: roomMatches, chosen: draft.rooms, highlighted: highlightedRoom,
-                                 availability: roomAvailability,
+                                 availability: [:],
                                  onSelect: { highlightedRoom = $0.id },
                                  onAdd: { book([$0]) },
                                  onCheck: checkRooms)
@@ -245,6 +254,19 @@ struct EventEditorView: View {
                 }
             }
             .zIndex(1)
+            if !draft.candidateRooms.isEmpty {
+                row("") {
+                    Button { schedulingOpen = true } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar.day.timeline.left")
+                            Text(draft.candidateRooms.count == 1 ? "1 room to compare in Scheduling Assistant"
+                                 : "\(draft.candidateRooms.count) rooms to compare in Scheduling Assistant")
+                        }
+                        .font(.system(size: 12))
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
             if !draft.rooms.isEmpty {
                 row("") {
                     FlowChips {
@@ -259,7 +281,7 @@ struct EventEditorView: View {
         }
         .zIndex(1)
         .task { await store.loadRooms() }
-        .onChange(of: draft.location) { _, _ in highlightedRoom = nil; roomAvailability = [:] }
+        .onChange(of: draft.location) { _, _ in highlightedRoom = nil }
     }
 
     /// The room list is up: typing in Location, with rooms matching.
@@ -290,12 +312,20 @@ struct EventEditorView: View {
         highlightedRoom = matches[max(0, min(index, matches.count - 1))].id
     }
 
+    /// Check availability, as Outlook does it: the rooms listed go to the Scheduling Assistant as
+    /// candidates to compare, not booked (the user's call); ticking one there books it.
     private func checkRooms() {
-        let addresses = roomMatches.map(\.address)
-        Task {
-            roomAvailability = await store.availability(for: addresses, start: draft.requestStart, end: draft.requestEnd)
+        let booked = Set(draft.rooms.map(\.id))
+        var candidates = draft.candidateRooms
+        for room in roomMatches where !booked.contains(room.id) && !candidates.contains(room) {
+            candidates.append(room)
         }
+        store.editor?.candidateRooms = candidates
+        store.editor?.location = ""
+        highlightedRoom = nil
+        locationFocused = false
     }
+
 
     /// Start and End, each a date field with its calendar and a time field, in columns that line
     /// up, as OWA lays them out (the user's call, 2026-09-25, after trying a length slider).
@@ -385,8 +415,11 @@ struct EventEditorView: View {
                     // What the choice means for this start date, as Outlook's summary line says it.
                     if let pattern = draft.repeatPattern, presetIndex(pattern) != nil {
                         Text(pattern.label(start: draft.start, workDays: workDays))
-                            .font(.system(size: 11))
+                            .font(.system(size: 12))
                             .foregroundStyle(.secondary)
+                            // One line, never wrapping under itself (the user's catch).
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 } else {
                     Text("Never").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -412,7 +445,7 @@ struct EventEditorView: View {
         if let pattern = draft.repeatPattern, presetIndex(pattern) == nil {
             items.append(.init(id: "custom", title: pattern.label(start: draft.start, workDays: workDays), separatorBefore: true))
         }
-        items.append(.init(id: "other", title: "Other...", separatorBefore: true))
+        items.append(.init(id: "other", title: "Custom...", separatorBefore: true))
         return items
     }
 
@@ -449,9 +482,9 @@ struct EventEditorView: View {
     /// and Outlook's End date do.
     private var seriesEnd: some View {
         row("Until") {
-            PopUpMenu(items: [.init(id: "never", title: "No end date"), .init(id: "on", title: "On a date"),
-                              .init(id: "after", title: "After")],
-                      selected: seriesEndID, width: 130) { id in
+            PopUpMenu(items: [.init(id: "never", title: "None"), .init(id: "after", title: "After"),
+                              .init(id: "on", title: "By")],
+                      selected: seriesEndID, width: Self.menuWidth) { id in
                 switch id {
                 case "on":
                     let threeMonths = Calendar.current.date(byAdding: .month, value: 3, to: draft.start) ?? draft.start
@@ -473,7 +506,7 @@ struct EventEditorView: View {
                         .multilineTextAlignment(.trailing)
                 }
                 .frame(width: 54)
-                Text(count == 1 ? "time" : "times").foregroundStyle(.secondary)
+                Text(count == 1 ? "time" : "times").font(.system(size: 12)).foregroundStyle(.secondary)
             case .never:
                 EmptyView()
             }
@@ -701,8 +734,13 @@ struct EventEditorView: View {
     // MARK: - Pieces
 
     /// A label and its field, on one baseline.
-    private func row<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+    /// A label and its field. The label is centred on the row's 28 pt boxes: lining it up by
+    /// baseline let each native control (popup, date picker, text field) pull it a point or two
+    /// its own way, so the row shifted whenever a popup swapped what follows it (the user's
+    /// recording). `firstLine` is for a tall box, Description, whose first line the label sits on.
+    private func row<Content: View>(_ label: String, firstLine: Bool = false,
+                                    @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: firstLine ? .firstTextBaseline : .center, spacing: 10) {
             // Right-aligned with a colon, as Outlook for Mac lays its form out (the user's pick).
             Text(label.isEmpty ? "" : label + ":")
                 .font(.system(size: 12))
@@ -710,7 +748,9 @@ struct EventEditorView: View {
                 .frame(width: Self.labelWidth, alignment: .trailing)
                 // Clicks on a label fall through to the empty space behind it.
                 .allowsHitTesting(false)
-            HStack(alignment: .firstTextBaseline, spacing: 8) { content() }
+            // Centred: the boxes are all 28 pt, and their native text views report baselines
+            // that disagree, which set a date box lower than the popup beside it.
+            HStack(alignment: .center, spacing: 8) { content() }
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Every row at least a field's height, so a row that swaps a popup for a box (Until) or
@@ -727,7 +767,8 @@ struct EventEditorView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+        // Neutral, like the other chips and fields (the user's call).
+        .background(Capsule().fill(Color.primary.opacity(0.07)))
     }
 }
 
@@ -869,7 +910,8 @@ private struct RoomDropdown: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
         }
-        .frame(width: 330)
+        // As wide as the Location field it hangs from (the user's catch).
+        .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 8).fill(CalendarSurface.background)
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))

@@ -76,6 +76,9 @@ struct EventDraft: Equatable, Identifiable {
     var existingFiles: [FileAttachment] = []
     var removedFileIDs: Set<String> = []
     var newFiles: [NewFile] = []
+    /// Rooms to weigh in the Scheduling Assistant, from the room list's Check availability: not
+    /// booked, never sent; ticking one there books it (the user's rule, after Outlook's).
+    var candidateRooms: [Room] = []
     /// OWA's Response options, both on by default as there.
     var requestResponses = true
     var allowForwarding = true

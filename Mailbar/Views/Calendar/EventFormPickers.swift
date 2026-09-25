@@ -113,7 +113,7 @@ struct PeopleSidebar: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 // A quieter heading than the form's fields (the user's call).
-                Text("People").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                Text("People").font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
                     .allowsHitTesting(false)
                 Spacer()
                 responseOptions
@@ -143,7 +143,7 @@ struct PeopleSidebar: View {
 
             ZStack(alignment: .top) {
                 GeometryReader { geometry in
-                    ScrollView {
+                    ScrollView(showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 2) {
                             if let account = store.account {
                                 personRow(name: account.fullName.isEmpty ? account.email : account.fullName,
@@ -461,11 +461,16 @@ struct Avatar: View {
                     .foregroundStyle(Color.accentColor))
                 .accessibilityHidden(true)
         } else if let photo {
+            // High-quality scaling and a smooth circular edge: the directory's photos are much
+            // larger than 26 pt, and the default scaling looked jagged (the user's catch).
             Image(nsImage: photo)
                 .resizable()
+                .interpolation(.high)
+                .antialiased(true)
                 .scaledToFill()
                 .frame(width: size, height: size)
                 .clipShape(Circle())
+                .drawingGroup()
                 .accessibilityHidden(true)
         } else {
             initials

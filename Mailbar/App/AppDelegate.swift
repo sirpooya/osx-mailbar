@@ -187,8 +187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 CalendarWindow.shared.store?.startNewEvent()
                 CalendarWindow.shared.store?.editor?.subject = "Design review"
+                if QCFlags.calendarAssistant {
+                    CalendarWindow.shared.store?.editor?.candidateRooms = [Room(name: "Room Green", address: "room.green@example.com"),
+                                                                          Room(name: "ساختمان نمونه | طبقه هفت | اتاق بزرگ", address: "room.f7.large@example.com")]
+                }
                 if let series = QCFlags.calendarSeries {
-                    CalendarWindow.shared.store?.editor?.repeatPattern = RepeatPattern(kind: .daily)
+                    CalendarWindow.shared.store?.editor?.repeatPattern = RepeatPattern(kind: series == "monthly" ? .monthlyDay : .daily)
                     CalendarWindow.shared.store?.editor?.repeatEnd = series == "on" ? .on(Date().addingTimeInterval(90 * 86_400))
                         : series == "after" ? .after(10) : .never
                 }

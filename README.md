@@ -30,8 +30,13 @@ exists so you can stop keeping a 2 GB mail client open all day.
   from the menu bar icon's right-click menu, or Cmd+K in the popover.
 - Swipe between weeks the way Apple's Calendar does; events in their Outlook category colours; a
   narrow window switches to Day.
-- **Create, edit and delete events**, with rooms, people (suggested from your company directory),
-  repeat, reminder and show as. **Answer invitations** from the calendar or the invitation email.
+- **Create, edit and delete events**: drag on the grid to draw one, then a form after Outlook's,
+  with rooms found by typing in Location, people (suggested from your company directory, with
+  photos and free or busy), repeat (Daily, Weekly, Monthly or custom, until a date or a count),
+  reminder, show as, category, charm, private, files, and response options. A **Scheduling
+  Assistant** shows everyone's busy times for the day and finds the next free slot.
+  **Answer invitations** from the calendar or the invitation email.
+- **Today tab**: swipe sideways to go through the days.
 - **Reminders**: one notification at each event's reminder time.
 - **Today in the popover**: an Inbox | Today switch; Today shows the day as a one-day calendar, with
   Join buttons for Teams, Zoom, Meet and Webex.
@@ -113,7 +118,9 @@ packages; Apple frameworks only.
 | Reply, forward, send | `ReplyToItem`, `ReplyAllToItem`, `ForwardItem`, `CreateItem` |
 | Calendar | `FindItem` with `CalendarView`, `GetItem`, `CreateItem`, `UpdateItem`, `DeleteItem` |
 | Answer invitations | `AcceptItem`, `TentativelyAcceptItem`, `DeclineItem` |
-| People and rooms | `ResolveNames`, `GetRoomLists`, `GetRooms` |
+| People and rooms | `ResolveNames`, `GetRoomLists`, `GetRooms`, `GetUserPhoto` |
+| Free or busy, Scheduling Assistant | `GetUserAvailability` |
+| Files on events | `CreateAttachment`, `DeleteAttachment` |
 | Category colours | `GetUserConfiguration` (`CategoryList`) |
 
 ## Project layout
