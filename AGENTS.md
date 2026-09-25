@@ -57,7 +57,7 @@ in mock mode. The Milestones section below is the record; none is open.
 - Not in it: rich text, drafts folder, signatures editor, outgoing attachments, directory lookup.
 
 ### Calendar (M15 to M19, built 2026-09-25)
-- View, create, edit, delete, answer invitations, reminders, Today in the popover, over the same
+- View, create, edit, delete, answer invitations, reminders, a Today tab in the popover, over the same
   EWS server. The four open choices were taken at these defaults when the user said "build it
   now"; any can still change:
   1. Its own resizable window from the tray menu (Cmd+K), not a popover tab.
@@ -103,7 +103,7 @@ New work gets a plan and moves here once it lands.
 | M16 | Create, edit, delete events: form with rooms, people, repeat, reminder, show as | writing a real event |
 | M17 | Answer invitations from the calendar and from the invitation email | answering a real one |
 | M18 | Event reminders: one plain notification per event, no snooze | a real banner |
-| M19 | Today strip above the inbox: rest of today, countdown, Join link | a real meeting link |
+| M19 | Popover tabs Inbox and Today: today as a one-day calendar, Join links | a real meeting link |
 
 Testing rule for sending: **never send real mail** unless the user names the exact message and
 recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
@@ -112,7 +112,8 @@ Testing rule for the calendar: never create, change, cancel or answer a real eve
 user names it; an event with people sends real invitations.
 
 ## Status
-2026-09-25 (latest): **everything built, M0 to M19**, 131 tests green. Mail (reading, actions,
+2026-09-25 (latest): **everything built, M0 to M19**, 132 tests green; the popover has Inbox and
+Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
 Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
 popover). All proven in `MAILBAR_MOCK` mode; the Milestones table says what is still unproven on
@@ -227,7 +228,8 @@ Mailbar/
                          decoding, Autodiscover, CalendarModels, CalendarWrite, MockMode, MockCalendar
   Core/                  MailStore, CalendarStore, Poller, MailStreamer, NotificationService,
                          EventReminders, TodayAgenda, Compose, EventDraft, ReaderHTML, CategoryColors
-  Views/                 Inbox list and rows, reader, web view, composer, settings, account editor
+  Views/                 Inbox list and rows, reader, web view, composer, settings, account editor,
+                         TodayDayView (the popover's Today tab)
   Views/Calendar/        Calendar window, root and toolbar, week and month grids, pager, event form,
                          detail panel
   Resources/             Menu bar icon (MenuBarIcon.png), AppIcon.icon
@@ -295,6 +297,11 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   "19 Saturday", "Sat 19", "19"; below 900 pt the detail panel floats over the grid as a card;
   event titles wrap onto the lines a block has room for, but only between words (the longest
   word is measured; if it does not fit, one truncated line, never a word broken mid-way).
+- 2026-09-25 Today (M19) is a TAB, not a strip: the user meant a one-day view beside the Inbox
+  ("Inbox | Today" capsule, Cmd+1 and Cmd+2). It reuses the calendar grid's pieces (hour shading,
+  `EventBlock`, `NowLine`, category colours from the same rule, `CategoryColors.tint`) and the
+  reminders' fetch; opening the tab fetches at once. A strip above the inbox was built first and
+  removed. With several accounts the account menu moves to the header's left.
 - 2026-09-25 Reminders (M18) are deliberately plain: one notification per event at its
   reminder time, no snooze, no action buttons (the user's words: "a simple notification that
   comes and goes"). Scheduled with macOS for the next 26 hours; removed from Notification
@@ -322,6 +329,12 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 Right-to-left rows use frame alignment, never `.environment(\.layoutDirection)`,
   which flips the stack's alignment guide and throws the time to the wrong side (see
   `DirectionalText`).
+- 2026-09-25 Popover details, the user's calls: a Persian SUBJECT in a row starts at the left
+  edge (`pinnedLeading`) while sender and preview stay right-aligned; refresh and its spinner
+  live in the footer beside "Updated", not the header; the header is pinned to one height so
+  Inbox and Today never shift it (search shows on Inbox only); the Today tab's header is the
+  date alone; Join shows only when the event holds a real meeting link and sits centred on the
+  title line.
 - 2026-09-24 Menu bar icon is the user's `tray.png`, bundled byte-for-byte as `MenuBarIcon.png`
   and drawn WHOLE into an 18pt square as a template image: the artboard's padding is part of the
   design. Never crop, resize, recolour or re-weight the user's artwork in code; the user rejected

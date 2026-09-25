@@ -28,6 +28,13 @@ import Testing
         #expect(TodayAgenda.rest(of: events, now: now).map(\.id) == ["now", "later"])
     }
 
+    /// The Today tab's day view shows the whole day, past events included.
+    @Test func theDayViewKeepsEventsThatAreOver() {
+        let events = [event("over", from: -3 * 3600, to: -2 * 3600), event("later", from: 3600, to: 5400)]
+        #expect(Set(TodayAgenda.all(of: events, on: now).map(\.id)) == ["over", "later"])
+        #expect(TodayAgenda.rest(of: events, now: now).map(\.id) == ["later"])
+    }
+
     @Test func howSoonReadsNaturally() {
         #expect(TodayAgenda.relative(event("a", from: -60, to: 600), now: now) == "Now")
         #expect(TodayAgenda.relative(event("a", from: 25 * 60, to: 3600), now: now) == "in 25 min")

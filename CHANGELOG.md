@@ -33,7 +33,6 @@ section when a release is cut.
 - Create, edit and delete calendar events: the + button (Command N) or a double-click on an empty slot opens a form with location and room booking, start and end, all day, private, repeat, reminder, show as, notes and people, with names suggested from your company directory. Deleting a meeting you organized sends the cancellation.
 - Answer invitations with Accept, Tentative or Decline and an optional note, from the calendar or from the invitation email.
 - Event reminders: one notification at each event's reminder time, and clicking it opens the event in the calendar. Turn it off in Settings, Notifications.
-- Today in the popover: the rest of today's events above the inbox, how soon the next one starts, and a Join button for Teams, Zoom, Meet and Webex meetings. Click one to open it in the calendar.
 
 ### Changed
 - The new menu bar and app icons.
@@ -44,6 +43,11 @@ section when a release is cut.
 - Calendar weekends and off-hours are shaded grey, the day names sit on a plain background, and Previous, Today and Next sit together at the right. Work week view is removed.
 - Calendar grey shading is a true neutral grey, event text sits in the top left of each block, and the refresh button is gone: the calendar keeps itself up to date.
 - The calendar adapts to a narrow window the way Apple's Calendar does: shorter titles and day names, event titles that wrap between words, and event details that float over the grid instead of squeezing it. Day, Week and Month now sit in one capsule, and Previous, Today and Next are round buttons.
+- Today in the popover: a tab beside the Inbox (Command 1, Command 2) shows today as a one-day calendar, with Join buttons on Teams, Zoom, Meet and Webex meetings. Click an event to open it in the calendar.
+- The Today tab's header shows only the date.
+- Refresh moved from the popover header to the footer, beside the last update time.
+- Persian subjects in the inbox start at the left edge, in line with the other rows.
+- The Join button on a Today meeting is centred on the event's title line.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -51,4 +55,5 @@ section when a release is cut.
 - Wide emails such as newsletters now zoom out to fit the reader instead of running off the right edge. Images keep the proportions the sender gave them.
 - Large images in an email now shrink to fit the reader, keeping their shape, so there is no sideways scrolling.
 - Calendar events take exactly the colour their category has in Outlook; a category without a colour is grey, as in Outlook, instead of a guessed colour.
+- The popover header keeps one height when switching between Inbox and Today.
 

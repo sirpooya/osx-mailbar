@@ -67,19 +67,7 @@ final class CalendarStore {
     /// the list could not be read at all is a default name's colour guessed. No category at all:
     /// the accent.
     func tint(for event: CalendarEvent) -> Color {
-        if event.isCancelled { return .gray }
-        guard let first = event.categories.first else { return .accentColor }
-        if !categoryColors.isEmpty {
-            if let index = categoryColors[first] {
-                return CategoryColors.color(index: index) ?? CategoryColors.neutral
-            }
-            // A category the list does not know: Outlook shows it uncoloured, so do we.
-            return CategoryColors.neutral
-        }
-        if let index = CategoryColors.guessedIndex(forName: first), let color = CategoryColors.color(index: index) {
-            return color
-        }
-        return CategoryColors.neutral
+        CategoryColors.tint(for: event, colors: categoryColors)
     }
 
     /// A newer refresh supersedes an older one still in flight.

@@ -10,6 +10,13 @@ enum TodayAgenda {
             .sorted { ($0.isAllDay ? 0 : 1, $0.start) < ($1.isAllDay ? 0 : 1, $1.start) }
     }
 
+    /// Every event that touches today, over or not: the Today tab's day view.
+    static func all(of events: [CalendarEvent], on now: Date, calendar: Calendar = .current) -> [CalendarEvent] {
+        let start = calendar.startOfDay(for: now)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
+        return events.filter { $0.end > start && $0.start < end }.sorted { $0.start < $1.start }
+    }
+
     /// The first online-meeting link in an event's notes: Teams, Zoom, Google Meet, Webex.
     static func joinLink(inHTML html: String) -> URL? {
         let pattern = #"https://(teams\.microsoft\.com/l/meetup-join/|[\w.-]*zoom\.us/j/|meet\.google\.com/|[\w.-]*webex\.com/)[^\s"'<>]+"#

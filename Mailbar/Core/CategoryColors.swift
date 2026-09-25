@@ -36,6 +36,21 @@ enum CategoryColors {
         return defaults[name.trimmingCharacters(in: .whitespaces).lowercased()]
     }
 
+    /// The colour an event is drawn in, one rule everywhere (the calendar window and the popover's
+    /// Today tab): the first category's colour from the server's master list, exactly; grey for a
+    /// category the list gives no colour or does not know; a default name guessed only when the
+    /// list could not be read; the accent for an event with no category.
+    static func tint(for event: CalendarEvent, colors: [String: Int]) -> Color {
+        if event.isCancelled { return .gray }
+        guard let first = event.categories.first else { return .accentColor }
+        if !colors.isEmpty {
+            if let index = colors[first] { return color(index: index) ?? neutral }
+            return neutral
+        }
+        if let index = guessedIndex(forName: first), let color = color(index: index) { return color }
+        return neutral
+    }
+
     /// No colour: `color="-1"` in the master list. Outlook and OWA draw such an event grey.
     static let noColor = -1
 

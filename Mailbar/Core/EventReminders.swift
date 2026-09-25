@@ -70,6 +70,11 @@ final class EventReminders {
                                                                     to: now.addingTimeInterval(Self.lookAhead),
                                                                     at: url, credential: credential) else { continue }
             await mail.setToday(TodayAgenda.rest(of: events, now: now), for: account.id)
+            mail.setDayEvents(TodayAgenda.all(of: events, on: now), for: account.id)
+            if mail.categoryColors[account.id] == nil {
+                mail.setCategoryColors((try? await mail.client.categoryColors(at: url, credential: credential)) ?? [:],
+                                       for: account.id)
+            }
             planned += Self.plan(events, account: account, now: now,
                                  showDetails: defaults.bool(forKey: Keys.notificationDetails))
         }

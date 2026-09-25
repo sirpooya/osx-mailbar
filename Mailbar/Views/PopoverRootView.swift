@@ -15,6 +15,7 @@ struct PopoverRootView: View {
     var onOpenEvent: (UUID, String) -> Void = { _, _ in }
 
     @AppStorage(Keys.showToday) private var showToday = true
+    @Namespace private var tabPill
 
     private static let width: CGFloat = 380
 
@@ -71,13 +72,7 @@ struct PopoverRootView: View {
     private var list: some View {
         VStack(spacing: 0) {
             header
-            if store.isSearchOpen { searchBar }
-            if showToday, !store.isSearchOpen, let account = store.selectedAccount,
-               !store.todayEvents(for: account.id).isEmpty {
-                TodayStrip(events: store.todayEvents(for: account.id), joinLinks: store.joinLinks) { event in
-                    onOpenEvent(account.id, event.id)
-                }
-            }
+            if store.isSearchOpen, !showsTodayTab { searchBar }
             Divider().opacity(0.5)
             banners
             ZStack {
@@ -156,9 +151,19 @@ struct PopoverRootView: View {
     // MARK: - Header
 
     /// A ZStack so the title stays centred on the panel whatever the buttons beside it measure.
+    /// The Today tab is on (Settings) and chosen.
+    private var showsTodayTab: Bool { showToday && store.popoverTab == .today }
+
     private var header: some View {
         ZStack {
-            title
+            if showToday { tabSwitch } else { title }
+
+            if showToday, accounts.count > 1 {
+                HStack {
+                    accountMenu
+                    Spacer(minLength: 0)
+                }
+            }
 
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
@@ -175,32 +180,20 @@ struct PopoverRootView: View {
                 .accessibilityLabel("New message")
                 .disabled(store.selectedAccount == nil)
 
-                Button {
-                    if store.isSearchOpen { store.closeSearch() } else { store.isSearchOpen = true }
-                } label: {
-                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("f", modifiers: .command)
-                .help("Search the Inbox (Cmd+F)")
-                .accessibilityLabel("Search the Inbox")
-                .disabled(store.selectedAccount == nil)
-
-                // One fixed box for both states, so the spinner replacing the button cannot nudge
-                // the header's height (osx-jirabar measured that one).
-                Group {
-                    if store.isRefreshing {
-                        ProgressView().controlSize(.small).scaleEffect(0.7)
-                    } else {
-                        Button(action: onRefresh) {
-                            Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .medium))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Check for new mail")
-                        .accessibilityLabel("Check for new mail")
+                // Search belongs to the Inbox; on the Today tab it leaves the row entirely rather
+                // than leaving a hole (the user's call, 2026-09-25).
+                if !showsTodayTab {
+                    Button {
+                        if store.isSearchOpen { store.closeSearch() } else { store.isSearchOpen = true }
+                    } label: {
+                        Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium))
                     }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("f", modifiers: .command)
+                    .help("Search the Inbox (Cmd+F)")
+                    .accessibilityLabel("Search the Inbox")
+                    .disabled(store.selectedAccount == nil)
                 }
-                .frame(width: 16, height: 14)
 
                 Button(action: onOpenSettings) {
                     Image(systemName: "gearshape").font(.system(size: 11, weight: .medium))
@@ -211,6 +204,9 @@ struct PopoverRootView: View {
             }
             .foregroundStyle(.secondary)
         }
+        // One height whatever the tab shows: the search glyph comes and goes with the Inbox tab,
+        // and the bar must not jump when switching (the user's call, 2026-09-25).
+        .frame(height: 22)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
@@ -249,6 +245,82 @@ struct PopoverRootView: View {
         }
     }
 
+    /// Inbox | Today, in the calendar's capsule style, the unread count on Inbox (M19).
+    private var tabSwitch: some View {
+        HStack(spacing: 2) {
+            tabButton(.inbox, key: "1") {
+                HStack(spacing: 4) {
+                    Text("Inbox")
+                    let count = store.selectedAccount.map { store.unreadCount(for: $0.id) } ?? 0
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .contentTransition(.numericText())
+                    }
+                }
+            }
+            tabButton(.today, key: "2") { Text("Today") }
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .fixedSize()
+    }
+
+    private func tabButton<Label: View>(_ tab: MailStore.PopoverTab, key: KeyEquivalent,
+                                        @ViewBuilder label: () -> Label) -> some View {
+        let selected = store.popoverTab == tab
+        return Button {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) {
+                store.popoverTab = tab
+                if tab == .today { store.closeSearch() }
+            }
+        } label: {
+            label()
+                .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12)
+                .frame(height: 22)
+                .background {
+                    if selected {
+                        Capsule().fill(CalendarSurface.background)
+                            .shadow(color: .black.opacity(0.1), radius: 1.5, y: 0.5)
+                            .matchedGeometryEffect(id: "tab", in: tabPill)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(key, modifiers: .command)
+    }
+
+    /// With several accounts and the tabs in the middle, the account moves to a menu on the left.
+    private var accountMenu: some View {
+        Menu {
+            ForEach(accounts) { account in
+                Button {
+                    select(account)
+                } label: {
+                    let count = store.unreadCount(for: account.id)
+                    Label(count > 0 ? "\(account.displayName)  (\(count))" : account.displayName,
+                          systemImage: store.selectedAccount?.id == account.id ? "checkmark" : "")
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text(store.selectedAccount?.displayName ?? "").font(.system(size: 11)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: 90, alignment: .leading)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
     private var titleText: some View {
         HStack(spacing: 5) {
             Text(accounts.count > 1 ? "Inbox · \(store.selectedAccount?.displayName ?? "")" : "Inbox")
@@ -276,7 +348,11 @@ struct PopoverRootView: View {
     /// and no failure can be drawn as an empty inbox.
     @ViewBuilder
     private var content: some View {
-        if let account = store.selectedAccount {
+        if showsTodayTab, let account = store.selectedAccount {
+            TodayDayView(store: store, accountID: account.id,
+                         onOpenEvent: { event in onOpenEvent(account.id, event.id) },
+                         onOpenCalendar: { onOpenEvent(account.id, "") })
+        } else if let account = store.selectedAccount {
             if store.isSearchOpen, store.searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 {
                 searchContent(account)
             } else {
@@ -384,6 +460,23 @@ struct PopoverRootView: View {
             } else {
                 Text("Not updated yet")
             }
+            // Refresh sits with the time it refreshes, not in the header (the user's call,
+            // 2026-09-25). One fixed box for both states, so the spinner cannot shift the line.
+            Group {
+                if store.isRefreshing {
+                    ProgressView().controlSize(.mini).scaleEffect(0.8)
+                } else {
+                    Button(action: onRefresh) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Check for new mail (Command R)")
+                    .accessibilityLabel("Check for new mail")
+                }
+            }
+            .frame(width: 12, height: 12)
             Spacer(minLength: 4)
             Button("Quit", action: onQuit)
                 .buttonStyle(.plain)
@@ -472,8 +565,9 @@ struct InboxListView: View {
                         Rectangle()
                             .fill(Color.primary.opacity(0.07))
                             .frame(height: 1)
-                            .padding(.leading, 24)
-                            .padding(.trailing, 10)
+                            // The same inset on both sides as the row's own content, no special
+                            // left indent (the user's call, 2026-09-25).
+                            .padding(.horizontal, MessageRowView.Metrics.horizontalPadding)
                     }
                     MessageRowView(message: message, accountID: accountID, store: store,
                                    startsHovered: index == 0 && QCFlags.hoverFirstRow) {
@@ -493,86 +587,5 @@ struct InboxListView: View {
         }
         // About seven rows in the popover, which must not run past the bottom of the screen.
         .frame(maxHeight: 460)
-    }
-}
-
-/// The rest of today, above the inbox (M19): the time, the title, how soon the next one starts,
-/// and a Join button when its notes carry a meeting link. Up to three rows; a row opens the event
-/// in the calendar.
-struct TodayStrip: View {
-    let events: [CalendarEvent]
-    let joinLinks: [String: URL]
-    let onOpen: (CalendarEvent) -> Void
-
-    private static let shown = 3
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let now = context.date
-            let upcoming = events.filter { $0.end > now }
-            if !upcoming.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    // "Next" is the first one that has not started: it gets the "in 25 min". One
-                    // under way already says "Now" instead.
-                    let next = upcoming.firstIndex { !$0.isAllDay && $0.start > now }
-                    ForEach(Array(upcoming.prefix(Self.shown).enumerated()), id: \.element.id) { index, event in
-                        row(event, isNext: index == next, now: now)
-                    }
-                    if upcoming.count > Self.shown {
-                        Text("+\(upcoming.count - Self.shown) more today")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                            .padding(.leading, 14)
-                    }
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 8)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
-                .padding(.horizontal, 10)
-                .padding(.bottom, 7)
-            }
-        }
-    }
-
-    private func row(_ event: CalendarEvent, isNext: Bool, now: Date) -> some View {
-        let underway = !event.isAllDay && event.start <= now
-        return Button { onOpen(event) } label: {
-            HStack(spacing: 7) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.accentColor.opacity(event.isTentative ? 0.45 : 1))
-                    .frame(width: 3, height: 14)
-                Text(event.isAllDay ? "All day" : (underway ? "Now" : event.start.formatted(date: .omitted, time: .shortened)))
-                    .font(.system(size: 11, weight: underway ? .semibold : .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(underway ? Color.accentColor : Color.secondary)
-                    .frame(width: 58, alignment: .leading)
-                DirectionalText(event.subject, font: .system(size: 12, weight: isNext || underway ? .semibold : .regular))
-                if isNext, !underway {
-                    Text(TodayAgenda.relative(event, now: now))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-                }
-                if let link = joinLinks[event.id] {
-                    Button {
-                        NSWorkspace.shared.open(link)
-                    } label: {
-                        Label("Join", systemImage: "video.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 7)
-                            .frame(height: 18)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
-                    .help(link.host ?? "Join the meeting")
-                    .fixedSize()
-                }
-            }
-            .frame(height: 20)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help([event.subject, event.location].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 }

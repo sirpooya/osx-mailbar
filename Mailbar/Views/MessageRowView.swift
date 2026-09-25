@@ -89,7 +89,8 @@ struct MessageRowView: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     DirectionalText(message.subject,
-                                    font: .system(size: 12, weight: message.isRead ? .regular : .medium))
+                                    font: .system(size: 12, weight: message.isRead ? .regular : .medium),
+                                    pinnedLeading: true)
                         .foregroundStyle(.primary)
                     trailingMarks
                 }
@@ -166,11 +167,16 @@ struct DirectionalText: View {
     let font: Font
     /// One line everywhere in the mail list; calendar blocks let a title wrap when there is room.
     var lines: Int = 1
+    /// Keeps the line at the leading edge even when it reads right to left: the inbox subject
+    /// starts where every other subject starts (the user's call, 2026-09-25), the words still in
+    /// Persian order.
+    var pinnedLeading = false
 
-    init(_ text: String, font: Font, lines: Int = 1) {
+    init(_ text: String, font: Font, lines: Int = 1, pinnedLeading: Bool = false) {
         self.text = text
         self.font = font
         self.lines = lines
+        self.pinnedLeading = pinnedLeading
     }
 
     private var isRightToLeft: Bool {
@@ -182,7 +188,7 @@ struct DirectionalText: View {
             .font(font)
             .lineLimit(lines)
             .truncationMode(.tail)
-            .multilineTextAlignment(isRightToLeft ? .trailing : .leading)
-            .frame(maxWidth: .infinity, alignment: isRightToLeft ? .trailing : .leading)
+            .multilineTextAlignment(isRightToLeft && !pinnedLeading ? .trailing : .leading)
+            .frame(maxWidth: .infinity, alignment: isRightToLeft && !pinnedLeading ? .trailing : .leading)
     }
 }

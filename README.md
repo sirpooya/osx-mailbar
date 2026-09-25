@@ -3,7 +3,7 @@
 A lightweight macOS menu-bar mail and calendar client for on-premises Microsoft Exchange, over EWS.
 
 Mailbar shows your inbox unread count in the menu bar and opens a popover with the Inbox, laid out
-like Outlook's message list, and today's events above it. Its calendar opens in its own window. It
+like Outlook's message list, and a Today tab with the day's calendar. Its calendar opens in its own window. It
 exists so you can stop keeping a 2 GB mail client open all day.
 
 > **Status: built and in daily use.** Everything below is in place and tested against mock data.
@@ -33,8 +33,8 @@ exists so you can stop keeping a 2 GB mail client open all day.
 - **Create, edit and delete events**, with rooms, people (suggested from your company directory),
   repeat, reminder and show as. **Answer invitations** from the calendar or the invitation email.
 - **Reminders**: one notification at each event's reminder time.
-- **Today in the popover**: the rest of today, the next meeting's countdown and a Join button for
-  Teams, Zoom, Meet and Webex.
+- **Today in the popover**: an Inbox | Today switch; Today shows the day as a one-day calendar, with
+  Join buttons for Teams, Zoom, Meet and Webex.
 
 ## General
 

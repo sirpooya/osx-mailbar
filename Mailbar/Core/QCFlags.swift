@@ -11,7 +11,9 @@ import Foundation
 ///     Mailbar.app/Contents/MacOS/Mailbar --load-images      (remote images allowed from the start)
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
-    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil }
+    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil || openToday }
+    /// `--open-today`: the popover on its Today tab.
+    static var openToday: Bool { has("--open-today") }
     static var openMessage: Bool { openMessageIndex != nil }
     /// `--compose=reply` or `--compose=new`: the composer with sample text, mock mode only.
     static var composeKind: String? {

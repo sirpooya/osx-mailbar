@@ -207,7 +207,7 @@ private struct DayColumn: View {
 /// The day's shading and lines in one drawing pass instead of a hundred views per column, so the
 /// strip stays smooth while it follows the fingers. Weekends and hours outside work are a neutral
 /// grey (the user's call, 2026-09-25), not a tint of the accent colour.
-private struct HourBackground: View {
+struct HourBackground: View {
     let isWorkDay: Bool
     let workHours: ClosedRange<Int>
     let hourHeight: CGFloat
@@ -233,7 +233,7 @@ private struct HourBackground: View {
 }
 
 /// A red line at the current time, refreshed every minute.
-private struct NowLine: View {
+struct NowLine: View {
     let calendar: Calendar
     let hourHeight: CGFloat
     let width: CGFloat

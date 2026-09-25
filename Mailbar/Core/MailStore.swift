@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// Every account's inbox state and unread count, in memory only.
 ///
@@ -74,8 +75,32 @@ final class MailStore {
 
     // MARK: Today (M19)
 
-    /// The rest of today's events per account, for the popover's Today strip. In memory only.
+    /// Which of the popover's two tabs is showing.
+    enum PopoverTab: String { case inbox, today }
+    var popoverTab: PopoverTab = .inbox
+
+    /// The rest of today's events per account. In memory only.
     private(set) var today: [UUID: [CalendarEvent]] = [:]
+    /// All of today's events per account, past ones included, for the Today tab's day view.
+    private(set) var dayEvents: [UUID: [CalendarEvent]] = [:]
+    /// Category colours per account, for the Today tab (the calendar window keeps its own).
+    private(set) var categoryColors: [UUID: [String: Int]] = [:]
+    private(set) var todayLoaded: Set<UUID> = []
+    /// Set by the app delegate: fetches today at once, when the Today tab is opened.
+    @ObservationIgnored var refreshToday: (() async -> Void)?
+
+    func setDayEvents(_ events: [CalendarEvent], for accountID: UUID) {
+        dayEvents[accountID] = events
+        todayLoaded.insert(accountID)
+    }
+
+    func setCategoryColors(_ colors: [String: Int], for accountID: UUID) {
+        categoryColors[accountID] = colors
+    }
+
+    func tint(for event: CalendarEvent, in accountID: UUID) -> Color {
+        CategoryColors.tint(for: event, colors: categoryColors[accountID] ?? [:])
+    }
     /// The join link of each account's next (or current) event, when its notes carry one.
     private(set) var joinLinks: [String: URL] = [:]
 

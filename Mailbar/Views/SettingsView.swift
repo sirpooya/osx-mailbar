@@ -146,7 +146,7 @@ struct SettingsView: View {
                 SettingsSwitch(isOn: $eventReminders)
             }
             SettingsDivider()
-            SettingsRow("Today in the popover", subtitle: "The rest of today's events above the inbox.") {
+            SettingsRow("Today tab in the popover", subtitle: "Today as a one-day calendar, beside the Inbox.") {
                 SettingsSwitch(isOn: $showToday)
             }
         }

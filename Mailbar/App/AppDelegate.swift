@@ -35,6 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store = MailStore(accounts: accounts, client: client)
         reminders = EventReminders(mail: store)
+        if QCFlags.openToday { store.popoverTab = .today }
+        store.refreshToday = { [weak self] in
+            await self?.reminders.update(force: true, schedule: MockMode.current == nil)
+        }
         notifications.configure()
         store.onNewMail = { [weak self] account, messages in
             let defaults = UserDefaults.standard
