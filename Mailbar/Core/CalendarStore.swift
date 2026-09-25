@@ -62,16 +62,24 @@ final class CalendarStore {
     private(set) var categoryColors: [String: Int] = [:]
     @ObservationIgnored private var categoriesLoadedFor: UUID?
 
-    /// The colour an event is drawn in: its first category's, as OWA does, else the accent.
+    /// The colour an event is drawn in, as OWA draws it: its first category's colour from the
+    /// server's master list, exactly; grey for a category the list says has no colour. Only when
+    /// the list could not be read at all is a default name's colour guessed. No category at all:
+    /// the accent.
     func tint(for event: CalendarEvent) -> Color {
         if event.isCancelled { return .gray }
-        for name in event.categories {
-            if let index = categoryColors[name] ?? CategoryColors.guessedIndex(forName: name),
-               let color = CategoryColors.color(index: index) {
-                return color
+        guard let first = event.categories.first else { return .accentColor }
+        if !categoryColors.isEmpty {
+            if let index = categoryColors[first] {
+                return CategoryColors.color(index: index) ?? CategoryColors.neutral
             }
+            // A category the list does not know: Outlook shows it uncoloured, so do we.
+            return CategoryColors.neutral
         }
-        return .accentColor
+        if let index = CategoryColors.guessedIndex(forName: first), let color = CategoryColors.color(index: index) {
+            return color
+        }
+        return CategoryColors.neutral
     }
 
     /// A newer refresh supersedes an older one still in flight.
@@ -190,6 +198,32 @@ final class CalendarStore {
             }
             return "\(first.formatted(style().month(.wide).day())) to \(last.formatted(style().month(.wide).day())), \(year)"
         }
+    }
+
+    /// The title when the toolbar is short of room: "Sep 19–25", "Fri, Sep 25", "Sep 2026".
+    var shortTitle: String {
+        let calendar = self.calendar
+        let days = visibleDays
+        guard let first = days.first, let last = days.last else { return "" }
+        let style = Date.FormatStyle(locale: .current, calendar: calendar, timeZone: calendar.timeZone)
+        switch mode {
+        case .day:
+            return first.formatted(style.weekday(.abbreviated).month(.abbreviated).day())
+        case .month:
+            return anchor.formatted(style.month(.abbreviated).year())
+        case .week:
+            if calendar.isDate(first, equalTo: last, toGranularity: .month) {
+                return "\(first.formatted(style.month(.abbreviated))) \(first.formatted(style.day()))\u{2013}\(last.formatted(style.day()))"
+            }
+            return "\(first.formatted(style.month(.abbreviated).day())) to \(last.formatted(style.month(.abbreviated).day()))"
+        }
+    }
+
+    /// The narrowest title: just the month (or months) on screen.
+    var tinyTitle: String {
+        let calendar = self.calendar
+        let style = Date.FormatStyle(locale: .current, calendar: calendar, timeZone: calendar.timeZone)
+        return (visibleDays.first ?? anchor).formatted(style.month(.wide))
     }
 
     func goToday() {

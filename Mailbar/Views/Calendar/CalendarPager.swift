@@ -121,3 +121,19 @@ struct PagerStrip<Page: View>: View {
         .clipped()
     }
 }
+
+/// The calendar's surfaces, kept free of any colour cast (the user's call, 2026-09-25).
+///
+/// `windowBackgroundColor` is tinted by the desktop wallpaper on current macOS ("wallpaper
+/// tinting in windows"), so a grey laid over it came out warm. The calendar sits on the text
+/// background instead, which is never tinted: pure white in light mode, pure dark in dark mode.
+/// The shading is then an exact neutral grey on top: black at a few percent in light, white in
+/// dark, no hue at all.
+enum CalendarSurface {
+    static let background = Color(nsColor: .textBackgroundColor)
+
+    static let shade = Color(nsColor: NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(white: 1, alpha: 0.05) : NSColor(white: 0, alpha: 0.045)
+    })
+}

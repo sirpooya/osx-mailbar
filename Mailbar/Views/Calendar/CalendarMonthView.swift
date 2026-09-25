@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Month: six weeks of days, up to three events each and a count of the rest. Clicking a day opens
@@ -10,21 +11,36 @@ struct CalendarMonthView: View {
     var body: some View {
         let calendar = store.calendar
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(store.monthGridDays.prefix(7), id: \.self) { day in
-                    Text(day.formatted(.dateTime.weekday(.wide)))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                }
+            GeometryReader { proxy in
+                weekdayRow(Array(store.monthGridDays.prefix(7)), width: proxy.size.width)
             }
+            .frame(height: 28)
             // Months slide as weeks do: the grid follows the fingers and springs to the next.
             PagerStrip(pager: store.pager, measures: true) { page in
                 grid(days: store.monthGridDays(page: page), month: store.month(page: page), calendar: calendar)
             }
         }
+    }
+
+    /// Weekday names in ONE format across the row, the longest that fits every column.
+    private func weekdayRow(_ days: [Date], width: CGFloat) -> some View {
+        let font = NSFont.systemFont(ofSize: 12)
+        let column = width / 7 - 16
+        let formats: [Date.FormatStyle.Symbol.Weekday] = [.wide, .abbreviated, .narrow]
+        let chosen = formats.first { format in
+            days.allSatisfy { (($0.formatted(.dateTime.weekday(format))) as NSString).size(withAttributes: [.font: font]).width <= column }
+        } ?? .narrow
+        return HStack(spacing: 0) {
+            ForEach(days, id: \.self) { day in
+                Text(day.formatted(.dateTime.weekday(chosen)))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+            }
+        }
+        .frame(maxHeight: .infinity)
     }
 
     private func grid(days: [Date], month: Int, calendar: Calendar) -> some View {
@@ -84,7 +100,7 @@ struct CalendarMonthView: View {
         // The whole cell, before the fill and the border, or both shrink to the text inside.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Weekends in neutral grey, as in the week grid (the user's call, 2026-09-25).
-        .background(isWorkDay ? Color.clear : Color.primary.opacity(0.05))
+        .background(isWorkDay ? Color.clear : CalendarSurface.shade)
         .overlay {
             Rectangle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
         }

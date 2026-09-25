@@ -29,6 +29,7 @@ enum MockCalendar {
     <category name="Blue category" color="7"/><category name="Green category" color="4"/>\
     <category name="Orange category" color="1"/><category name="Purple category" color="8"/>\
     <category name="Red category" color="0"/><category name="Storybook" color="9"/>\
+    <category name="Shared team" color="-1"/>\
     <category name="Yellow category" color="3"/></categories>
     """
 
@@ -99,6 +100,9 @@ enum MockCalendar {
                   end: minutes(at(0, tuesday, 18), 15), location: "اتاق سبز", organizer: "Mostafa Nouri",
                   organizerAddress: "mostafa@example.com", response: "Tentative", showAs: "Tentative",
                   categories: ["Green category"]),
+            Event(id: "ev-thu-core", subject: "Core Weekly", start: at(0, wednesday, 9),
+                  end: at(0, wednesday, 10), location: room, isRecurring: true,
+                  categories: ["Shared team"]),
             Event(id: "ev-wed-farewell", subject: "Nima's Farewell", start: at(0, wednesday, 17),
                   end: minutes(at(0, wednesday, 17), 30), organizer: "Mahan Rostami", organizerAddress: "mahan@example.com",
                   categories: ["Red category"]),

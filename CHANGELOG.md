@@ -29,6 +29,7 @@ section when a release is cut.
 - Calendar. Right-click the menu bar icon and choose Calendar (Command K) for Day, Work week, Week and Month views of your Exchange calendar, laid out like Outlook on the web, with the week starting Saturday. Click an event to see who is invited and how they answered.
 - Swipe left or right with two fingers in the calendar to go to the next or previous day, week or month.
 - Calendar events show their Outlook category colours.
+- The calendar switches to Day view when its window is made narrower than about 580 points, and back to Week when it is widened again.
 
 ### Changed
 - The new menu bar and app icons.
@@ -37,10 +38,13 @@ section when a release is cut.
 - While the calendar is open, Mailbar shows in the Dock and in Command Tab. Close the calendar and it is back to the menu bar only.
 - Swiping in the calendar now follows your fingers and settles on the next or previous week the way Apple's Calendar does, with the neighbouring weeks already filled in.
 - Calendar weekends and off-hours are shaded grey, the day names sit on a plain background, and Previous, Today and Next sit together at the right. Work week view is removed.
+- Calendar grey shading is a true neutral grey, event text sits in the top left of each block, and the refresh button is gone: the calendar keeps itself up to date.
+- The calendar adapts to a narrow window the way Apple's Calendar does: shorter titles and day names, event titles that wrap between words, and event details that float over the grid instead of squeezing it. Day, Week and Month now sit in one capsule, and Previous, Today and Next are round buttons.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
 - A mistyped password costs at most one failed logon per user name tried, not one per authentication scheme, so Sign In no longer risks locking the domain account.
 - Wide emails such as newsletters now zoom out to fit the reader instead of running off the right edge. Images keep the proportions the sender gave them.
 - Large images in an email now shrink to fit the reader, keeping their shape, so there is no sideways scrolling.
+- Calendar events take exactly the colour their category has in Outlook; a category without a colour is grey, as in Outlook, instead of a guessed colour.
 

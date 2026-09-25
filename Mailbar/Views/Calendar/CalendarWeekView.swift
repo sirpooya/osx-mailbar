@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Day, work week and week: days as columns, hours down the side, events as blocks by time.
@@ -18,7 +19,11 @@ struct CalendarWeekView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Color.clear.frame(width: Self.gutterWidth, height: 1)
-                PagerStrip(pager: store.pager) { page in header(store.days(page: page)) }
+                PagerStrip(pager: store.pager) { page in
+                    GeometryReader { proxy in
+                        header(store.days(page: page), width: proxy.size.width)
+                    }
+                }
             }
             .frame(height: Self.headerHeight)
             if allDayRows > 0 {
@@ -64,17 +69,40 @@ struct CalendarWeekView: View {
 
     // MARK: - Pieces
 
-    private func header(_ days: [Date]) -> some View {
-        HStack(spacing: 0) {
+    /// "19 Saturday", "Sat 19" or "19", ONE format for the whole row, as Calendar does: the
+    /// longest that fits every column. Choosing per column mixed "19 Saturday" with "Wed 23".
+    static func dayLabelStyle(for days: [Date], width: CGFloat) -> Int {
+        guard !days.isEmpty else { return 0 }
+        let column = width / CGFloat(days.count) - 16
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        func widest(_ label: (Date) -> String) -> CGFloat {
+            days.map { (label($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        }
+        if widest({ dayLabel($0, style: 0) }) <= column { return 0 }
+        if widest({ dayLabel($0, style: 1) }) <= column { return 1 }
+        return 2
+    }
+
+    static func dayLabel(_ day: Date, style: Int) -> String {
+        switch style {
+        case 0: return day.formatted(.dateTime.day()) + " " + day.formatted(.dateTime.weekday(.wide))
+        case 1: return day.formatted(.dateTime.weekday(.abbreviated)) + " " + day.formatted(.dateTime.day())
+        default: return day.formatted(.dateTime.day())
+        }
+    }
+
+    private func header(_ days: [Date], width: CGFloat) -> some View {
+        let style = Self.dayLabelStyle(for: days, width: width)
+        return HStack(spacing: 0) {
             ForEach(days, id: \.self) { day in
                 let isToday = store.calendar.isDateInToday(day)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(day.formatted(.dateTime.day()) + " " + day.formatted(.dateTime.weekday(.wide)))
-                        .font(.system(size: 13, weight: isToday ? .semibold : .regular))
-                        .foregroundStyle(isToday ? Color.accentColor : Color.secondary)
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .frame(maxHeight: .infinity, alignment: .center)
+                    Text(Self.dayLabel(day, style: style))
+                    .font(.system(size: 13, weight: isToday ? .semibold : .regular))
+                    .foregroundStyle(isToday ? Color.accentColor : Color.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .frame(maxHeight: .infinity, alignment: .center)
                     Rectangle()
                         .fill(isToday ? Color.accentColor : Color.clear)
                         .frame(height: 3)
@@ -116,7 +144,7 @@ struct CalendarWeekView: View {
                     .id("hour-\(hour)")
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(CalendarSurface.background)
         .zIndex(1)
     }
 
@@ -152,7 +180,8 @@ private struct DayColumn: View {
                     let y = placed.startHour * hourHeight
                     let h = max((placed.endHour - placed.startHour) * hourHeight - 2, 18)
                     EventBlock(event: placed.event, isSelected: store.selectedEventID == placed.event.id,
-                               compact: h < 36, tint: store.tint(for: placed.event))
+                               compact: h < 36, tint: store.tint(for: placed.event), height: h,
+                               width: max(w, 10))
                         .frame(width: max(w, 10), height: h)
                         .offset(x: x, y: y)
                         .onTapGesture { Task { await store.select(placed.event) } }
@@ -178,7 +207,7 @@ private struct HourBackground: View {
 
     var body: some View {
         Canvas { context, size in
-            let offHours = Color.primary.opacity(0.05)
+            let offHours = CalendarSurface.shade
             let line = Color.primary.opacity(0.09)
             let halfLine = Color.primary.opacity(0.04)
             for hour in 0..<24 {
@@ -224,10 +253,35 @@ struct EventBlock: View {
     var compact = false
     /// The event's category colour, or the accent (`CalendarStore.tint(for:)`).
     var tint: Color = .accentColor
+    /// The block's height, so a narrow block can let its title wrap onto the lines it has room
+    /// for, as Calendar does ("Core / Weekly"), instead of cutting it to "Co...".
+    var height: CGFloat = 20
+
+    /// The block's width, for the same reason.
+    var width: CGFloat = 200
+
+    private static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+
+    /// Wraps only between words, as Calendar does. SwiftUI will otherwise break a word that does
+    /// not fit its line ("Desig / n Syste / m W..."), so when the longest word is wider than the
+    /// room a line has, the title stays on one line and truncates instead.
+    private var titleLines: Int {
+        guard !compact else { return 1 }
+        let byHeight = max(1, min(4, Int((height - 6) / 14)))
+        guard byHeight > 1 else { return 1 }
+        let icons: CGFloat = (event.isRecurring ? 13 : 0) + (event.isPrivate ? 12 : 0)
+        let room = width - 4 - 10 - icons
+        let longest = event.subject.split(whereSeparator: \.isWhitespace)
+            .map { (String($0) as NSString).size(withAttributes: [.font: Self.titleFont]).width }
+            .max() ?? 0
+        return longest > room ? 1 : byHeight
+    }
 
     /// Outlook's category colours are pastels, so a categorised event is filled much more
     /// strongly than the accent's light wash, or the colour would barely show.
     private var fillOpacity: Double {
+        // A colourless category is Outlook's pale grey block, not a strong grey one.
+        if tint == CategoryColors.neutral { return isSelected ? 0.4 : 0.22 }
         let categorised = !event.categories.isEmpty && !event.isCancelled
         switch (categorised, isSelected) {
         case (true, false): return 0.55
@@ -238,12 +292,16 @@ struct EventBlock: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        // Top-aligned, as Outlook lays a block out: title in the top corner, second line under it,
+        // not both floating in the middle of a tall event.
+        HStack(alignment: .top, spacing: 0) {
             Rectangle().fill(event.isTentative ? tint.opacity(0.45) : tint).frame(width: 4)
+                .frame(maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    DirectionalText(event.subject, font: .system(size: 11.5, weight: .semibold))
+                    DirectionalText(event.subject, font: .system(size: 11.5, weight: .semibold), lines: titleLines)
                         .strikethrough(event.isCancelled)
+                        .layoutPriority(1)
                     if event.isRecurring {
                         Image(systemName: "arrow.2.squarepath").font(.system(size: 9)).foregroundStyle(.secondary)
                     }
@@ -251,6 +309,8 @@ struct EventBlock: View {
                         Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(.secondary)
                     }
                 }
+                // The title has first claim on the room; the place and organizer take what is left,
+                // and drop out of a block too small for both.
                 if !compact {
                     let second = [event.location, event.organizer].filter { !$0.isEmpty }.joined(separator: "  ")
                     if !second.isEmpty {
@@ -261,7 +321,7 @@ struct EventBlock: View {
             }
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(

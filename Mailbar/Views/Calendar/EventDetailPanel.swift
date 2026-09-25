@@ -44,7 +44,7 @@ struct EventDetailPanel: View {
                 }
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(CalendarSurface.background)
     }
 
     private func summary(_ event: CalendarEvent) -> some View {

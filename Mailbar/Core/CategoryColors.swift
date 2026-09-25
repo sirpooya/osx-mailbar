@@ -27,14 +27,20 @@ enum CategoryColors {
                      blue: Double(value & 0xFF) / 255)
     }
 
-    /// The preset a default category name implies, for when the master list is out of reach.
+    /// The preset a DEFAULT category name implies, for when the master list is out of reach.
+    /// Exact names only: matching a colour word anywhere in the name turned "Core Weekly"'s
+    /// category red (2026-09-25) because the name happened to contain "red".
     static func guessedIndex(forName name: String) -> Int? {
-        let lower = name.lowercased()
-        let words: [(String, Int)] = [("red", 0), ("orange", 1), ("peach", 2), ("yellow", 3), ("green", 4),
-                                      ("teal", 5), ("olive", 6), ("blue", 7), ("purple", 8), ("maroon", 9),
-                                      ("gray", 12), ("grey", 12), ("black", 14)]
-        return words.first { lower.contains($0.0) }?.1
+        let defaults: [String: Int] = ["red category": 0, "orange category": 1, "yellow category": 3,
+                                       "green category": 4, "blue category": 7, "purple category": 8]
+        return defaults[name.trimmingCharacters(in: .whitespaces).lowercased()]
     }
+
+    /// No colour: `color="-1"` in the master list. Outlook and OWA draw such an event grey.
+    static let noColor = -1
+
+    /// Outlook's look for a category that has no colour: a light grey block with a grey bar.
+    static let neutral = Color(white: 0.62)
 
     /// Name to preset index from the master list's XML:
     /// `<categories><category name="Storybook" color="9" .../></categories>`.
@@ -42,9 +48,10 @@ enum CategoryColors {
         guard let root = try? XMLTree.parse(xml) else { return [:] }
         var result: [String: Int] = [:]
         for category in root.all("category") where category.name == "category" {
-            guard let name = category.attributes["name"], let color = category.attributes["color"].flatMap(Int.init),
-                  color >= 0 else { continue }
-            result[name] = color
+            guard let name = category.attributes["name"],
+                  let color = category.attributes["color"].flatMap(Int.init) else { continue }
+            // Kept even when -1: "no colour" is an answer from the server, not a gap to guess over.
+            result[name] = palette.indices.contains(color) ? color : noColor
         }
         return result
     }

@@ -258,9 +258,26 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   the visible page (`fetchRange`). The earlier fade-and-slide transition was janky and is gone.
 - 2026-09-25 Calendar look, the user's calls: weekend and off-hours shading neutral grey, never
   an accent tint; no band behind the day names; toolbar "‹ Today ›" on the right; no Work week.
-- 2026-09-25 Event colour is the first category's Outlook colour: names from `item:Categories`,
-  colours from the master list (`GetUserConfiguration` "CategoryList" on the calendar folder,
-  presets 0 to 24 in `CategoryColors`), else guessed from a default name, else the accent.
+- 2026-09-25 Event colour is **exactly what the server says**: the first category's colour from
+  the master list (`GetUserConfiguration` "CategoryList" on the calendar folder, presets 0 to 24
+  in `CategoryColors`). A category the list gives no colour (`color="-1"`), or does not list, is
+  Outlook's pale grey. Names are guessed ONLY when the list cannot be read, and only for the exact
+  default names ("Red category"): a substring guess once turned "Core Weekly" red. No category:
+  the accent. Block text sits top left, as in Outlook.
+- 2026-09-25 The calendar window is responsive, after Apple's Calendar: minimum 520 x 420; the
+  title shortens in steps (`title`, `shortTitle`, `tinyTitle` via `ViewThatFits`); day names go
+  "19 Saturday", "Sat 19", "19"; below 900 pt the detail panel floats over the grid as a card;
+  event titles wrap onto the lines a block has room for, but only between words (the longest
+  word is measured; if it does not fit, one truncated line, never a word broken mid-way).
+- 2026-09-25 Width decides the view (the user's rule): crossing below 580 pt switches to Day,
+  crossing back above switches Day to Week; on opening, narrow is Day and wide turns a leftover
+  Day into Week. Only crossings switch, so a view picked by hand holds until the next crossing.
+  Day labels and Month weekday names use ONE format across the row, never per column.
+- 2026-09-25 Toolbar controls in Apple's style: Day, Week, Month in one capsule with a sliding
+  grey pill (`ModeSwitcher`); Previous and Next as round grey buttons around a Today capsule.
+- 2026-09-25 The calendar's surfaces avoid `windowBackgroundColor`, which the wallpaper tints:
+  `CalendarSurface.background` (text background, never tinted) under an exactly neutral grey
+  shade, measured at R = G = B. No refresh button; the title aligns with the grid's left line.
 - 2026-09-24 The popover activates the app when it opens and draws an opaque window-background
   surface. On macOS 26 the popover glass adapts to the luminance behind it, not to Light or Dark,
   so over a dark wallpaper in Light mode it went dark under light-mode text and inverted the

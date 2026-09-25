@@ -40,12 +40,20 @@ final class CalendarWindow: NSObject, NSWindowDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.minSize = NSSize(width: 760, height: 520)
+        window.minSize = CalendarRootView.minimumSize
         window.setContentSize(NSSize(width: 1180, height: 760))
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
         window.setFrameAutosaveName("MailbarCalendarWindow")
+        if let width = QCFlags.calendarWidth {
+            // After the autosaved frame is restored, or that frame wins.
+            DispatchQueue.main.async {
+                var frame = window.frame
+                frame.size.width = width
+                window.setFrame(frame, display: true)
+            }
+        }
         window.makeKeyAndOrderFront(nil)
         self.window = window
         installSwipe()

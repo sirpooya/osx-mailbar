@@ -33,6 +33,16 @@ enum QCFlags {
         #endif
     }
 
+    /// `--calendar-width=560`: the calendar window at that width, to photograph narrow layouts.
+    static var calendarWidth: CGFloat? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--calendar-width=") }
+            .flatMap { Double($0.dropFirst("--calendar-width=".count)) }.map { CGFloat($0) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--calendar-select=Design Weekly`: the calendar with that event's detail panel open.
     static var calendarSelect: String? {
         #if DEBUG

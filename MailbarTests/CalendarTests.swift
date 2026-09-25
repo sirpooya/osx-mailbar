@@ -199,6 +199,12 @@ private func event(_ id: String, _ start: Date, minutes: Int, allDay: Bool = fal
         let daily = try #require(store.events.first { $0.subject == "Shopping Design Daily" })
         #expect(store.tint(for: daily) == .accentColor)
         #expect(CategoryColors.guessedIndex(forName: "Green category") == 4)
+        // "Core Weekly": its category has no colour in the list, and contains "red" in its name.
+        // Grey, exactly as OWA draws it, never a guess from the name.
+        let core = try #require(store.events.first { $0.subject == "Core Weekly" })
+        #expect(store.categoryColors["Shared team"] == CategoryColors.noColor)
+        #expect(store.tint(for: core) == CategoryColors.neutral)
+        #expect(CategoryColors.guessedIndex(forName: "Shared team") == nil)
         #expect(CategoryColors.parseMasterList(Data(MockCalendar.categoryListXML.utf8))["Red category"] == 0)
     }
 

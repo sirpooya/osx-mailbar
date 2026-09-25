@@ -164,10 +164,13 @@ struct MessageRowView: View {
 struct DirectionalText: View {
     let text: String
     let font: Font
+    /// One line everywhere in the mail list; calendar blocks let a title wrap when there is room.
+    var lines: Int = 1
 
-    init(_ text: String, font: Font) {
+    init(_ text: String, font: Font, lines: Int = 1) {
         self.text = text
         self.font = font
+        self.lines = lines
     }
 
     private var isRightToLeft: Bool {
@@ -177,7 +180,7 @@ struct DirectionalText: View {
     var body: some View {
         Text(text)
             .font(font)
-            .lineLimit(1)
+            .lineLimit(lines)
             .truncationMode(.tail)
             .multilineTextAlignment(isRightToLeft ? .trailing : .leading)
             .frame(maxWidth: .infinity, alignment: isRightToLeft ? .trailing : .leading)
