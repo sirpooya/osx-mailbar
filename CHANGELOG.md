@@ -33,6 +33,7 @@ section when a release is cut.
 - Create, edit and delete calendar events: the + button (Command N) or a double-click on an empty slot opens a form with location and room booking, start and end, all day, private, repeat, reminder, show as, notes and people, with names suggested from your company directory. Deleting a meeting you organized sends the cancellation.
 - Answer invitations with Accept, Tentative or Decline and an optional note, from the calendar or from the invitation email.
 - Event reminders: one notification at each event's reminder time, and clicking it opens the event in the calendar. Turn it off in Settings, Notifications.
+- Today in the popover: the rest of today's events above the inbox, how soon the next one starts, and a Join button for Teams, Zoom, Meet and Webex meetings. Click one to open it in the calendar.
 
 ### Changed
 - The new menu bar and app icons.

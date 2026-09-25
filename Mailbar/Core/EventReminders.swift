@@ -53,14 +53,12 @@ final class EventReminders {
         }
     }
 
-    /// Reschedules everything for the next day. `force` skips the five-minute throttle, for when
-    /// the stream has just reported a calendar change.
-    func update(force: Bool = false) async {
+    /// Reads the next day of events once and uses it twice: the popover's Today strip (M19) and
+    /// the scheduled reminders (M18). `force` skips the five-minute throttle, for when the stream
+    /// has just reported a calendar change. `schedule` is false in sample mode, which must never
+    /// put real notifications on the Mac.
+    func update(force: Bool = false, schedule: Bool = true) async {
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: Keys.eventReminders) else {
-            await clearAll()
-            return
-        }
         if !force, let lastUpdate, Date().timeIntervalSince(lastUpdate) < 300 { return }
         lastUpdate = Date()
 
@@ -68,10 +66,18 @@ final class EventReminders {
         var planned: [Planned] = []
         for account in mail.accounts.accounts {
             guard let (url, credential) = mail.connection(for: account.id),
-                  let events = try? await mail.client.calendarEvents(from: now, to: now.addingTimeInterval(Self.lookAhead),
+                  let events = try? await mail.client.calendarEvents(from: now.addingTimeInterval(-12 * 3600),
+                                                                    to: now.addingTimeInterval(Self.lookAhead),
                                                                     at: url, credential: credential) else { continue }
+            await mail.setToday(TodayAgenda.rest(of: events, now: now), for: account.id)
             planned += Self.plan(events, account: account, now: now,
                                  showDetails: defaults.bool(forKey: Keys.notificationDetails))
+        }
+
+        guard schedule else { return }
+        guard defaults.bool(forKey: Keys.eventReminders) else {
+            await clearAll()
+            return
         }
 
         // Replace the pending set: moved, deleted or declined events lose their reminder.

@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(Keys.notifyNewMail) private var notifyNewMail = true
     @AppStorage(Keys.notificationDetails) private var notificationDetails = true
     @AppStorage(Keys.eventReminders) private var eventReminders = true
+    @AppStorage(Keys.showToday) private var showToday = true
     @State private var launchAtLogin = false
     @State private var launchAtLoginMessage: String?
 
@@ -143,6 +144,10 @@ struct SettingsView: View {
             SettingsDivider()
             SettingsRow("Event reminders", subtitle: "One notification at each event's reminder time.") {
                 SettingsSwitch(isOn: $eventReminders)
+            }
+            SettingsDivider()
+            SettingsRow("Today in the popover", subtitle: "The rest of today's events above the inbox.") {
+                SettingsSwitch(isOn: $showToday)
             }
         }
     }

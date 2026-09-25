@@ -72,6 +72,32 @@ final class MailStore {
     /// "Sent" confirmation, shown briefly under the header.
     var sentNotice: String?
 
+    // MARK: Today (M19)
+
+    /// The rest of today's events per account, for the popover's Today strip. In memory only.
+    private(set) var today: [UUID: [CalendarEvent]] = [:]
+    /// The join link of each account's next (or current) event, when its notes carry one.
+    private(set) var joinLinks: [String: URL] = [:]
+
+    func todayEvents(for accountID: UUID) -> [CalendarEvent] {
+        today[accountID] ?? []
+    }
+
+    /// Stores the agenda and finds the join links of the first two timed events, the one under
+    /// way and the next: one GetItem each, only when not looked up already.
+    func setToday(_ events: [CalendarEvent], for accountID: UUID) async {
+        today[accountID] = events
+        guard let (url, credential) = connection(for: accountID) else { return }
+        for event in events.filter({ !$0.isAllDay }).prefix(2) where !linksLookedUp.contains(event.id) {
+            linksLookedUp.insert(event.id)
+            guard let detail = try? await client.eventDetail(id: event.id, at: url, credential: credential),
+                  let link = TodayAgenda.joinLink(inHTML: detail.html + " " + detail.event.location) else { continue }
+            joinLinks[event.id] = link
+        }
+    }
+
+    @ObservationIgnored private var linksLookedUp: Set<String> = []
+
     // MARK: New mail (M7)
 
     /// Messages that arrived since the last poll, per account. Wired to notifications.

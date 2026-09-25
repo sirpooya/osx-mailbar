@@ -10,7 +10,7 @@ It replaces keeping `/Applications/Microsoft Outlook.app` (about 2 GB, always ru
 so the user can delete Outlook.
 
 Reading, plus simple sending (reply, reply all, forward, a new message; M12 to M14). No calendar
-(planned in `PLAN.md`), no contacts.
+(M15 to M19), no contacts.
 The Scope section below holds the exact in-scope and out-of-scope lists; it wins over anything
 vaguer here.
 
@@ -56,9 +56,18 @@ in mock mode. The Milestones section below is the record; none is open.
   `CreateItem` with `SendAndSaveCopy`).
 - Not in it: rich text, drafts folder, signatures editor, outgoing attachments, directory lookup.
 
-### Calendar (planned 2026-09-25, `PLAN.md`, M15 to M19)
-- View, create, edit, delete, answer invitations, reminders, over the same EWS server. Four
-  decisions are the user's first; they are at the top of `PLAN.md`.
+### Calendar (M15 to M19, built 2026-09-25)
+- View, create, edit, delete, answer invitations, reminders, Today in the popover, over the same
+  EWS server. The four open choices were taken at these defaults when the user said "build it
+  now"; any can still change:
+  1. Its own resizable window from the tray menu (Cmd+K), not a popover tab.
+  2. People suggestions from the server's directory search (`ResolveNames`) plus inbox senders.
+  3. A room picker from the organization's room lists, free-text location always possible.
+  4. No Charm, no Categorize; no scheduling assistant (crossed off in the user's screenshot).
+- No calendar library: checked 2026-09-25. KVKCalendar is UIKit and reaches the Mac only through
+  Catalyst; swift-week-view and CalendarKit are iOS; GECalendar and Mijick's CalendarView are date
+  pickers, not event timelines. The grid is SwiftUI.
+- Not yet: working hours are Settings defaults (9 to 17), not read from the server.
 
 ### Still open (the user's steps)
 - Add the real account and press Sign In. This settles the user name format and the Exchange
@@ -70,8 +79,8 @@ Keep it minimal and dependency-light. No cloud sync, no analytics.
 
 ## Milestones
 All done, 2026-09-24 and 25, every one proven in `MAILBAR_MOCK` mode (screenshots, tests). The
-real-account column is what is still unproven. Work in progress is planned in `PLAN.md`
-(the calendar); a milestone moves here once it is done.
+real-account column is what is still unproven. There is no `PLAN.md`: every milestone is done.
+New work gets a plan and moves here once it lands.
 
 | # | What | Unproven on the real account |
 |---|---|---|
@@ -94,13 +103,22 @@ real-account column is what is still unproven. Work in progress is planned in `P
 | M16 | Create, edit, delete events: form with rooms, people, repeat, reminder, show as | writing a real event |
 | M17 | Answer invitations from the calendar and from the invitation email | answering a real one |
 | M18 | Event reminders: one plain notification per event, no snooze | a real banner |
+| M19 | Today strip above the inbox: rest of today, countdown, Join link | a real meeting link |
 
 Testing rule for sending: **never send real mail** unless the user names the exact message and
 recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
 
-Next: the calendar, `PLAN.md`.
+Testing rule for the calendar: never create, change, cancel or answer a real event unless the
+user names it; an event with people sends real invitations.
 
 ## Status
+2026-09-25 (latest): **everything built, M0 to M19**, 131 tests green. Mail (reading, actions,
+search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
+Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
+popover). All proven in `MAILBAR_MOCK` mode; the Milestones table says what is still unproven on
+the real account. Open with the user: why Core Weekly shows a colour its OWA view does not
+(needs a read-only look at that event and the category list, which the user has not yet OK'd).
+
 2026-09-24 (latest): **M4 to M6 built**, 51 tests green. The reader opens a message with JS off,
 remote images blocked (proven with a local pixel server, both ways), inline images from memory;
 opening marks read. Mark unread, flag, archive and delete work from the reader toolbar, the row's
@@ -204,12 +222,16 @@ first draft planned. Delete and move do not take a change key at all.
 project.yml              XcodeGen spec (source of truth)
 Mailbar/
   App/                   AppDelegate, status item, popover, activation policy
-  Accounts/              Account model, AccountStore (UserDefaults), KeychainStore (passwords)
-  EWS/                   EWSClient (URLSession + auth challenge), SOAP builders, XMLParser decoding
-  Core/                  MailStore (@Observable), Poller, unread count, relative time, text direction
-  Views/                 Inbox list, message row, message reader, settings (Accounts pane)
-  Resources/             Assets, menu bar icon, AppIcon
-MailbarTests/            SOAP builder and response fixtures, relative time, account store
+  Accounts/              Account model, AccountStore (UserDefaults), KeychainStore, LoginKeychain
+  EWS/                   EWSClient (URLSession + auth challenge, streaming), SOAP builders, XMLParser
+                         decoding, Autodiscover, CalendarModels, CalendarWrite, MockMode, MockCalendar
+  Core/                  MailStore, CalendarStore, Poller, MailStreamer, NotificationService,
+                         EventReminders, TodayAgenda, Compose, EventDraft, ReaderHTML, CategoryColors
+  Views/                 Inbox list and rows, reader, web view, composer, settings, account editor
+  Views/Calendar/        Calendar window, root and toolbar, week and month grids, pager, event form,
+                         detail panel
+  Resources/             Menu bar icon (MenuBarIcon.png), AppIcon.icon
+MailbarTests/            Request shapes, response fixtures, stores against the mock server, layout
 ```
 Build: `xcodegen generate && xcodebuild -project Mailbar.xcodeproj -scheme Mailbar build`.
 
@@ -420,7 +442,7 @@ release notes, not a commit message. Skip pure refactors, formatting, and doc-on
 Releases are cut with the `release` skill.
 
 ## Working style
-- Read this file first, the Scope section above all, then `PLAN.md`.
+- Read this file first, the Scope section above all.
 - Never hardcode the user's data: no server URL, user name, email or name in code, fixtures,
   placeholders or defaults. Mock fixtures use invented names and `example.com`.
 - Never delete, archive, flag or change the read state of real mail during testing without

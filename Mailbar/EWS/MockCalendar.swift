@@ -70,6 +70,17 @@ enum MockCalendar {
                                   isRecurring: true))
             }
         }
+        // Two events around the present moment, so the popover's Today strip always has one under
+        // way and one coming, whatever day the sample runs on.
+        let quarter = TimeInterval(15 * 60)
+        let nowSlot = Date(timeIntervalSince1970: (now.timeIntervalSince1970 / quarter).rounded(.down) * quarter)
+        list += [
+            Event(id: "ev-now-focus", subject: "Focus block", start: nowSlot.addingTimeInterval(-quarter),
+                  end: nowSlot.addingTimeInterval(quarter * 2), isMeeting: false, response: "Organizer"),
+            Event(id: "ev-now-sync", subject: "Design sync", start: nowSlot.addingTimeInterval(quarter * 3),
+                  end: nowSlot.addingTimeInterval(quarter * 5), location: "Microsoft Teams Meeting",
+                  notes: #"<p>Join: <a href="https://teams.microsoft.com/l/meetup-join/19%3ameeting_sample%40thread.v2/0">Click here to join the meeting</a></p>"#),
+        ]
         let monday = 2, tuesday = 3, wednesday = 4, sunday = 1, saturday = 0, thursday = 5
         list += [
             Event(id: "ev-sat-update", subject: "BW | Design system update", start: at(0, saturday, 13),

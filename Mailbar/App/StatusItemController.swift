@@ -52,7 +52,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let root = PopoverRootView(store: store,
                                    onOpenSettings: { [weak self] in self?.openSettings() },
                                    onRefresh: { [weak self] in self?.onRefresh() },
-                                   onQuit: { NSApp.terminate(nil) })
+                                   onQuit: { NSApp.terminate(nil) },
+                                   onOpenEvent: { [weak self] account, event in
+                                       self?.close()
+                                       self?.onOpenEvent?(account, event)
+                                   })
         let hosting = NSHostingController(rootView: root)
         // The panel grows with its content instead of being pinned to one guessed size.
         hosting.sizingOptions = [.preferredContentSize]
@@ -108,6 +112,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     /// Set by the app delegate: opens the calendar window (M15).
     var onOpenCalendar: (() -> Void)?
+    /// Set by the app delegate: opens the calendar on one event (the Today strip, M19).
+    var onOpenEvent: ((UUID, String) -> Void)?
 
     @objc private func menuCalendar() {
         close()

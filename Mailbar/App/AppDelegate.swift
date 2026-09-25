@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.poller.refreshNow()
             // The subscription covers the calendar folder too (M15).
             CalendarWindow.shared.refreshIfOpen()
-            if MockMode.current == nil { Task { await self?.reminders.update(force: true) } }
+            Task { await self?.reminders.update(force: true, schedule: MockMode.current == nil) }
         })
         poller = Poller(intervalProvider: { [weak self] in
                             guard let self, self.streamer.coversAllAccounts else { return Keys.pollInterval() }
@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             let store = self.store!
                             let healthy = await Task { await store.refresh() }.value
                             // Event reminders ride on the poll, at most every five minutes (M18).
-                            if healthy, MockMode.current == nil { await self.reminders.update() }
+                            if healthy { await self.reminders.update(schedule: MockMode.current == nil) }
                             return healthy
                         })
         poller.start()
@@ -84,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Asked once an account exists, never at a bare first launch (osx-jirabar's rule).
         if !accounts.accounts.isEmpty, MockMode.current == nil {
             Task { await notifications.requestAuthorizationIfNeeded() }
+        }
+        statusItemController.onOpenEvent = { [weak self] account, event in
+            self?.notifications.onOpenEvent?(account, event)
         }
         notifications.onOpenEvent = { [weak self] account, event in
             guard let self else { return }

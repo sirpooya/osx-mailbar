@@ -11,6 +11,10 @@ struct PopoverRootView: View {
     let onOpenSettings: () -> Void
     let onRefresh: () -> Void
     let onQuit: () -> Void
+    /// The Today strip's rows open their event in the calendar (M19).
+    var onOpenEvent: (UUID, String) -> Void = { _, _ in }
+
+    @AppStorage(Keys.showToday) private var showToday = true
 
     private static let width: CGFloat = 380
 
@@ -68,6 +72,12 @@ struct PopoverRootView: View {
         VStack(spacing: 0) {
             header
             if store.isSearchOpen { searchBar }
+            if showToday, !store.isSearchOpen, let account = store.selectedAccount,
+               !store.todayEvents(for: account.id).isEmpty {
+                TodayStrip(events: store.todayEvents(for: account.id), joinLinks: store.joinLinks) { event in
+                    onOpenEvent(account.id, event.id)
+                }
+            }
             Divider().opacity(0.5)
             banners
             ZStack {
@@ -483,5 +493,86 @@ struct InboxListView: View {
         }
         // About seven rows in the popover, which must not run past the bottom of the screen.
         .frame(maxHeight: 460)
+    }
+}
+
+/// The rest of today, above the inbox (M19): the time, the title, how soon the next one starts,
+/// and a Join button when its notes carry a meeting link. Up to three rows; a row opens the event
+/// in the calendar.
+struct TodayStrip: View {
+    let events: [CalendarEvent]
+    let joinLinks: [String: URL]
+    let onOpen: (CalendarEvent) -> Void
+
+    private static let shown = 3
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let now = context.date
+            let upcoming = events.filter { $0.end > now }
+            if !upcoming.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    // "Next" is the first one that has not started: it gets the "in 25 min". One
+                    // under way already says "Now" instead.
+                    let next = upcoming.firstIndex { !$0.isAllDay && $0.start > now }
+                    ForEach(Array(upcoming.prefix(Self.shown).enumerated()), id: \.element.id) { index, event in
+                        row(event, isNext: index == next, now: now)
+                    }
+                    if upcoming.count > Self.shown {
+                        Text("+\(upcoming.count - Self.shown) more today")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 14)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 7)
+            }
+        }
+    }
+
+    private func row(_ event: CalendarEvent, isNext: Bool, now: Date) -> some View {
+        let underway = !event.isAllDay && event.start <= now
+        return Button { onOpen(event) } label: {
+            HStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.accentColor.opacity(event.isTentative ? 0.45 : 1))
+                    .frame(width: 3, height: 14)
+                Text(event.isAllDay ? "All day" : (underway ? "Now" : event.start.formatted(date: .omitted, time: .shortened)))
+                    .font(.system(size: 11, weight: underway ? .semibold : .regular))
+                    .monospacedDigit()
+                    .foregroundStyle(underway ? Color.accentColor : Color.secondary)
+                    .frame(width: 58, alignment: .leading)
+                DirectionalText(event.subject, font: .system(size: 12, weight: isNext || underway ? .semibold : .regular))
+                if isNext, !underway {
+                    Text(TodayAgenda.relative(event, now: now))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                if let link = joinLinks[event.id] {
+                    Button {
+                        NSWorkspace.shared.open(link)
+                    } label: {
+                        Label("Join", systemImage: "video.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 7)
+                            .frame(height: 18)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .help(link.host ?? "Join the meeting")
+                    .fixedSize()
+                }
+            }
+            .frame(height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help([event.subject, event.location].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 }
