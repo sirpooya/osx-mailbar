@@ -93,6 +93,7 @@ real-account column is what is still unproven. Work in progress is planned in `P
 | M15 | Calendar window: Day, Week, Month, swipe paging, category colours, detail panel (tray menu, Cmd+K) | the real calendar |
 | M16 | Create, edit, delete events: form with rooms, people, repeat, reminder, show as | writing a real event |
 | M17 | Answer invitations from the calendar and from the invitation email | answering a real one |
+| M18 | Event reminders: one plain notification per event, no snooze | a real banner |
 
 Testing rule for sending: **never send real mail** unless the user names the exact message and
 recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
@@ -272,6 +273,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   "19 Saturday", "Sat 19", "19"; below 900 pt the detail panel floats over the grid as a card;
   event titles wrap onto the lines a block has room for, but only between words (the longest
   word is measured; if it does not fit, one truncated line, never a word broken mid-way).
+- 2026-09-25 Reminders (M18) are deliberately plain: one notification per event at its
+  reminder time, no snooze, no action buttons (the user's words: "a simple notification that
+  comes and goes"). Scheduled with macOS for the next 26 hours; removed from Notification
+  Center once the event is over. Do not add snooze or actions without asking.
 - 2026-09-25 Events (M16): one form for new and edit, in memory only. Saving an event with
   people or rooms says "Send" and sends invitations or updates; a plain appointment sends
   nothing. Deleting a meeting the user organized sends the cancellation. Invitations are

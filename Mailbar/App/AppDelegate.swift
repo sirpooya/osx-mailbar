@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: MailStore!
     private var poller: Poller!
     private var streamer: MailStreamer!
+    private var reminders: EventReminders!
     private var statusItemController: StatusItemController!
     private let notifications = NotificationService()
     private var editingShortcutMonitor: Any?
@@ -33,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         store = MailStore(accounts: accounts, client: client)
+        reminders = EventReminders(mail: store)
         notifications.configure()
         store.onNewMail = { [weak self] account, messages in
             let defaults = UserDefaults.standard
@@ -54,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.poller.refreshNow()
             // The subscription covers the calendar folder too (M15).
             CalendarWindow.shared.refreshIfOpen()
+            if MockMode.current == nil { Task { await self?.reminders.update(force: true) } }
         })
         poller = Poller(intervalProvider: { [weak self] in
                             guard let self, self.streamer.coversAllAccounts else { return Keys.pollInterval() }
@@ -68,7 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             // running finish; the restarted loop then finds it still refreshing
                             // and simply uses its result.
                             let store = self.store!
-                            return await Task { await store.refresh() }.value
+                            let healthy = await Task { await store.refresh() }.value
+                            // Event reminders ride on the poll, at most every five minutes (M18).
+                            if healthy, MockMode.current == nil { await self.reminders.update() }
+                            return healthy
                         })
         poller.start()
         // After the launch poll has had a moment, so the first stream does not race it for the
@@ -78,6 +84,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Asked once an account exists, never at a bare first launch (osx-jirabar's rule).
         if !accounts.accounts.isEmpty, MockMode.current == nil {
             Task { await notifications.requestAuthorizationIfNeeded() }
+        }
+        notifications.onOpenEvent = { [weak self] account, event in
+            guard let self else { return }
+            CalendarWindow.shared.show(mail: self.store)
+            guard let calendar = CalendarWindow.shared.store else { return }
+            calendar.accountID = account
+            Task {
+                await calendar.refresh()
+                if let found = calendar.events.first(where: { $0.id == event }) { await calendar.select(found) }
+            }
         }
         notifications.onOpenMessage = { [weak self] account, message in
             guard let self else { return }

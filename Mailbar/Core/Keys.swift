@@ -17,6 +17,8 @@ enum Keys {
     static let notifyNewMail = "mailbar.notifyNewMail"
     /// Whether a notification shows the sender, subject and preview, or only the account name.
     static let notificationDetails = "mailbar.notificationDetails"
+    /// Event reminders on or off (M18).
+    static let eventReminders = "mailbar.eventReminders"
 
     // Calendar (M15)
     /// Day, work week, week or month, as last chosen.
@@ -35,6 +37,7 @@ enum Keys {
             pollMinutes: 2,
             notifyNewMail: true,
             notificationDetails: true,
+            eventReminders: true,
             // The user's OWA: the week runs Saturday to Friday, the work week Saturday to
             // Wednesday, working hours 9 to 17.
             calendarWeekStart: 7,

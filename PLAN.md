@@ -86,12 +86,19 @@ invitation email; tests answer both ways through the mock server and see the eve
 change. **No real invitation answered.**
 
 
-## M18. Reminders
-- [ ] A macOS notification at each event's reminder time, from events fetched for the next day
-- [ ] Snooze and dismiss from the notification; click opens the event
-- [ ] Settings switch; the same details rule as mail notifications (title or "Event" only)
+## M18. Reminders (done 2026-09-25)
+- [x] One plain notification at each event's reminder time: title, time, place. No snooze and no
+      buttons (the user's call); it comes and goes like any banner
+- [x] Scheduled with macOS from the next 26 hours of events, refreshed after polls (at most every
+      five minutes) and at once when the stream reports a calendar change; moved, declined,
+      cancelled or deleted events lose their reminder
+- [x] Clicking it opens the calendar on the event; once the event has ended it leaves
+      Notification Center
+- [x] Settings, Notifications: "Event reminders"; with "Show sender and subject" off, it says "Event"
 
-Proof: a mock event five minutes out shows its reminder banner.
+Proof: tests for what is scheduled (reminder set, still to come, not cancelled or declined) and
+its wording. **Not yet seen as a real banner**: that needs an event with a reminder on the real
+calendar (sample mode does not schedule real notifications).
 
 ## M19. Today at a glance (only if decision 1 is "both")
 - [ ] In the popover, the rest of today's events and the next one's start, with a join link when

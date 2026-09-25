@@ -22,6 +22,8 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     /// Category names, as the user set them in Outlook or OWA. Their colours come from
     /// `CategoryColors` and the mailbox's master list.
     var categories: [String] = []
+    /// Minutes before the start, or nil when no reminder is set (M18).
+    var reminderMinutes: Int? = nil
 
     /// Not yet answered or only tentatively: OWA draws these hatched, and so does the grid.
     var isTentative: Bool {
@@ -101,7 +103,9 @@ extension EWSResponse {
             myResponse: item.child("MyResponseType")?.trimmedText ?? "Unknown",
             showAs: item.child("LegacyFreeBusyStatus")?.trimmedText ?? "Busy",
             isPrivate: item.child("Sensitivity")?.trimmedText == "Private",
-            categories: (item.child("Categories")?.children ?? []).map(\.trimmedText).filter { !$0.isEmpty })
+            categories: (item.child("Categories")?.children ?? []).map(\.trimmedText).filter { !$0.isEmpty },
+            reminderMinutes: item.child("ReminderIsSet")?.trimmedText == "true"
+                ? (item.child("ReminderMinutesBeforeStart").flatMap { Int($0.trimmedText) } ?? 15) : nil)
     }
 
     static func eventDetail(from data: Data) throws -> EventDetail {

@@ -17,6 +17,8 @@ import UserNotifications
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// Called with the account and message when the user clicks a notification.
     var onOpenMessage: ((UUID, String) -> Void)?
+    /// Called with the account and event when the user clicks an event reminder (M18).
+    var onOpenEvent: ((UUID, String) -> Void)?
 
     private static let individualLimit = 4
 
@@ -95,6 +97,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
+        if let event = info[EventReminders.eventKey] as? String,
+           let account = (info[EventReminders.accountKey] as? String).flatMap(UUID.init(uuidString:)) {
+            await MainActor.run { self.onOpenEvent?(account, event) }
+            return
+        }
         let account = (info[Self.accountKey] as? String).flatMap(UUID.init(uuidString:))
         let message = info[Self.messageKey] as? String
         await MainActor.run {

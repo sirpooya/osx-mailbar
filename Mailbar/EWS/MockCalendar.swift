@@ -165,6 +165,8 @@ enum MockCalendar {
                         <t:Subject>\(SOAP.escape(event.subject))</t:Subject>
                         <t:Sensitivity>Normal</t:Sensitivity>
                         \(categoriesXML(event.categories))
+                        <t:ReminderIsSet>\(!event.isAllDay)</t:ReminderIsSet>
+                        <t:ReminderMinutesBeforeStart>15</t:ReminderMinutesBeforeStart>
                         <t:Start>\(formatter.string(from: event.start))</t:Start>
                         <t:End>\(formatter.string(from: event.end))</t:End>
                         <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>

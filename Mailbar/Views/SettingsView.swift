@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(Keys.pollMinutes) private var pollMinutes = 2
     @AppStorage(Keys.notifyNewMail) private var notifyNewMail = true
     @AppStorage(Keys.notificationDetails) private var notificationDetails = true
+    @AppStorage(Keys.eventReminders) private var eventReminders = true
     @State private var launchAtLogin = false
     @State private var launchAtLoginMessage: String?
 
@@ -137,7 +138,11 @@ struct SettingsView: View {
             SettingsDivider()
             SettingsRow("Show sender and subject") {
                 SettingsSwitch(isOn: $notificationDetails)
-                    .disabled(!notifyNewMail)
+                    .disabled(!notifyNewMail && !eventReminders)
+            }
+            SettingsDivider()
+            SettingsRow("Event reminders", subtitle: "One notification at each event's reminder time.") {
+                SettingsSwitch(isOn: $eventReminders)
             }
         }
     }

@@ -291,8 +291,6 @@ enum SOAP {
                   <t:FieldURI FieldURI="calendar:RequiredAttendees"/>
                   <t:FieldURI FieldURI="calendar:OptionalAttendees"/>
                   <t:FieldURI FieldURI="calendar:Resources"/>
-                  <t:FieldURI FieldURI="item:ReminderIsSet"/>
-                  <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart"/>
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
@@ -305,6 +303,7 @@ enum SOAP {
         "calendar:Location", "calendar:Organizer", "calendar:IsRecurring", "calendar:IsMeeting",
         "calendar:IsCancelled", "calendar:MyResponseType", "calendar:LegacyFreeBusyStatus",
         "calendar:CalendarItemType", "item:Sensitivity", "item:Categories",
+        "item:ReminderIsSet", "item:ReminderMinutesBeforeStart",
     ].map { "          <t:FieldURI FieldURI=\"\($0)\"/>" }.joined(separator: "\n")
 
     /// The mailbox's master category list: each category's name and colour (see `CategoryColors`).
