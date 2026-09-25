@@ -9,7 +9,6 @@ struct SettingsView: View {
 
     @AppStorage(Keys.pollMinutes) private var pollMinutes = 2
     @AppStorage(Keys.notifyNewMail) private var notifyNewMail = true
-    @AppStorage(Keys.notificationDetails) private var notificationDetails = true
     @AppStorage(Keys.eventReminders) private var eventReminders = true
     @AppStorage(Keys.peopleDirectoryURL) private var directoryURL = ""
     @State private var launchAtLogin = false
@@ -140,7 +139,7 @@ struct SettingsView: View {
 
     private var refreshSection: some View {
         SettingsSection("Refresh",
-                        footnote: "Mailbar checks the inbox on this interval and whenever you open it. Checking pauses while the Mac sleeps.") {
+                        footnote: "Also checked each time you open Mailbar.") {
             SettingsRow("Check every") {
                 Picker("", selection: $pollMinutes) {
                     ForEach(Keys.pollMinuteChoices, id: \.self) { minutes in
@@ -157,21 +156,15 @@ struct SettingsView: View {
 
     private var notificationsSection: some View {
         SettingsSection("Notifications",
-                        footnote: "macOS keeps notifications in Notification Center until they are cleared. Mailbar withdraws each one as soon as that message is read, archived or deleted. With details off, a notification names only the account.") {
+                        footnote: "Withdrawn once the message is read, archived or deleted.") {
             SettingsRow("Notify me about new mail") {
                 SettingsSwitch(isOn: $notifyNewMail)
-            }
-            SettingsDivider()
-            SettingsRow("Show sender and subject") {
-                SettingsSwitch(isOn: $notificationDetails)
-                    .disabled(!notifyNewMail && !eventReminders)
             }
         }
     }
 
     private var calendarSection: some View {
-        SettingsSection("Calendar",
-                        footnote: "Reminders follow the \"Show sender and subject\" switch on General: with it off, a reminder names only the account.") {
+        SettingsSection("Calendar") {
             SettingsRow("Event reminders") {
                 SettingsSwitch(isOn: $eventReminders)
             }
@@ -197,7 +190,7 @@ struct SettingsView: View {
     /// dot, the saved address locked behind Edit, and Connect to read a new one.
     private var directorySection: some View {
         SettingsSection("People directory",
-                        footnote: "Optional. A JSON list of people for the team and department pickers and their photos, kept in memory only.") {
+                        footnote: "Optional. People for the team pickers and photos.") {
             HStack(spacing: 8) {
                 Circle().fill(directoryDot).frame(width: 7, height: 7)
                     .help(directoryFailure ?? directoryStatus)
@@ -297,7 +290,7 @@ struct SettingsView: View {
     }
 
     private var privacySection: some View {
-        SettingsFootnote("Passwords are kept in your Keychain. Mail is held in memory only while Mailbar runs and is never written to disk, except an attachment you choose to open, which waits in a private temporary folder until Mailbar quits. Mailbar talks to your accounts' servers and, when you set one, the people directory, and nothing else.")
+        SettingsFootnote("Passwords stay in your Keychain. Mail is never written to disk.")
     }
 }
 

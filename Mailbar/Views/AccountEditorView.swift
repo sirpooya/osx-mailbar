@@ -60,6 +60,10 @@ struct AccountEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Opens with no field focused or selected, not even for a frame (the user's call,
+            // 2026-09-25): this invisible view is first in the key-view order and takes first
+            // responder as the sheet appears, so AppKit never hands it to the e-mail field.
+            FocusSink().frame(width: 0, height: 0)
             // Only a new account gets a heading; editing opens straight on its fields (the
             // user's call, 2026-09-25).
             if isNew {
@@ -112,15 +116,7 @@ struct AccountEditorView: View {
         .onChange(of: password) {
             if password.isEmpty { usedLogin = nil }
         }
-        // Opens with no field focused (the user's call, 2026-09-25): a sheet makes its first text
-        // field first responder by itself, so that is undone once the sheet is up.
-        .task {
-            for _ in 0..<3 {
-                try? await Task.sleep(for: .milliseconds(60))
-                guard !Task.isCancelled else { return }
-                NSApp.keyWindow?.makeFirstResponder(nil)
-            }
-        }
+
         .task {
             guard isNew else { return }
             if QCFlags.editorEmail { draft.email = MockMode.accounts[0].email }
@@ -354,6 +350,24 @@ struct AccountEditorView: View {
             password = ""
         } catch {
             result = .failure("The password could not be saved to the Keychain.")
+        }
+    }
+}
+
+/// A zero-size view that takes first responder when its window appears, so a sheet opens with
+/// no text field focused. Clicking or tabbing into a field works as usual.
+struct FocusSink: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { SinkView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class SinkView: NSView {
+        override var acceptsFirstResponder: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.initialFirstResponder = self
+            window.makeFirstResponder(self)
         }
     }
 }

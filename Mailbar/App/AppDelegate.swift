@@ -55,8 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onNewMail = { [weak self] account, messages in
             let defaults = UserDefaults.standard
             guard let self, defaults.bool(forKey: Keys.notifyNewMail) else { return }
-            self.notifications.notify(messages, account: account,
-                                      showDetails: defaults.bool(forKey: Keys.notificationDetails))
+            // Sender and subject always: the switch that hid them was removed (the user's call).
+            self.notifications.notify(messages, account: account, showDetails: true)
         }
         store.onUnreadChanged = { [weak self] unread in
             self?.notifications.withdraw(except: unread)
@@ -211,6 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func openSettingsFromMenu() { showSettings() }
+
     private func showSettings() {
         // An account added, edited or deleted, or a new interval, all mean "check now".
         SettingsWindow.shared.show(accounts: accounts, client: client, directory: store.directory,
@@ -252,6 +254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        // Listed for completeness; Cmd+, itself is caught by the key monitor below, in every
+        // window including the popover (`handleSettingsShortcut`).
+        appMenu.addItem(withTitle: "Settings...", action: #selector(openSettingsFromMenu), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Mailbar",
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
@@ -282,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installEditingShortcuts() {
         editingShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if self?.statusItemController.handleCalendarShortcut(event) == true { return nil }
+            if self?.statusItemController.handleSettingsShortcut(event) == true { return nil }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard flags == .command || flags == [.command, .shift],
                   let shortcut = EditingShortcut.match(keyCode: event.keyCode,

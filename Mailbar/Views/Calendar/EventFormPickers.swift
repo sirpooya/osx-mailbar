@@ -123,10 +123,7 @@ struct PeopleSidebar: View {
                     .onSubmit(addHighlighted)
                     .onKeyPress(.downArrow) { move(1); return .handled }
                     .onKeyPress(.upArrow) { move(-1); return .handled }
-                Button(action: addHighlighted) { Image(systemName: "plus") }
-                    .buttonStyle(.borderless)
-                    .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .help("Add")
+                // No plus button (the user's call: Return and a click on a suggestion add).
                 if store.mail.directory.isConfigured { directoryButton }
             }
             .padding(.horizontal, 8)
@@ -200,9 +197,8 @@ struct PeopleSidebar: View {
         }
     }
 
-    /// OWA's gear beside People, in secondary grey (the user's call: lighter than the text, but not
-    /// as faint as the field's plus): a plain button,
-    /// because a menu button ignores the colour of its icon. It opens Response options, Request
+    /// OWA's gear beside People, in secondary grey (the user's call: lighter than the text): a
+    /// plain button, because a menu button ignores the colour of its icon. It opens Response options, Request
     /// responses and Allow forwarding.
     private var responseOptions: some View {
         Button { optionsOpen.toggle() } label: {

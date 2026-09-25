@@ -75,8 +75,7 @@ final class EventReminders {
                 mail.setCategoryColors((try? await mail.client.categoryColors(at: url, credential: credential)) ?? [:],
                                        for: account.id)
             }
-            planned += Self.plan(events, account: account, now: now,
-                                 showDetails: defaults.bool(forKey: Keys.notificationDetails))
+            planned += Self.plan(events, account: account, now: now, showDetails: true)
         }
 
         guard schedule else { return }

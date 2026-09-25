@@ -62,14 +62,6 @@ struct PopoverRootView: View {
         // primary text read dim grey and secondary read brighter than it (measured 2026-09-24).
         // The window background follows the appearance itself, so the text always matches it.
         .background(Color(nsColor: .windowBackgroundColor))
-        // Cmd+, opens Settings from anywhere in the popover: the list, a message or the composer.
-        .background {
-            Button("Settings", action: onOpenSettings)
-                .keyboardShortcut(",", modifiers: .command)
-                .opacity(0)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        }
         .onAppear { installSwipe() }
         .onDisappear { removeSwipe() }
     }

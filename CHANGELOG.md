@@ -94,12 +94,15 @@ section when a release is cut.
 - Settings now has three tabs, General, Accounts and Calendar, under a clean top bar with only the close button; it opens on Accounts when none is set up.
 - Settings rows drop their subtitles, account rows open their editor on a click, and the account editor opens without a heading or a focused field.
 - The people directory shows a status dot, keeps its saved address locked behind Edit with Connect to change it, and remembers how many people it last read.
+- Settings descriptions are one short line each.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
 - The pin icon in the event form's Location field.
 - The placeholder icons on the event form's Charm and Categorize buttons.
 - The Today tab switch in Settings; the Today tab is always there.
+- The plus button in the event form's People field; Return or a click on a suggestion adds a person.
+- The "Show sender and subject" switch; notifications and reminders always show them.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -118,4 +121,6 @@ section when a release is cut.
 - Dates and times in the event form sit centred in their boxes and start at the same inset as the other fields.
 - The date picker no longer shows a focus ring when it opens.
 - A new message or a forward opens with the cursor in To, not Cc.
+- Command-comma opens Settings from every Mailbar window, including the calendar, on any keyboard layout.
+- The account editor no longer flashes the e-mail field selected as it opens.
 

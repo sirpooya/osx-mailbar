@@ -133,6 +133,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         return true
     }
 
+    /// Cmd+, from any Mailbar window, the popover, the calendar or Settings itself. By key code
+    /// (kVK_ANSI_Comma), so it works on the Persian layout too, where that key is not a comma.
+    func handleSettingsShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == .command, event.keyCode == 0x2B else { return false }
+        openSettings()
+        return true
+    }
+
     @objc private func menuSettings() { openSettings() }
 
     private func openSettings() {

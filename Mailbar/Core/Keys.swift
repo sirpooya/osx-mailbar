@@ -15,8 +15,6 @@ enum Keys {
     static let selectedAccount = "mailbar.selectedAccount"
     /// New-mail notifications on or off (M7).
     static let notifyNewMail = "mailbar.notifyNewMail"
-    /// Whether a notification shows the sender, subject and preview, or only the account name.
-    static let notificationDetails = "mailbar.notificationDetails"
     /// Event reminders on or off (M18).
     static let eventReminders = "mailbar.eventReminders"
     /// The people directory's address (a JSON list of people with team and department), or
@@ -43,7 +41,6 @@ enum Keys {
         defaults.register(defaults: [
             pollMinutes: 2,
             notifyNewMail: true,
-            notificationDetails: true,
             eventReminders: true,
             // The user's OWA: the week runs Saturday to Friday, the work week Saturday to
             // Wednesday, working hours 9 to 17.

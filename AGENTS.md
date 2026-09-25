@@ -44,8 +44,8 @@ in mock mode. The Milestones section below is the record; none is open.
 - Offline mode, local search index, any disk cache.
 
 ### Wanted (v1.1, built 2026-09-24, milestones M7 to M11)
-- **New-mail notifications** (M7): click one to open that message. Sender, subject and preview,
-  or only the account name when "Show sender and subject" is off.
+- **New-mail notifications** (M7): click one to open that message. Sender, subject and preview
+  always (the "Show sender and subject" switch was removed 2026-09-25, the user's call).
 - **Search** (M8): a field under the header (Cmd+F), searching the server as you type.
 - **Attachments** (M9): chips under the reader's header; click to open, right-click to save.
 - **Launch at login** (M10): a switch in Settings, General.
@@ -448,7 +448,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   background. It opens on Accounts while there is none. Pickers hug their size so they end where
   the switches do. Rows carry no subtitles (the user: "too extra"). The Today tab is always on:
   its switch was removed. A click anywhere on an account row opens its editor; the editor has no
-  "Edit ..." heading and opens with no field focused. `--settings-tab=` (DEBUG) opens a tab.
+  "Edit ..." heading and opens with no field focused or selected, not even for a frame: a
+  zero-size `FocusSink` first in the sheet takes first responder as it appears (clearing focus
+  afterwards flashed the e-mail field selected). Footnotes are one short line each (the user:
+  "briefer"). `--settings-tab=` (DEBUG) opens a tab.
 - 2026-09-25 The people directory's address reads like the compliance-audit plugin's endpoints
   (the user's pick): a status dot (green read, red failed, amber only the remembered count, grey
   unset), the saved address locked behind Edit, Connect to read a new one (it locks again only
@@ -485,7 +488,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 Notifications (M7): the first poll per account after launch is a silent baseline,
   ids seen are kept in memory only, and each notification is withdrawn when its message is read,
   archived or deleted anywhere. macOS stores delivered notifications on disk in Notification
-  Center; that is outside this app's control, which is why the details switch exists.
+  Center; that is outside this app's control. A switch once hid the details; the user had it
+  removed (2026-09-25), so the only way to keep them out is turning notifications off.
 - 2026-09-24 Attachments (M9) are the one sanctioned exception to "nothing on disk": Open writes
   the file to `<tmp>/Mailbar Attachments/<uuid>/` (0700 folder, 0600 file) because another app can
   only open a file, and the folder is deleted at quit and again at launch. Save writes where the

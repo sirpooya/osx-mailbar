@@ -55,8 +55,8 @@ formatting, signatures or outgoing attachments. No contacts. No offline mode.
   WebKit cache. List data and the calendar live in memory and die with the process; a message body
   lives only while its reader is open. Images are never cached anywhere. The one exception is an
   attachment you choose to open, which waits in a private temporary folder until Mailbar quits.
-  macOS itself keeps the notifications it shows; turn off "Show sender and subject" to keep mail
-  and event details out of them.
+  macOS itself keeps the notifications it shows; turn notifications off to keep mail and event
+  details out of Notification Center.
 - **Passwords live only in the Keychain**, one item per account. Never in UserDefaults, never logged.
 - **No telemetry, no analytics.** The only network traffic is to each account's EWS URL, the
   Autodiscover lookup when you add an account, and a message's remote images when you ask for them.
