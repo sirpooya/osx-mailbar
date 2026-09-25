@@ -349,4 +349,12 @@ import Testing
         #expect(!sara.isEmpty)
         #expect((found["omid@example.org"] ?? nil)?.isEmpty == true)
     }
+
+    @Test func theBandsEdgesResizeAndItsMiddleMoves() {
+        #expect(SchedulingAssistant.part(at: 2, width: 48) == .start)
+        #expect(SchedulingAssistant.part(at: 24, width: 48) == .move)
+        #expect(SchedulingAssistant.part(at: 46, width: 48) == .end)
+        // A 15-minute band keeps a middle to take hold of.
+        #expect(SchedulingAssistant.part(at: 6, width: 12) == .move)
+    }
 }

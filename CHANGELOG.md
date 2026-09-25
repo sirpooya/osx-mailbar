@@ -127,6 +127,12 @@ section when a release is cut.
 - The Scheduling Assistant is now Schedule, a view inside the event form: switch between Event and Schedule at the top, with Cancel and Send working in both. It no longer opens as a separate sheet.
 - The calendar opens at a smaller size, and event titles and their colour bars are lighter.
 - Tooltips show shortcuts as symbols, such as New Event ⌘N.
+- The event form's Send button has a paper plane icon.
+- In Schedule, drag the meeting with the hand to move it, or drag either edge to make it longer or shorter, in 15-minute steps.
+- Calendar event titles are regular weight.
+- Schedule shows only what it needs at the top: the day with its arrows and Next free time, in place of the event toolbar.
+- The rooms-to-compare line under Location shows a room icon.
+- Schedule's date and Next free time match the size of the event toolbar's buttons.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
@@ -164,4 +170,6 @@ section when a release is cut.
 - People's photos are drawn smoothly instead of jagged.
 - Changing Until no longer shifts its label or the row's height; Repeat and Until are the same width.
 - The repeat summary beside Repeat stays on one line.
+- Switching the event form between Event and Schedule no longer reloads people's photos and free or busy.
+- Typing in Location always lists the matching rooms, and the room list loads again if it came back empty.
 

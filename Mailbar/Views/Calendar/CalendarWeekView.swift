@@ -338,8 +338,8 @@ struct EventBlock: View {
     /// The block's width, for the same reason.
     var width: CGFloat = 200
 
-    /// Medium, not semibold: the titles read less heavy (the user's call).
-    private static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    /// Regular weight: the titles read light (the user's call).
+    private static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .regular)
     /// The coloured bar at a block's leading edge: 2 pt, half what it was (the user's call).
     static let barWidth: CGFloat = 2
 
@@ -384,7 +384,7 @@ struct EventBlock: View {
                     if let charm = event.charm.flatMap(EventCharm.init) {
                         Image(systemName: charm.symbol).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
-                    DirectionalText(event.subject, font: .system(size: 11.5, weight: .medium), lines: titleLines)
+                    DirectionalText(event.subject, font: .system(size: 11.5, weight: .regular), lines: titleLines)
                         .strikethrough(event.isCancelled)
                         .layoutPriority(1)
                     if event.isRecurring {

@@ -307,7 +307,16 @@ final class CalendarStore {
     // MARK: - Creating, editing, deleting (M16)
 
     /// The event form, when open. In memory only.
-    var editor: EventDraft?
+    var editor: EventDraft? {
+        didSet { if editor == nil { formPhotos = [:]; formStatuses = [:]; formPhotoAsked = []; formStatusesKey = "" } }
+    }
+    /// The open form's people photos and free/busy, held for as long as the form is open so its
+    /// Event and Schedule tabs can come and go without fetching them again (the user's catch:
+    /// photos reloaded on every switch). Dropped with the form, never kept beyond it.
+    var formPhotos: [String: NSImage] = [:]
+    var formStatuses: [String: String] = [:]
+    @ObservationIgnored var formPhotoAsked: Set<String> = []
+    @ObservationIgnored var formStatusesKey = ""
     /// The range a drag on the grid is drawing out, kept while the form it opened is up.
     var draggedRange: ClosedRange<Date>?
     /// A short confirmation under the toolbar ("Invitations sent.").
@@ -447,7 +456,8 @@ final class CalendarStore {
     }
 
     func loadRooms() async {
-        guard rooms == nil, let account, let (url, credential) = mail.connection(for: account.id) else { return }
+        // Again when an earlier read came back empty (a slow VPN, a hiccup), not only the first time.
+        guard rooms?.isEmpty != false, let account, let (url, credential) = mail.connection(for: account.id) else { return }
         rooms = (try? await mail.client.rooms(at: url, credential: credential)) ?? []
     }
 

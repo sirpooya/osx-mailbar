@@ -98,11 +98,22 @@ struct PeopleSidebar: View {
     @State private var query = QCFlags.calendarPeople ?? ""
     @State private var suggestions: [PersonSuggestion] = []
     @State private var highlighted = 0
-    @State private var statuses: [String: String] = [:]
     /// Photos by lowercased address, held only while the form is open.
-    @State private var photos: [String: NSImage] = [:]
-    @State private var photoAsked: Set<String> = []
     @State private var optionsOpen = false
+    /// Photos and free/busy live with the open form in the store, so switching the form's tabs
+    /// does not fetch them again.
+    private var photos: [String: NSImage] {
+        get { store.formPhotos }
+        nonmutating set { store.formPhotos = newValue }
+    }
+    private var photoAsked: Set<String> {
+        get { store.formPhotoAsked }
+        nonmutating set { store.formPhotoAsked = newValue }
+    }
+    private var statuses: [String: String] {
+        get { store.formStatuses }
+        nonmutating set { store.formStatuses = newValue }
+    }
     @State private var directoryOpen = QCFlags.directoryPicker
     /// Groups being expanded, and why the last one could not be.
     @State private var expanding: Set<String> = []
@@ -192,6 +203,8 @@ struct PeopleSidebar: View {
             }
         }
         .task(id: availabilityKey) {
+            // Already asked for these people at this time: coming back to the tab asks nothing.
+            guard store.formStatusesKey != availabilityKey else { return }
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             var addresses = draft.attendeeList
@@ -199,6 +212,7 @@ struct PeopleSidebar: View {
             let found = await store.availability(for: addresses, start: draft.requestStart, end: draft.requestEnd)
             guard !Task.isCancelled else { return }
             statuses = found
+            store.formStatusesKey = availabilityKey
         }
     }
 

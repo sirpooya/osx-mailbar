@@ -23,6 +23,10 @@ struct EventEditorView: View {
     @State private var formHeight: CGFloat = 0
     @State private var fieldsHeight: CGFloat = 0
     @FocusState private var locationFocused: Bool
+    /// Typing in Location opens the room list; picking, Escape or leaving the field closes it.
+    /// Not tied to the focus state alone, which the form's focus sink and tabs can leave stale
+    /// while the field is being typed in (the user's catch: no list on the real account).
+    @State private var roomQueryActive = false
     @State private var repeatEditorOpen = QCFlags.calendarRepeat
     @State private var endCalendarOpenForSeries = false
     @State private var endCalendarOpen = false
@@ -41,13 +45,17 @@ struct EventEditorView: View {
     /// The toolbar's charm glyph, category square and Show as square share one size (the user's
     /// catch: they were 14, 10 and 14 pt).
     private static let toolbarIcon: CGFloat = 12
+    /// The row under the Event and Schedule switch is this tall in both, so switching never
+    /// moves what is under it (the user's call).
+    static let toolbarRowHeight: CGFloat = 24
 
     var body: some View {
         VStack(spacing: 0) {
             // No field focused or selected when the form opens, not even for a frame.
             FocusSink().frame(width: 0, height: 0)
             header
-            Divider().opacity(0.6)
+            // Schedule draws its own row and line here, in the toolbar's place.
+            if pane == .event { Divider().opacity(0.6) }
             // The same size either way, so switching never moves the window.
             if pane == .event {
                 eventPane
@@ -185,19 +193,23 @@ struct EventEditorView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 7)
             // The same white as the form, no line between it and the title (the user's call).
-            HStack(spacing: 16) {
-                attachButton
-                charmButton
-                categoryButton
-                showAsMenu
-                reminderMenu
-                privateButton
-                Spacer()
+            // Event's alone: Schedule puts its day and Next free time in this row instead.
+            if pane == .event {
+                HStack(spacing: 16) {
+                    attachButton
+                    charmButton
+                    categoryButton
+                    showAsMenu
+                    reminderMenu
+                    privateButton
+                    Spacer()
+                }
+                .frame(height: Self.toolbarRowHeight)
+                // Room above and below, between the title and the divider (the user's call).
+                .padding(.horizontal, 14)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
             }
-            // Room above and below, between the title and the divider (the user's call).
-            .padding(.horizontal, 14)
-            .padding(.top, 4)
-            .padding(.bottom, 6)
         }
     }
 
@@ -213,7 +225,13 @@ struct EventEditorView: View {
                 ProgressView().controlSize(.small).frame(width: 60)
             } else {
                 // Always "Send" (the user's call); an event with nobody invited just saves.
-                Button("Send") { Task { await store.saveEditor() } }
+                // A paper plane before the word, as mail clients mark Send (the user's call).
+                Button { Task { await store.saveEditor() } } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "paperplane.fill").font(.system(size: 11, weight: .semibold))
+                        Text("Send")
+                    }
+                }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(draft.problem != nil)
@@ -238,6 +256,11 @@ struct EventEditorView: View {
                         .focused($locationFocused)
                         .onKeyPress(.downArrow) { moveRoom(1); return .handled }
                         .onKeyPress(.upArrow) { moveRoom(-1); return .handled }
+                        .onKeyPress(.escape) {
+                            guard roomQueryActive else { return .ignored }
+                            roomQueryActive = false
+                            return .handled
+                        }
                         .onSubmit {
                             let matches = roomMatches
                             if let room = matches.first(where: { $0.id == highlightedRoom }) {
@@ -262,7 +285,7 @@ struct EventEditorView: View {
                 row("") {
                     Button { pane = .schedule } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "calendar.day.timeline.left")
+                            Image(systemName: "building.2")
                             Text(draft.candidateRooms.count == 1 ? "1 room to compare in Schedule"
                                  : "\(draft.candidateRooms.count) rooms to compare in Schedule")
                         }
@@ -285,12 +308,16 @@ struct EventEditorView: View {
         }
         .zIndex(1)
         .task { await store.loadRooms() }
-        .onChange(of: draft.location) { _, _ in highlightedRoom = nil }
+        .onChange(of: draft.location) { _, text in
+            highlightedRoom = nil
+            if !text.trimmingCharacters(in: .whitespaces).isEmpty { roomQueryActive = true }
+        }
+        .onChange(of: locationFocused) { was, now in if was, !now { roomQueryActive = false } }
     }
 
     /// The room list is up: typing in Location, with rooms matching.
     private var roomListShown: Bool {
-        locationFocused && !draft.location.trimmingCharacters(in: .whitespaces).isEmpty && !roomMatches.isEmpty
+        roomQueryActive && !draft.location.trimmingCharacters(in: .whitespaces).isEmpty && !roomMatches.isEmpty
     }
 
     private var roomMatches: [Room] {
@@ -307,6 +334,7 @@ struct EventEditorView: View {
         }
         store.editor?.location = ""
         highlightedRoom = nil
+        roomQueryActive = false
     }
 
     private func moveRoom(_ step: Int) {
@@ -327,6 +355,7 @@ struct EventEditorView: View {
         store.editor?.candidateRooms = candidates
         store.editor?.location = ""
         highlightedRoom = nil
+        roomQueryActive = false
         locationFocused = false
     }
 

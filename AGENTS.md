@@ -91,9 +91,9 @@ in mock mode. The Milestones section below is the record; none is open.
      Event (an "Event | Schedule" switch in the title bar, as Outlook for Mac has it), never a
      sheet over the form: a sheet on a sheet was the user's objection. Same window size in both,
      the People sidebar giving way to the grid; the form's Cancel and Send serve both, so there
-     is no Done, and the legend sits in the bottom bar's left. Rows for you, the invitees and
+     is no Done, and the legend sits in the bottom bar's left. Event's toolbar (Attach, Charm, Categorize, Show as, Reminder, Private) shows in Event only; in Schedule its row holds the day with its arrows (regular weight) and Next free time on the right (the user's call), at the toolbar's size: 13 pt text, and Next free time a borderless icon-and-word button like Attach. That row is one height in both (`EventEditorView.toolbarRowHeight`, 24 pt), so switching moves nothing under it. Rows for you, the invitees and
      rooms with their busy blocks from `GetUserAvailability` for the day, the meeting as a band,
-     a click moves it, Next free time finds the first open slot. Dense, after Outlook's (the user's call): 24 pt rows under Attendees and Rooms bands, thin hour and half-hour lines, and busy blocks and legend drawn with the Show as menu's own swatches (`ShowAsSwatch`: dotted, hatched, blue, purple), never colours of their own. Charm and Categorize were left out at first (crossed off in an
+     a click moves it, and it drags with the hand (open, then closed while held) or resizes from either edge (the resize cursor), in 15-minute steps within the day, never shorter than 15 minutes; Next free time finds the first open slot. Dense, after Outlook's (the user's call): 24 pt rows under Attendees and Rooms bands, thin hour and half-hour lines, and busy blocks and legend drawn with the Show as menu's own swatches (`ShowAsSwatch`: dotted, hatched, blue, purple), never colours of their own. Charm and Categorize were left out at first (crossed off in an
      early screenshot) and added 2026-09-25 when the user asked for them.
 - No calendar library: checked 2026-09-25. KVKCalendar is UIKit and reaches the Mac only through
   Catalyst; swift-week-view and CalendarKit are iOS; GECalendar and Mijick's CalendarView are date
@@ -440,6 +440,12 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   crossing back above switches Day to Week; on opening, narrow is Day and wide turns a leftover
   Day into Week. Only crossings switch, so a view picked by hand holds until the next crossing.
   Day labels and Month weekday names use ONE format across the row, never per column.
+- 2026-09-26 Event form fixes, the user's catches: Send carries a paper plane; the People
+  sidebar's photos and free/busy live with the open form (`CalendarStore.formPhotos`,
+  `formStatuses`, dropped when the form closes), so the Event and Schedule tabs switch without
+  fetching them again; typing in Location opens the room list itself (`roomQueryActive`, closed
+  by Escape, a pick, Check availability or leaving the field), because the focus state alone
+  went stale on the real account; an empty room list is read again.
 - 2026-09-25 Tooltips name the action then its shortcut in symbols, "New Event  ⌘N", never
   "(Command N)" (the user's call). The calendar window opens at 870 x 620 (autosave name
   `MailbarCalendarWindow.v2`, so the new default applied once); event titles are medium weight

@@ -13,6 +13,11 @@ struct SchedulingAssistant: View {
     @State private var blocks: [String: [BusyBlock]?] = [:]
     @State private var loading = true
     @State private var failed = false
+    /// The meeting's times when a drag on its band began, and which part was taken: the middle
+    /// moves it, an edge resizes it. Nil while no drag is under way.
+    @State private var dragOrigin: (start: Date, end: Date, part: BandPart)?
+
+    enum BandPart { case move, start, end }
 
     // Dense, after Outlook's: short rows, thin lines, a band per section.
     private static let hourWidth: CGFloat = 48
@@ -113,7 +118,8 @@ struct SchedulingAssistant: View {
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal) { grid }
                             .onAppear { scroll(proxy) }
-                            .onChange(of: draft?.start) { _, _ in scroll(proxy) }
+                            // Not while the band is dragged, or the grid would run from the hand.
+                            .onChange(of: draft?.start) { _, _ in if dragOrigin == nil { scroll(proxy) } }
                     }
                 }
             }
@@ -126,7 +132,8 @@ struct SchedulingAssistant: View {
 
     // MARK: - Pieces
 
-    /// The day and its arrows on the left, Next free time on the right. Cancel and Send are the
+    /// The day and its arrows on the left, Next free time on the right, in the row where Event
+    /// has its toolbar (the user's call: Event's items do not show here). Cancel and Send are the
     /// form's own, in its bottom bar.
     private var header: some View {
         HStack(spacing: 8) {
@@ -134,7 +141,8 @@ struct SchedulingAssistant: View {
                 .buttonStyle(.borderless)
                 .help("Previous day")
             Text(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                .font(.system(size: 12, weight: .medium))
+                // The toolbar's 13 pt, like Event's buttons and menus (the user's call).
+                .font(.system(size: 13))
                 .frame(minWidth: 150)
             Button { shiftDay(1) } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.borderless)
@@ -143,11 +151,23 @@ struct SchedulingAssistant: View {
                 Text("Free/busy could not be read.").font(.system(size: 11)).foregroundStyle(.orange)
             }
             Spacer()
-            Button("Next free time", action: nextFree)
+            // Borderless like Event's toolbar items, not a bordered button.
+            Button(action: nextFree) {
+                // A label view, as Event's buttons have: a bare title draws grey when borderless.
+                HStack(spacing: 4) {
+                    Image(systemName: "forward.end")
+                    Text("Next free time")
+                }
+            }
+                .buttonStyle(.borderless)
+                .fixedSize()
                 .disabled(loading)
         }
+        .frame(height: EventEditorView.toolbarRowHeight)
+        // The toolbar's own padding, so the row sits where Event's toolbar does.
         .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
     }
 
     private func sectionBand<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -253,8 +273,59 @@ struct SchedulingAssistant: View {
                 .fill(Color.accentColor.opacity(0.16))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor, lineWidth: 1.5))
                 .frame(width: frame.width, height: linesHeight)
+                .contentShape(Rectangle())
+                // Picked up with the hand and moved sideways, or resized by either edge, in
+                // 15-minute steps within the day shown (the user's call). The cursor is set on
+                // every move rather than pushed, so the edges and the middle never unbalance it.
+                .onContinuousHover { phase in
+                    guard dragOrigin == nil else { return }
+                    switch phase {
+                    case .active(let point): Self.cursor(for: Self.part(at: point.x, width: frame.width)).set()
+                    case .ended: NSCursor.arrow.set()
+                    }
+                }
+                .gesture(DragGesture(minimumDistance: 2)
+                    .onChanged { value in
+                        if dragOrigin == nil {
+                            dragOrigin = (draft.start, draft.end, Self.part(at: value.startLocation.x, width: frame.width))
+                        }
+                        guard let origin = dragOrigin else { return }
+                        Self.cursor(for: origin.part, dragging: true).set()
+                        let step = (Double(value.translation.width / Self.hourWidth) * 60 / 15).rounded() * 15 * 60
+                        let dayEnd = dayStart.addingTimeInterval(86_400)
+                        let shortest: TimeInterval = 15 * 60
+                        switch origin.part {
+                        case .move:
+                            let length = origin.end.timeIntervalSince(origin.start)
+                            let moved = origin.start.addingTimeInterval(step)
+                            store.editor?.startKeepingDuration = min(max(moved, dayStart), max(dayEnd.addingTimeInterval(-length), dayStart))
+                        case .start:
+                            store.editor?.start = min(max(origin.start.addingTimeInterval(step), dayStart), origin.end.addingTimeInterval(-shortest))
+                        case .end:
+                            store.editor?.end = max(min(origin.end.addingTimeInterval(step), dayEnd), origin.start.addingTimeInterval(shortest))
+                        }
+                    }
+                    .onEnded { value in
+                        dragOrigin = nil
+                        Self.cursor(for: Self.part(at: value.location.x, width: frame.width)).set()
+                    })
                 .offset(x: frame.x)
-                .allowsHitTesting(false)
+                .help("Drag to move the meeting, or drag an edge to change its length")
+        }
+    }
+
+    /// Which part of the band a point falls on: 6 pt at each edge resize it, less on a short one.
+    static func part(at x: CGFloat, width: CGFloat) -> BandPart {
+        let edge = min(6, width / 4)
+        if x <= edge { return .start }
+        if x >= width - edge { return .end }
+        return .move
+    }
+
+    static func cursor(for part: BandPart, dragging: Bool = false) -> NSCursor {
+        switch part {
+        case .move: return dragging ? .closedHand : .openHand
+        case .start, .end: return .resizeLeftRight
         }
     }
 
@@ -298,6 +369,9 @@ struct SchedulingAssistant: View {
     }
 
     private func moveMeeting(toX x: CGFloat, dayStart: Date) {
+        // A click on the band itself is the start of a drag, not a new time.
+        if let draft, let frame = span(draft.start, draft.end, dayStart: dayStart),
+           x >= frame.x, x <= frame.x + frame.width { return }
         let minutes = (Double(hours.lowerBound) + Double(x / Self.hourWidth)) * 60
         let rounded = (minutes / 30).rounded(.down) * 30
         store.editor?.startKeepingDuration = dayStart.addingTimeInterval(rounded * 60)
