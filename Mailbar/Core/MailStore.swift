@@ -62,6 +62,16 @@ final class MailStore {
         }
     }
 
+    // MARK: Writing (M12 to M14)
+
+    /// The one message being written, if any. In memory only; see `Draft`.
+    var draft: Draft?
+    /// Whether the composer is on screen. The draft outlives it: closing the popover, or going
+    /// back to read something, keeps the text until it is sent or discarded.
+    var isComposing = false
+    /// "Sent" confirmation, shown briefly under the header.
+    var sentNotice: String?
+
     // MARK: New mail (M7)
 
     /// Messages that arrived since the last poll, per account. Wired to notifications.
@@ -239,6 +249,98 @@ final class MailStore {
     private func unreadChanged() {
         let unread = states.values.flatMap(\.messages).filter { !$0.isRead }.map(\.id)
         onUnreadChanged?(Set(unread))
+    }
+
+    // MARK: - Writing
+
+    /// Opens the composer for a reply, reply all or forward of an opened message. An unsent draft
+    /// with text in it is never thrown away for a new one: the composer shows it instead.
+    func startResponse(_ kind: Draft.Kind, to body: MessageBody, in accountID: UUID) {
+        if let draft, draft.hasContent {
+            isComposing = true
+            return
+        }
+        let me = accounts.account(accountID)?.email ?? ""
+        let sender = body.from?.address ?? ""
+        var to: [String] = []
+        var cc: [String] = []
+        switch kind {
+        case .reply:
+            to = [sender]
+        case .replyAll:
+            (to, cc) = Recipients.replyAll(from: sender, to: body.to.map(\.address),
+                                           cc: body.cc.map(\.address), me: me)
+        case .forward, .new:
+            break
+        }
+        draft = Draft(kind: kind, accountID: accountID, originalID: body.id,
+                      originalSubject: body.subject,
+                      to: Recipients.join(to.filter { !$0.isEmpty }).appendingSeparator,
+                      cc: Recipients.join(cc).appendingSeparator,
+                      subject: "", body: "")
+        isComposing = true
+    }
+
+    func startNewMessage() {
+        if let draft, draft.hasContent {
+            isComposing = true
+            return
+        }
+        guard let account = selectedAccount else { return }
+        draft = Draft(kind: .new, accountID: account.id, originalID: nil, originalSubject: "",
+                      to: "", cc: "", subject: "", body: "")
+        isComposing = true
+    }
+
+    func discardDraft() {
+        draft = nil
+        isComposing = false
+    }
+
+    /// Sends the draft. On failure the text stays exactly as typed, with the reason under it.
+    func sendDraft() async {
+        guard var sending = draft, !sending.isSending, sending.sendProblem == nil else { return }
+        guard let (url, credential) = connection(for: sending.accountID) else {
+            draft?.error = "The password for this account is missing. Enter it in Settings."
+            return
+        }
+        sending.isSending = true
+        sending.error = nil
+        draft = sending
+        do {
+            try await client.send(sending, at: url, credential: credential)
+            let count = Recipients.parse(sending.to).count + Recipients.parse(sending.cc).count
+            draft = nil
+            isComposing = false
+            sentNotice = count == 1 ? "Sent." : "Sent to \(count) people."
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                self?.sentNotice = nil
+            }
+        } catch {
+            draft?.isSending = false
+            draft?.error = describe(error, accountID: sending.accountID)
+        }
+    }
+
+    /// Addresses to offer while typing a recipient: everyone who has written to any inbox here,
+    /// from the rows already in memory. Nothing is looked up anywhere.
+    func recipientSuggestions(for token: String, excluding typed: String) -> [(name: String, address: String)] {
+        let needle = token.lowercased()
+        guard needle.count >= 2 else { return [] }
+        let already = Set(Recipients.parse(typed).map { $0.lowercased() })
+        var seen: Set<String> = []
+        var result: [(name: String, address: String)] = []
+        for message in states.values.flatMap(\.messages) {
+            let address = message.senderAddress
+            let key = address.lowercased()
+            guard Recipients.isValid(address), !already.contains(key), !seen.contains(key),
+                  key.contains(needle) || message.senderName.lowercased().contains(needle) else { continue }
+            seen.insert(key)
+            result.append((message.senderName, address))
+            if result.count == 4 { break }
+        }
+        return result
     }
 
     // MARK: - Searching
@@ -486,4 +588,9 @@ final class MailStore {
             return .failure(.unexpected(error.localizedDescription))
         }
     }
+}
+
+private extension String {
+    /// "a, b" becomes "a, b, " so the next address can be typed straight away; empty stays empty.
+    var appendingSeparator: String { isEmpty ? "" : self + ", " }
 }

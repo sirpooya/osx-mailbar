@@ -286,6 +286,65 @@ enum SOAP {
         """
     }
 
+    // MARK: - Sending (M12 to M14)
+
+    /// The item's id with its current change key. A reply has to name the exact version of the
+    /// message it answers, and that changes whenever the message does (opening it marks it read).
+    static func getItemIdentity(id: String) -> String {
+        """
+            <m:GetItem>
+              <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+              <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
+            </m:GetItem>
+        """
+    }
+
+    enum Response: String {
+        case reply = "ReplyToItem"
+        case replyAll = "ReplyAllToItem"
+        case forward = "ForwardItem"
+    }
+
+    /// Reply, reply all or forward. The server adds the quoted original, the RE: or FW: subject,
+    /// and for a forward the original's attachments; `SendAndSaveCopy` files the sent message in
+    /// Sent Items, as Outlook does.
+    static func respond(_ response: Response, to itemID: String, changeKey: String,
+                        to: [String], cc: [String], html: String) -> String {
+        """
+            <m:CreateItem MessageDisposition="SendAndSaveCopy">
+              <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems"/></m:SavedItemFolderId>
+              <m:Items>
+                <t:\(response.rawValue)>
+        \(recipients("ToRecipients", to))\(recipients("CcRecipients", cc))\
+                  <t:ReferenceItemId Id="\(escape(itemID))" ChangeKey="\(escape(changeKey))"/>
+                  <t:NewBodyContent BodyType="HTML">\(escape(html))</t:NewBodyContent>
+                </t:\(response.rawValue)>
+              </m:Items>
+            </m:CreateItem>
+        """
+    }
+
+    static func newMessage(subject: String, to: [String], cc: [String], html: String) -> String {
+        """
+            <m:CreateItem MessageDisposition="SendAndSaveCopy">
+              <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems"/></m:SavedItemFolderId>
+              <m:Items>
+                <t:Message>
+                  <t:Subject>\(escape(subject))</t:Subject>
+                  <t:Body BodyType="HTML">\(escape(html))</t:Body>
+        \(recipients("ToRecipients", to))\(recipients("CcRecipients", cc))\
+                </t:Message>
+              </m:Items>
+            </m:CreateItem>
+        """
+    }
+
+    private static func recipients(_ element: String, _ addresses: [String]) -> String {
+        guard !addresses.isEmpty else { return "" }
+        let boxes = addresses.map { "<t:Mailbox><t:EmailAddress>\(escape($0))</t:EmailAddress></t:Mailbox>" }.joined()
+        return "          <t:\(element)>\(boxes)</t:\(element)>\n"
+    }
+
     static func escape(_ text: String) -> String {
         var out = ""
         out.reserveCapacity(text.count)

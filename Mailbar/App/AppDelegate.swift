@@ -94,6 +94,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.statusItemController.show()
             }
+            if let kind = QCFlags.composeKind {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self, let account = self.store.selectedAccount,
+                          let first = self.store.state(for: account.id).messages.first,
+                          let (url, credential) = self.store.connection(for: account.id) else { return }
+                    Task {
+                        if kind == "new" {
+                            self.store.startNewMessage()
+                            self.store.draft?.to = "sa"
+                            self.store.draft?.subject = "Review on Thursday"
+                        } else {
+                            let body = try await self.store.client.message(id: first.id, at: url, credential: credential)
+                            self.store.startResponse(.replyAll, to: body, in: account.id)
+                        }
+                        self.store.draft?.body = "سلام، ممنون از یادآوری.\nفرم را امروز تکمیل می‌کنم.\n\nThanks!"
+                    }
+                }
+            }
             if let text = QCFlags.searchText {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                     self?.store.isSearchOpen = true

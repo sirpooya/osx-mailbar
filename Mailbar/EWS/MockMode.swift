@@ -51,6 +51,11 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     private var readOverrides: [String: Bool] = [:]
     private var flagOverrides: [String: Bool] = [:]
     private var teamHasArchive = false
+    /// Every send request received, for tests. Nothing is delivered anywhere.
+    private(set) var sent: [String] = []
+
+    var sentRequests: [String] { lock.withLock { sent } }
+
     /// Messages delivered while the app runs, by account prefix. Only ever grows.
     private var arrived: [String: [MockFixtures.Message]] = [:]
     /// Seconds after a stream opens before a new message arrives on it, for the work account.
@@ -121,6 +126,10 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         }
 
         return lock.withLock {
+            if request.contains("<m:CreateItem") {
+                sent.append(request)
+                return ok(MockFixtures.success("CreateItem"))
+            }
             if request.contains("<m:Subscribe>") {
                 return ok(MockFixtures.subscribe)
             }

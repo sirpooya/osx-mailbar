@@ -117,6 +117,31 @@ struct EWSClient: Sendable {
         try await perform(SOAP.move(id: id, toFolder: folderID), modern: false, url: url, credential: credential)
     }
 
+    // MARK: - Sending (M12 to M14)
+
+    /// Sends a draft. Replies and forwards first read the original's current change key.
+    func send(_ draft: Draft, at url: URL, credential: EWSCredential) async throws {
+        let to = Recipients.parse(draft.to)
+        let cc = Recipients.parse(draft.cc)
+        let html = ComposeHTML.html(from: draft.body)
+        let body: String
+        if let original = draft.originalID, draft.kind != .new {
+            let identity = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.getItemIdentity(id: original)),
+                                          to: url, credential: credential)
+            let root = try XMLTree.parse(identity)
+            _ = try EWSResponse.responseMessages(in: root)
+            guard let changeKey = root.first("ItemId")?.attributes["ChangeKey"] else {
+                throw EWSError.invalidResponse("Exchange did not return the original message.")
+            }
+            let response: SOAP.Response = draft.kind == .reply ? .reply : draft.kind == .replyAll ? .replyAll : .forward
+            body = SOAP.respond(response, to: original, changeKey: changeKey, to: to, cc: cc, html: html)
+        } else {
+            body = SOAP.newMessage(subject: draft.subject, to: to, cc: cc, html: html)
+        }
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: body), to: url, credential: credential)
+        try EWSResponse.checkSuccess(data)
+    }
+
     // MARK: - Streaming (M11)
 
     func subscribeToInbox(at url: URL, credential: EWSCredential) async throws -> String {

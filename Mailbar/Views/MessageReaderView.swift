@@ -60,6 +60,8 @@ struct MessageReaderView: View {
 
             Spacer(minLength: 0)
 
+            responseButtons
+            Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 14)
             MessageActionButtons(message: current, accountID: accountID, store: store, size: 12)
         }
         .foregroundStyle(.secondary)
@@ -115,6 +117,35 @@ struct MessageReaderView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Reply, reply all, forward (M12, M13). Available once the message has loaded, since a
+    /// reply all needs its recipients.
+    private var responseButtons: some View {
+        HStack(spacing: 14) {
+            responseButton("arrowshape.turn.up.left", help: "Reply (Command R)", kind: .reply)
+                .keyboardShortcut("r", modifiers: .command)
+            responseButton("arrowshape.turn.up.left.2", help: "Reply All (Shift Command R)", kind: .replyAll)
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            responseButton("arrowshape.turn.up.right", help: "Forward (Shift Command F)", kind: .forward)
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+        }
+    }
+
+    private func responseButton(_ symbol: String, help: String, kind: Draft.Kind) -> some View {
+        Button {
+            guard let body = loadedBody else { return }
+            store.startResponse(kind, to: body, in: accountID)
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(loadedBody == nil)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     private var loadedBody: MessageBody? {

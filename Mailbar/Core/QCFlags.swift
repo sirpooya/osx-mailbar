@@ -11,8 +11,18 @@ import Foundation
 ///     Mailbar.app/Contents/MacOS/Mailbar --load-images      (remote images allowed from the start)
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
-    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil }
+    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil }
     static var openMessage: Bool { openMessageIndex != nil }
+    /// `--compose=reply` or `--compose=new`: the composer with sample text, mock mode only.
+    static var composeKind: String? {
+        #if DEBUG
+        guard MockMode.current != nil else { return nil }
+        return CommandLine.arguments.first { $0.hasPrefix("--compose=") }.map { String($0.dropFirst("--compose=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--search=booking`: the popover with the search field open on that text.
     static var searchText: String? {
         #if DEBUG

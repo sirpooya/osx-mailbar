@@ -62,3 +62,19 @@ enum EditingShortcut: Equatable, CaseIterable {
         }
     }
 }
+
+/// Shortcuts that belong to the composer rather than to text editing in general. From
+/// osx-jirabar. Matched by virtual key code for the same reason as `EditingShortcut`: the
+/// character a key reports moves with the active input source, and this box is where Persian gets
+/// typed.
+enum ComposerShortcut {
+    // kVK_Return and kVK_ANSI_KeypadEnter. Positional, layout independent.
+    private static let returnKey: UInt16 = 0x24
+    private static let keypadEnter: UInt16 = 0x4C
+
+    /// Cmd+Return sends. Return on its own stays a newline and must never send.
+    static func isSend(keyCode: UInt16, command: Bool) -> Bool {
+        guard command else { return false }
+        return keyCode == returnKey || keyCode == keypadEnter
+    }
+}

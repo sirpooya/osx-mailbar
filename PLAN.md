@@ -1,54 +1,45 @@
 # PLAN.md: Mailbar
 
-The milestones. Scope (what is wanted and what is not) lives in `AGENTS.md`, Scope. A milestone is
-done when its proof is observable, not when the code compiles.
+Scope lives in `AGENTS.md`, Scope. M0 to M11 are done (history in git), and so are M12 to M14
+below. Nothing is open; calendar waits for the user. A milestone is done when its proof is
+observable, not when the code compiles.
+
+**Simple sending, the user's word (2026-09-24).** Plain writing, no rich-text toolbar, no drafts
+folder, no signatures editor, no outgoing attachments, no directory lookup. Move, follow up and
+categories stay out. Calendar: the user will say later.
+
+Testing rule for all three: **never send real mail** without the user naming the exact message and
+recipient. Build and prove everything against `MAILBAR_MOCK`, where Send goes nowhere.
 
 ---
 
-## M0 to M6: v1 (done 2026-09-24)
-Scaffold, accounts and Keychain, menu bar count and polling, Outlook-style inbox list, reader,
-actions, sign-off checks. All proven in mock mode; the details and the evidence are in git history
-and in AGENTS.md, Status.
+## M12. Reply and reply all (done 2026-09-25)
+- [x] Reply and Reply All buttons in the reader toolbar (and Cmd+R, Cmd+Shift+R)
+- [x] A composer screen in the popover: To (and Cc for reply all) filled in, editable; a plain
+      text box where each paragraph runs in its own direction, right to left for Persian
+- [x] Sent with EWS `ReplyToItem` / `ReplyAllToItem`, `MessageDisposition="SendAndSaveCopy"`: the
+      server adds the quoted original and the `Re:` subject and keeps a copy in Sent Items, exactly
+      as Outlook does, so Mailbar never rebuilds the quote itself
+- [x] Send with the button or Cmd+Return; the text is kept (in memory) if sending fails
+- [x] Closing the popover keeps an unsent reply in memory until Mailbar quits, never on disk
 
----
+Proof: in mock mode a Persian reply all was photographed (Persian lines right to left, an English
+line left to right, recipients without the user's own address), and a test sends a Persian reply
+through the mock server, which received `ReplyToItem` with the fresh change key and `dir="rtl"`.
+Nothing has been sent from the real account.
 
-## M7. New-mail notifications (done 2026-09-24)
-- [x] A notification per new unread message, up to four, then one summary
-- [x] First poll after launch is a silent baseline; seen ids in memory only
-- [x] Click opens the popover on that message
-- [x] Withdrawn when the message is read, archived or deleted, here or elsewhere
-- [x] Settings: on or off, and sender and subject or account name only
+## M13. Forward (done 2026-09-25)
+- [x] Forward button in the reader (Cmd+Shift+F); To empty, the same composer
+- [x] Sent with EWS `ForwardItem`: the server carries the original body and its attachments
 
-Proof so far: unit tests (NewMailTracker). **Not yet seen as a real banner**: that needs mail to
-arrive on the real account.
+Proof: a test sends a forward through the mock server, which received `ForwardItem`.
 
-## M8. Search (done 2026-09-24)
-- [x] Field under the header, Cmd+F; searches the server 350 ms after typing stops
-- [x] `QueryString` on Exchange 2013+, substring restriction on older servers
-- [x] Results use the same rows; open, flag, archive and delete work on them
+## M14. New message (done 2026-09-25)
+- [x] A compose button in the popover header (Cmd+N): To, Cc, Subject, text
+- [x] Recipient suggestions from the senders already in the inbox list (in memory only); any
+      address can be typed; no LDAP, no Global Address List
+- [x] Sent with EWS `CreateItem`, `MessageDisposition="SendAndSaveCopy"`
+- [x] Addresses checked for shape before Send is enabled
 
-Proof: mock screenshot ("design" finds the one match), request-shape and store tests.
-
-## M9. Attachments (done 2026-09-24)
-- [x] Chips under the reader header: icon, name, size
-- [x] Click opens in the default app via a private temporary copy, cleared at quit and launch
-- [x] Right-click, Save As
-- [x] Images drawn in the body are not listed as attachments
-
-Proof: mock screenshot of the chip, attachment bytes test. Opening a real attachment is untried.
-
-## M10. Launch at login (done 2026-09-24)
-- [x] `SMAppService.mainApp`, a switch in Settings, General, showing what macOS actually did
-
-Proof: switch photographed. Toggling it is the user's, from the installed app.
-
----
-
-## M11. Instant new mail: EWS streaming notifications
-- [ ] `Subscribe` (streaming) to the inbox, `GetStreamingEvents` held open, at most 30 min per call
-- [ ] On NewMail, Modified, Moved or Deleted: refresh that account straight away
-- [ ] Reconnect after the connection lapses, after wake, and after the VPN comes back; keep the
-      poll as a slow fallback (every 10 minutes) in case the subscription dies quietly
-- [ ] Exchange 2010 SP1 or later only; older servers keep polling
-
-Proof: a message sent to the account shows in the menu bar within seconds, not minutes.
+Proof: new message photographed; a test sends one to two addresses through the mock server, which
+received `CreateItem` with the subject. A real send only to an address the user names.

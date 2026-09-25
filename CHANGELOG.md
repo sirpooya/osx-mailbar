@@ -25,10 +25,12 @@ section when a release is cut.
 - Search the inbox: press Cmd+F or the magnifier and type. Results come from your server.
 - Attachments show under the message. Click one to open it, or right-click to save it.
 - Launch at login, in Settings, General.
+- Reply, Reply All and Forward from an open message, and a new message from the pencil button. Plain writing, right to left for Persian, Command Return to send. Your server adds the quoted original and keeps a copy in Sent Items.
 
 ### Changed
 - The new menu bar and app icons.
 - Adding an account now needs only your email and password: Sign In finds your Exchange server, your name and the right user name by itself, and tests the connection. You can still enter the server by hand.
+- New mail now appears the moment it arrives, instead of at the next check. Mailbar keeps one quiet connection to your server open and checks the old way only every 10 minutes as a backup.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".

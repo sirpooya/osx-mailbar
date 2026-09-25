@@ -28,7 +28,10 @@ struct PopoverRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             if MockMode.current != nil { sampleDataBanner }
-            if let open = store.openMessage,
+            if store.isComposing, store.draft != nil {
+                ComposeView(store: store, onClose: { store.isComposing = false })
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let open = store.openMessage,
                let message = store.message(open.messageID, in: open.accountID) {
                 banners
                 MessageReaderView(accountID: open.accountID, summary: message, store: store,
@@ -44,6 +47,7 @@ struct PopoverRootView: View {
         .clipped()
         .animation(reduceMotion ? nil : .snappy(duration: store.openMessage == nil ? 0.3 : 0.22),
                    value: store.openMessage)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: store.isComposing)
         .frame(width: Self.width)
         // An opaque surface, not the popover's glass. On macOS 26 the popover glass adapts to the
         // LUMINANCE of whatever is behind it, independent of the light or dark appearance, so over
@@ -94,6 +98,15 @@ struct PopoverRootView: View {
                 Button("Cancel") { store.pendingArchive = nil }
             }
         }
+        if let notice = store.sentNotice {
+            banner(symbol: "paperplane.fill", tint: .green, text: notice) { EmptyView() }
+        }
+        if let draft = store.draft, !store.isComposing, draft.hasContent {
+            banner(symbol: "square.and.pencil", tint: .accentColor,
+                   text: "\(draft.title) not sent yet.") {
+                Button("Continue") { store.isComposing = true }
+            }
+        }
         if let error = store.actionError {
             banner(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error) {
                 Button("Dismiss") { store.actionError = nil }
@@ -139,6 +152,19 @@ struct PopoverRootView: View {
 
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
+                Button {
+                    store.startNewMessage()
+                } label: {
+                    Image(systemName: store.draft?.kind == .new && store.draft?.hasContent == true
+                          ? "square.and.pencil.circle" : "square.and.pencil")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("n", modifiers: .command)
+                .help(store.draft?.hasContent == true ? "Back to the message you are writing" : "New message (Command N)")
+                .accessibilityLabel("New message")
+                .disabled(store.selectedAccount == nil)
+
                 Button {
                     if store.isSearchOpen { store.closeSearch() } else { store.isSearchOpen = true }
                 } label: {

@@ -9,13 +9,14 @@ unread, flag it, archive it or delete it. Nothing else.
 It replaces keeping `/Applications/Microsoft Outlook.app` (about 2 GB, always running) open all day,
 so the user can delete Outlook.
 
-**Read only, v1.** No sending, no reply, no forward, no compose, no calendar, no contacts.
+Reading, plus simple sending (reply, reply all, forward, a new message; M12 to M14). No calendar
+(the user will decide later), no contacts.
 The Scope section below holds the exact in-scope and out-of-scope lists; it wins over anything
 vaguer here.
 
 ## Scope
-v1 is built (M0 to M6) and so is v1.1 (M7 to M10), 2026-09-24. `PLAN.md` holds the milestones,
-M11 still open. (It was briefly retired and the user asked for the milestones back.)
+v1 (M0 to M6), v1.1 (M7 to M11) and simple sending (M12 to M14) are built, 2026-09-25, all proven
+in mock mode. `PLAN.md` has no open milestone.
 
 ### Wanted (v1, built)
 - **Accounts in Settings**: add, edit, test, delete; several allowed. Adding needs only email and
@@ -33,21 +34,29 @@ M11 still open. (It was briefly retired and the user asked for the milestones ba
 - **No cache**: nothing from the mailbox on disk, images cached nowhere.
 
 ### Not wanted (do not build)
-- Sending of any kind: compose, reply, reply all, forward, drafts.
+- Anything beyond simple sending: rich-text editing, drafts, signatures, outgoing attachments.
 - Move to folder, folder list, folder picker.
 - Follow up, categories, rules, junk, snooze, pin.
-- Calendar, contacts, tasks, notes, directory (LDAP) lookup.
+- Contacts, tasks, notes, directory (LDAP) lookup. (Calendar: later, see above.)
 - Offline mode, local search index, any disk cache.
 
-### Wanted (v1.1, built 2026-09-24, milestones M7 to M10 in `PLAN.md`)
+### Wanted (v1.1, built 2026-09-24, milestones M7 to M11)
 - **New-mail notifications** (M7): click one to open that message. Sender, subject and preview,
   or only the account name when "Show sender and subject" is off.
 - **Search** (M8): a field under the header (Cmd+F), searching the server as you type.
 - **Attachments** (M9): chips under the reader's header; click to open, right-click to save.
 - **Launch at login** (M10): a switch in Settings, General.
 
-### Next (M11 in `PLAN.md`)
-- EWS streaming notifications instead of polling: instant mail, one idle connection.
+- **Instant new mail** (M11): EWS streaming notifications; polling drops to a 10-minute safety net.
+
+### Simple sending (M12 to M14, built 2026-09-25)
+- Reply, reply all, forward, new message. Plain text writing, right to left for Persian. The
+  server builds quotes and keeps copies in Sent Items (EWS `ReplyToItem`, `ForwardItem`,
+  `CreateItem` with `SendAndSaveCopy`).
+- Not in it: rich text, drafts folder, signatures editor, outgoing attachments, directory lookup.
+
+### Later (the user will say)
+- Calendar.
 
 ### Still open (the user's steps)
 - Add the real account and press Sign In. This settles the user name format and the Exchange
@@ -236,6 +245,18 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   request) to find the EWS URL and display name, guesses the user name (short name, then the full
   address, keeping whichever the server accepts), and tests the connection. Server Details then
   opens, filled and editable; when Autodiscover is not available it opens empty, as before.
+- 2026-09-25 Sending (M12 to M14): one draft at a time, in memory only, never on disk and never in
+  the server's Drafts folder; a draft with text is never replaced by a new one. Replies and forwards
+  use `ReplyToItem`, `ReplyAllToItem`, `ForwardItem`, so the server builds the quote, subject and
+  forwarded attachments; a fresh `ChangeKey` is read right before (opening marks read, which
+  changes it). The body goes as HTML built from the plain text, one `<div>` per paragraph with
+  `dir="rtl"` on Persian ones. Recipient suggestions come only from inbox senders in memory.
+  The composer's paragraphs are `.natural` direction, each on its own, matching what is sent.
+- 2026-09-24 Streaming (M11): one loop per account in `MailStreamer`. Subscribe, then
+  `GetStreamingEvents` for 29 minutes over a second URLSession with a 35-minute idle timeout that
+  shares the in-memory cookie jar (a load-balanced Exchange pins the subscription by cookie).
+  A rejected password PARKS the account (no retries until it is edited): every retry is a failed
+  logon against the domain lockout counter. Same EWS URL as everything else; no new host.
 - 2026-09-24 Notifications (M7): the first poll per account after launch is a silent baseline,
   ids seen are kept in memory only, and each notification is withdrawn when its message is read,
   archived or deleted anywhere. macOS stores delivered notifications on disk in Notification
@@ -320,13 +341,14 @@ release notes, not a commit message. Skip pure refactors, formatting, and doc-on
 Releases are cut with the `release` skill.
 
 ## Working style
-- Read this file first, the Scope section above all, then `PLAN.md` for what is next.
+- Read this file first, the Scope section above all, then `PLAN.md`.
 - Never hardcode the user's data: no server URL, user name, email or name in code, fixtures,
   placeholders or defaults. Mock fixtures use invented names and `example.com`.
 - Never delete, archive, flag or change the read state of real mail during testing without
   explicit permission. Use `MAILBAR_MOCK=1` or a message the user names. Reading the inbox list
   is fine.
-- Never send mail. The app has no code path that can.
+- Never send real mail during testing. Sending is proven against `MAILBAR_MOCK` only, unless the
+  user names the exact message and recipient.
 - Never quit or modify the user's Outlook install.
 - Commit in small, working increments. Explain any deviation from this spec.
 - Ask before adding any external dependency.
