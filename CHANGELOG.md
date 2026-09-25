@@ -26,6 +26,7 @@ section when a release is cut.
 - Attachments show under the message. Click one to open it, or right-click to save it.
 - Launch at login, in Settings, General.
 - Reply, Reply All and Forward from an open message, and a new message from the pencil button. Plain writing, right to left for Persian, Command Return to send. Your server adds the quoted original and keeps a copy in Sent Items.
+- Calendar. Right-click the menu bar icon and choose Calendar (Command K) for Day, Work week, Week and Month views of your Exchange calendar, laid out like Outlook on the web, with the week starting Saturday. Click an event to see who is invited and how they answered.
 
 ### Changed
 - The new menu bar and app icons.

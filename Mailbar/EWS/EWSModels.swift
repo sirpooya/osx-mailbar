@@ -341,7 +341,7 @@ enum EWSResponse {
         return formatter
     }()
 
-    private static func parse(_ data: Data) throws -> XMLTreeNode {
+    static func parse(_ data: Data) throws -> XMLTreeNode {
         do {
             return try XMLTree.parse(data)
         } catch let error as XMLTree.ParseError {

@@ -1,0 +1,160 @@
+import Foundation
+
+/// The mock calendar (M15): a week shaped like the user's OWA screenshot, rebuilt around the
+/// current week so it never goes stale. Every name, room and address is invented.
+enum MockCalendar {
+    struct Event {
+        let id: String
+        let subject: String
+        let start: Date
+        let end: Date
+        var isAllDay = false
+        var location = ""
+        var organizer = "Sara Rahimi"
+        var organizerAddress = "sara.rahimi@example.com"
+        var isRecurring = false
+        var isMeeting = true
+        var isCancelled = false
+        var response = "Accept"
+        var showAs = "Busy"
+        var attendees: [(String, String, String)] = []
+        var notes = ""
+    }
+
+    /// Three weeks around today: last week, this week, next week.
+    static func events(now: Date = Date()) -> [Event] {
+        var calendar = Calendar.current
+        calendar.firstWeekday = 7
+        let thisWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
+        func at(_ week: Int, _ day: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+            let base = calendar.date(byAdding: .day, value: week * 7 + day, to: thisWeek) ?? thisWeek
+            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? base
+        }
+        func minutes(_ date: Date, _ count: Int) -> Date { date.addingTimeInterval(TimeInterval(count * 60)) }
+
+        let room = "ساختمان نمونه | طبقه سه | اتاق آبی"
+        var list: [Event] = []
+        for week in -1...1 {
+            // Saturday is day 0. The daily stand-up, Sunday to Wednesday, as in the screenshot.
+            for day in 1...4 {
+                let start = at(week, day, 11, 30)
+                list.append(Event(id: "ev-\(week)-daily-\(day)", subject: "Shopping Design Daily",
+                                  start: start, end: minutes(start, 30),
+                                  organizer: "Mahan Rostami", organizerAddress: "mahan@example.com",
+                                  isRecurring: true))
+            }
+        }
+        let monday = 2, tuesday = 3, wednesday = 4, sunday = 1, saturday = 0, thursday = 5
+        list += [
+            Event(id: "ev-sat-update", subject: "BW | Design system update", start: at(0, saturday, 13),
+                  end: at(0, saturday, 14), location: "CTO's Office", organizer: "Narges Ahmadi",
+                  organizerAddress: "narges@example.com", isCancelled: true),
+            Event(id: "ev-sun-demo", subject: "ds demo alignment", start: at(0, sunday, 18),
+                  end: at(0, sunday, 19), location: room, response: "Organizer",
+                  attendees: [("Omid Karimi", "omid@example.org", "Accept"), ("Sara Rahimi", "sara.rahimi@example.com", "Tentative")]),
+            Event(id: "ev-mon-concerns", subject: "دغدغه‌های شما در مورد دیزاین‌سیستم", start: at(0, monday, 12),
+                  end: at(0, monday, 13), location: room,
+                  attendees: [("Omid Karimi", "omid@example.org", "Accept")],
+                  notes: "<p dir=\"rtl\">لطفاً سؤال‌هایتان را از قبل در سند مشترک بنویسید.</p>"),
+            Event(id: "ev-mon-worries", subject: "نگرانی‌های شما در مورد دیزاین‌سیستم", start: at(0, monday, 14),
+                  end: at(0, monday, 15), location: room),
+            Event(id: "ev-mon-new", subject: "New Appointment", start: at(0, monday, 15),
+                  end: at(0, monday, 16), isMeeting: false, response: "Organizer"),
+            Event(id: "ev-mon-workflow", subject: "Design System Workflow Demo", start: at(0, monday, 15),
+                  end: minutes(at(0, monday, 16), 30), location: room, response: "NoResponseReceived",
+                  showAs: "Tentative",
+                  attendees: [("Sample User", "sample.user@example.com", "NoResponseReceived"), ("Omid Karimi", "omid@example.org", "Accept")],
+                  notes: "<p>Walkthrough of the new token pipeline. Bring questions.</p>"),
+            Event(id: "ev-tue-room", subject: "Room For Weekly", start: at(0, tuesday, 17),
+                  end: minutes(at(0, tuesday, 18), 15), location: room, isRecurring: true, response: "Organizer"),
+            Event(id: "ev-tue-weekly", subject: "Design Weekly", start: at(0, tuesday, 17),
+                  end: minutes(at(0, tuesday, 18), 15), location: "اتاق سبز", organizer: "Mostafa Nouri",
+                  organizerAddress: "mostafa@example.com", response: "Tentative", showAs: "Tentative"),
+            Event(id: "ev-wed-farewell", subject: "Nima's Farewell", start: at(0, wednesday, 17),
+                  end: minutes(at(0, wednesday, 17), 30), organizer: "Mahan Rostami", organizerAddress: "mahan@example.com"),
+            Event(id: "ev-thu-holiday", subject: "Company holiday", start: at(0, thursday, 0),
+                  end: at(0, thursday + 1, 0), isAllDay: true, isMeeting: false, response: "Organizer", showAs: "Free"),
+            Event(id: "ev-next-planning", subject: "Quarterly planning", start: at(1, sunday, 10),
+                  end: at(1, sunday, 12), location: room, organizer: "Omid Karimi",
+                  organizerAddress: "omid@example.org", response: "NoResponseReceived", showAs: "Tentative"),
+        ]
+        return list
+    }
+
+    static func findResponse(start: Date, end: Date, events: [Event]) -> String {
+        let formatter = ISO8601DateFormatter()
+        let items = events.filter { $0.start < end && $0.end > start }.map { event in
+            """
+                      <t:CalendarItem>
+                        <t:ItemId Id="\(event.id)" ChangeKey="ck"/>
+                        <t:Subject>\(SOAP.escape(event.subject))</t:Subject>
+                        <t:Sensitivity>Normal</t:Sensitivity>
+                        <t:Start>\(formatter.string(from: event.start))</t:Start>
+                        <t:End>\(formatter.string(from: event.end))</t:End>
+                        <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>
+                        <t:LegacyFreeBusyStatus>\(event.showAs)</t:LegacyFreeBusyStatus>
+                        <t:Location>\(SOAP.escape(event.location))</t:Location>
+                        <t:IsMeeting>\(event.isMeeting)</t:IsMeeting>
+                        <t:IsCancelled>\(event.isCancelled)</t:IsCancelled>
+                        <t:IsRecurring>\(event.isRecurring)</t:IsRecurring>
+                        <t:CalendarItemType>\(event.isRecurring ? "Occurrence" : "Single")</t:CalendarItemType>
+                        <t:MyResponseType>\(event.response)</t:MyResponseType>
+                        <t:Organizer><t:Mailbox><t:Name>\(SOAP.escape(event.organizer))</t:Name><t:EmailAddress>\(event.organizerAddress)</t:EmailAddress></t:Mailbox></t:Organizer>
+                      </t:CalendarItem>
+            """
+        }.joined(separator: "\n")
+        return wrap("FindItem", """
+                  <m:RootFolder TotalItemsInView="\(items.isEmpty ? 0 : 1)" IncludesLastItemInRange="true">
+                    <t:Items>
+        \(items)
+                    </t:Items>
+                  </m:RootFolder>
+        """)
+    }
+
+    static func getResponse(_ event: Event) -> String {
+        let formatter = ISO8601DateFormatter()
+        let attendees = event.attendees.map { name, address, response in
+            "<t:Attendee><t:Mailbox><t:Name>\(SOAP.escape(name))</t:Name><t:EmailAddress>\(address)</t:EmailAddress></t:Mailbox><t:ResponseType>\(response)</t:ResponseType></t:Attendee>"
+        }.joined()
+        return wrap("GetItem", """
+                  <m:Items>
+                    <t:CalendarItem>
+                      <t:ItemId Id="\(event.id)" ChangeKey="ck"/>
+                      <t:Subject>\(SOAP.escape(event.subject))</t:Subject>
+                      <t:Body BodyType="HTML">\(SOAP.escape(event.notes))</t:Body>
+                      <t:Start>\(formatter.string(from: event.start))</t:Start>
+                      <t:End>\(formatter.string(from: event.end))</t:End>
+                      <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent>
+                      <t:LegacyFreeBusyStatus>\(event.showAs)</t:LegacyFreeBusyStatus>
+                      <t:Location>\(SOAP.escape(event.location))</t:Location>
+                      <t:IsMeeting>\(event.isMeeting)</t:IsMeeting>
+                      <t:IsCancelled>\(event.isCancelled)</t:IsCancelled>
+                      <t:IsRecurring>\(event.isRecurring)</t:IsRecurring>
+                      <t:MyResponseType>\(event.response)</t:MyResponseType>
+                      <t:Organizer><t:Mailbox><t:Name>\(SOAP.escape(event.organizer))</t:Name><t:EmailAddress>\(event.organizerAddress)</t:EmailAddress></t:Mailbox></t:Organizer>
+                      <t:RequiredAttendees>\(attendees)</t:RequiredAttendees>
+                    </t:CalendarItem>
+                  </m:Items>
+        """)
+    }
+
+    private static func wrap(_ operation: String, _ inner: String) -> String {
+        """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+          <s:Body>
+            <m:\(operation)Response xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" \
+        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+              <m:ResponseMessages>
+                <m:\(operation)ResponseMessage ResponseClass="Success">
+                  <m:ResponseCode>NoError</m:ResponseCode>
+        \(inner)
+                </m:\(operation)ResponseMessage>
+              </m:ResponseMessages>
+            </m:\(operation)Response>
+          </s:Body>
+        </s:Envelope>
+        """
+    }
+}

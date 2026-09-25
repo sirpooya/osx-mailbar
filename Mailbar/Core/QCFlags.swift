@@ -23,6 +23,25 @@ enum QCFlags {
         #endif
     }
 
+    /// `--open-calendar` or `--open-calendar=month` (day, workWeek, week, month): the calendar window.
+    static var openCalendar: String? {
+        #if DEBUG
+        if has("--open-calendar") { return "" }
+        return CommandLine.arguments.first { $0.hasPrefix("--open-calendar=") }.map { String($0.dropFirst("--open-calendar=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
+    /// `--calendar-select=Design Weekly`: the calendar with that event's detail panel open.
+    static var calendarSelect: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--calendar-select=") }.map { String($0.dropFirst("--calendar-select=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--search=booking`: the popover with the search field open on that text.
     static var searchText: String? {
         #if DEBUG

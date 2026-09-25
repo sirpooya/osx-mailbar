@@ -50,7 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Streaming (M11) brings changes the moment they happen; while it covers every account,
         // polling only guards against a subscription that died without the connection noticing.
-        streamer = MailStreamer(store: store, onChange: { [weak self] in self?.poller.refreshNow() })
+        streamer = MailStreamer(store: store, onChange: { [weak self] in
+            self?.poller.refreshNow()
+            // The subscription covers the calendar folder too (M15).
+            CalendarWindow.shared.refreshIfOpen()
+        })
         poller = Poller(intervalProvider: { [weak self] in
                             guard let self, self.streamer.coversAllAccounts else { return Keys.pollInterval() }
                             return max(Keys.pollInterval(), MailStreamer.fallbackPollInterval)
@@ -84,6 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Attachments.clearOpenedCopies()
 
+        statusItemController.onOpenCalendar = { [weak self] in self?.showCalendar() }
+        if QCFlags.openCalendar != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.showCalendar() }
+        }
         installMainMenu()
         installEditingShortcuts()
         observeSleepAndWake()
@@ -126,6 +134,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard messages.indices.contains(index) else { return }
                     self.store.openMessage = .init(accountID: account.id, messageID: messages[index].id)
                 }
+            }
+        }
+    }
+
+    private func showCalendar() {
+        CalendarWindow.shared.show(mail: store)
+        if let mode = QCFlags.openCalendar, let store = CalendarWindow.shared.store,
+           let chosen = CalendarStore.Mode(rawValue: mode) {
+            store.mode = chosen
+        }
+        if let title = QCFlags.calendarSelect {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard let store = CalendarWindow.shared.store,
+                      let event = store.events.first(where: { $0.subject == title }) else { return }
+                Task { await store.select(event) }
             }
         }
     }

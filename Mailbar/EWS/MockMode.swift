@@ -130,6 +130,17 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 sent.append(request)
                 return ok(MockFixtures.success("CreateItem"))
             }
+            // The calendar (M15). Checked before the inbox, since both are FindItem and GetItem.
+            if request.contains("<m:CalendarView") {
+                guard !isTeam else { return ok(MockCalendar.findResponse(start: .distantPast, end: .distantPast, events: [])) }
+                let start = Self.firstMatch(#"StartDate="([^"]+)""#, in: request).flatMap(EWSResponse.parseDate) ?? .distantPast
+                let end = Self.firstMatch(#"EndDate="([^"]+)""#, in: request).flatMap(EWSResponse.parseDate) ?? .distantFuture
+                return ok(MockCalendar.findResponse(start: start, end: end, events: MockCalendar.events()))
+            }
+            if request.contains("<m:GetItem>"), let itemID, itemID.hasPrefix("ev-"),
+               let event = MockCalendar.events().first(where: { $0.id == itemID }) {
+                return ok(MockCalendar.getResponse(event))
+            }
             if request.contains("<m:Subscribe>") {
                 return ok(MockFixtures.subscribe)
             }

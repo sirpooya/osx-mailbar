@@ -18,6 +18,16 @@ enum Keys {
     /// Whether a notification shows the sender, subject and preview, or only the account name.
     static let notificationDetails = "mailbar.notificationDetails"
 
+    // Calendar (M15)
+    /// Day, work week, week or month, as last chosen.
+    static let calendarMode = "mailbar.calendarMode"
+    /// The first day of the week, `Calendar` numbering (1 Sunday ... 7 Saturday).
+    static let calendarWeekStart = "mailbar.calendarWeekStart"
+    /// The work week's days, same numbering, comma separated.
+    static let calendarWorkDays = "mailbar.calendarWorkDays"
+    static let calendarWorkStartHour = "mailbar.calendarWorkStartHour"
+    static let calendarWorkEndHour = "mailbar.calendarWorkEndHour"
+
     static let pollMinuteChoices = [1, 2, 3, 5, 10]
 
     static func registerDefaults(_ defaults: UserDefaults = .standard) {
@@ -25,7 +35,30 @@ enum Keys {
             pollMinutes: 2,
             notifyNewMail: true,
             notificationDetails: true,
+            // The user's OWA: the week runs Saturday to Friday, the work week Saturday to
+            // Wednesday, working hours 9 to 17.
+            calendarWeekStart: 7,
+            calendarWorkDays: "7,1,2,3,4",
+            calendarWorkStartHour: 9,
+            calendarWorkEndHour: 17,
         ])
+    }
+
+    static func calendarWeekStart(_ defaults: UserDefaults = .standard) -> Int {
+        min(max(defaults.integer(forKey: calendarWeekStart), 1), 7)
+    }
+
+    static func calendarWorkDays(_ defaults: UserDefaults = .standard) -> Set<Int> {
+        let days = (defaults.string(forKey: calendarWorkDays) ?? "")
+            .split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { (1...7).contains($0) }
+        return days.isEmpty ? [7, 1, 2, 3, 4] : Set(days)
+    }
+
+    static func calendarWorkHours(_ defaults: UserDefaults = .standard) -> ClosedRange<Int> {
+        let start = min(max(defaults.integer(forKey: calendarWorkStartHour), 0), 23)
+        let end = min(max(defaults.integer(forKey: calendarWorkEndHour), start + 1), 24)
+        return start...end
     }
 
     /// Clamped so a hand-edited plist cannot make the app poll every second.

@@ -1,0 +1,122 @@
+import Foundation
+
+/// One calendar event as the grid draws it (M15). In memory only, for the range on screen.
+struct CalendarEvent: Identifiable, Equatable, Sendable {
+    /// EWS `ItemId`. For a recurring series each occurrence has its own id.
+    let id: String
+    let changeKey: String
+    let subject: String
+    let start: Date
+    let end: Date
+    let isAllDay: Bool
+    let location: String
+    let organizer: String
+    let isRecurring: Bool
+    let isMeeting: Bool
+    let isCancelled: Bool
+    /// `Organizer`, `Accept`, `Tentative`, `Decline`, `NoResponseReceived`, `Unknown`.
+    let myResponse: String
+    /// `Free`, `Tentative`, `Busy`, `OOF`, `WorkingElsewhere`, `NoData`.
+    let showAs: String
+    let isPrivate: Bool
+
+    /// Not yet answered or only tentatively: OWA draws these hatched, and so does the grid.
+    var isTentative: Bool {
+        myResponse == "Tentative" || myResponse == "NoResponseReceived" || showAs == "Tentative"
+    }
+
+    var isOrganizer: Bool { myResponse == "Organizer" }
+
+    /// The days this event touches, as start-of-day dates in `calendar`. An all-day event's end
+    /// is the midnight after its last day, so that midnight is not a day of its own.
+    func days(in calendar: Calendar) -> [Date] {
+        let first = calendar.startOfDay(for: start)
+        let lastMoment = max(start, end.addingTimeInterval(-1))
+        let last = calendar.startOfDay(for: lastMoment)
+        var days: [Date] = []
+        var day = first
+        while day <= last {
+            days.append(day)
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return days
+    }
+}
+
+/// Everything the detail panel shows for one event.
+struct EventDetail: Equatable, Sendable {
+    struct Attendee: Equatable, Sendable, Identifiable {
+        let name: String
+        let address: String
+        /// `Accept`, `Tentative`, `Decline`, `NoResponseReceived`, `Organizer`, `Unknown`.
+        let response: String
+        let isOptional: Bool
+        var id: String { address.isEmpty ? name : address }
+        var display: String { name.isEmpty ? address : name }
+    }
+
+    let event: CalendarEvent
+    let organizerAddress: String
+    let attendees: [Attendee]
+    let rooms: [String]
+    let html: String
+}
+
+extension EWSResponse {
+    static func calendarEvents(from data: Data) throws -> [CalendarEvent] {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        guard let items = responses.first?.first("Items") else {
+            throw EWSError.invalidResponse("The reply did not include the calendar.")
+        }
+        return items.children.compactMap(calendarEvent(from:))
+    }
+
+    static func calendarEvent(from item: XMLTreeNode) -> CalendarEvent? {
+        guard let itemID = item.child("ItemId"), let id = itemID.attributes["Id"],
+              let start = item.child("Start").flatMap({ parseDate($0.trimmedText) }),
+              let end = item.child("End").flatMap({ parseDate($0.trimmedText) }) else { return nil }
+        let subject = item.child("Subject")?.trimmedText ?? ""
+        return CalendarEvent(
+            id: id,
+            changeKey: itemID.attributes["ChangeKey"] ?? "",
+            subject: subject.isEmpty ? "(No title)" : subject,
+            start: start,
+            end: max(end, start),
+            isAllDay: item.child("IsAllDayEvent")?.trimmedText == "true",
+            location: item.child("Location")?.trimmedText ?? "",
+            organizer: item.path("Organizer", "Mailbox", "Name")?.trimmedText ?? "",
+            isRecurring: item.child("IsRecurring")?.trimmedText == "true"
+                || ["Occurrence", "Exception"].contains(item.child("CalendarItemType")?.trimmedText ?? ""),
+            isMeeting: item.child("IsMeeting")?.trimmedText == "true",
+            isCancelled: item.child("IsCancelled")?.trimmedText == "true",
+            myResponse: item.child("MyResponseType")?.trimmedText ?? "Unknown",
+            showAs: item.child("LegacyFreeBusyStatus")?.trimmedText ?? "Busy",
+            isPrivate: item.child("Sensitivity")?.trimmedText == "Private")
+    }
+
+    static func eventDetail(from data: Data) throws -> EventDetail {
+        let root = try parse(data)
+        let responses = try responseMessages(in: root)
+        guard let item = responses.first?.child("Items")?.children.first,
+              let event = calendarEvent(from: item) else {
+            throw EWSError.invalidResponse("The reply did not include the event.")
+        }
+        func attendees(_ field: String, optional: Bool) -> [EventDetail.Attendee] {
+            (item.child(field)?.children ?? []).filter { $0.name == "Attendee" }.map { attendee in
+                EventDetail.Attendee(name: attendee.path("Mailbox", "Name")?.trimmedText ?? "",
+                                     address: attendee.path("Mailbox", "EmailAddress")?.trimmedText ?? "",
+                                     response: attendee.child("ResponseType")?.trimmedText ?? "Unknown",
+                                     isOptional: optional)
+            }
+        }
+        let rooms = (item.child("Resources")?.children ?? []).compactMap { $0.path("Mailbox", "Name")?.trimmedText }
+        return EventDetail(event: event,
+                           organizerAddress: item.path("Organizer", "Mailbox", "EmailAddress")?.trimmedText ?? "",
+                           attendees: attendees("RequiredAttendees", optional: false)
+                               + attendees("OptionalAttendees", optional: true),
+                           rooms: rooms,
+                           html: item.child("Body")?.text ?? "")
+    }
+}

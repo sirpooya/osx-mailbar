@@ -91,6 +91,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private func showContextMenu() {
         let menu = NSMenu()
+        menu.addItem(withTitle: "Calendar...", action: #selector(menuCalendar), keyEquivalent: "k").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Refresh Now", action: #selector(menuRefresh), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Settings...", action: #selector(menuSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
@@ -103,6 +105,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func menuRefresh() { onRefresh() }
+
+    /// Set by the app delegate: opens the calendar window (M15).
+    var onOpenCalendar: (() -> Void)?
+
+    @objc private func menuCalendar() {
+        close()
+        onOpenCalendar?()
+    }
 
     @objc private func menuSettings() { openSettings() }
 

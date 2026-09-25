@@ -10,13 +10,13 @@ It replaces keeping `/Applications/Microsoft Outlook.app` (about 2 GB, always ru
 so the user can delete Outlook.
 
 Reading, plus simple sending (reply, reply all, forward, a new message; M12 to M14). No calendar
-(the user will decide later), no contacts.
+(planned in `PLAN.md`), no contacts.
 The Scope section below holds the exact in-scope and out-of-scope lists; it wins over anything
 vaguer here.
 
 ## Scope
 v1 (M0 to M6), v1.1 (M7 to M11) and simple sending (M12 to M14) are built, 2026-09-25, all proven
-in mock mode. `PLAN.md` has no open milestone.
+in mock mode. The Milestones section below is the record; none is open.
 
 ### Wanted (v1, built)
 - **Accounts in Settings**: add, edit, test, delete; several allowed. Adding needs only email and
@@ -55,8 +55,9 @@ in mock mode. `PLAN.md` has no open milestone.
   `CreateItem` with `SendAndSaveCopy`).
 - Not in it: rich text, drafts folder, signatures editor, outgoing attachments, directory lookup.
 
-### Later (the user will say)
-- Calendar.
+### Calendar (planned 2026-09-25, `PLAN.md`, M15 to M19)
+- View, create, edit, delete, answer invitations, reminders, over the same EWS server. Four
+  decisions are the user's first; they are at the top of `PLAN.md`.
 
 ### Still open (the user's steps)
 - Add the real account and press Sign In. This settles the user name format and the Exchange
@@ -65,6 +66,35 @@ in mock mode. `PLAN.md` has no open milestone.
 - Uninstall Outlook.
 
 Keep it minimal and dependency-light. No cloud sync, no analytics.
+
+## Milestones
+All done, 2026-09-24 and 25, every one proven in `MAILBAR_MOCK` mode (screenshots, tests). The
+real-account column is what is still unproven. Work in progress is planned in `PLAN.md`
+(the calendar); a milestone moves here once it is done.
+
+| # | What | Unproven on the real account |
+|---|---|---|
+| M0 | Scaffold: XcodeGen, menu bar only, signed | |
+| M1 | Accounts, Keychain passwords, EWS client, Settings; later email+password sign-in via Autodiscover | |
+| M2 | Menu bar icon and unread count, polling | |
+| M3 | Outlook-style inbox rows, right to left for Persian, failure states | |
+| M4 | Reader: JS off, remote images blocked (pixel-proven), inline images from memory, fit to width | |
+| M5 | Mark read or unread, flag, archive (asks before creating the folder), delete | actions on real mail |
+| M6 | Sign-off: nothing on disk, idle memory 54 MB | one-hour memory |
+| M7 | New-mail notifications, withdrawn when handled | a real banner |
+| M8 | Server-side search, Cmd+F | |
+| M9 | Attachments: open (private temp copy) or save | opening a real one |
+| M10 | Launch at login | toggling it |
+| M11 | Instant mail over EWS streaming, 10-minute poll as backup | a real arrival |
+| M12 | Reply and reply all | a real send |
+| M13 | Forward | a real send |
+| M14 | New message, suggestions from inbox senders | a real send |
+| M15 | Calendar window: Day, Work week, Week, Month, detail panel (tray menu, Cmd+K) | the real calendar |
+
+Testing rule for sending: **never send real mail** unless the user names the exact message and
+recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
+
+Next: the calendar, `PLAN.md`.
 
 ## Status
 2026-09-24 (latest): **M4 to M6 built**, 51 tests green. The reader opens a message with JS off,
@@ -282,7 +312,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 
 ## Privacy (local-first)
 No telemetry, no analytics. Network calls, exhaustively:
-- Each configured account's EWS URL.
+- Each configured account's EWS URL (mail and, since M15, the calendar: same URL, same sign-in).
 - While adding an account, and only when the user presses Sign In: Autodiscover at
   `https://autodiscover.<email domain>/autodiscover/autodiscover.xml`, then
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and
@@ -305,6 +335,8 @@ WebKit cache, no thumbnails, no "offline" mode.
   time, read and flag state, and the `ItemId`/`ChangeKey` needed to act on it. It dies with the
   process.
 - A message body lives in memory only while its reader is open, and is dropped when it closes.
+- Calendar events (M15): only the range on screen, in memory, replaced on each refresh, and all of
+  it dropped when the calendar window closes.
 - **Images are never cached anywhere**, memory or disk: not remote images, not inline `cid:`
   images, not sender photos. Each time a message opens they are fetched again (and remote ones only
   after "Load images").

@@ -255,6 +255,59 @@ enum SOAP {
         """
     }
 
+    // MARK: - Calendar (M15)
+
+    /// Every event overlapping `start..<end`, recurrences expanded by the server into occurrences.
+    /// `CalendarView` is how EWS answers "what is on these days"; a plain FindItem would return the
+    /// series masters and leave the expanding to the client.
+    static func findCalendar(start: Date, end: Date) -> String {
+        """
+            <m:FindItem Traversal="Shallow">
+              <m:ItemShape>
+                <t:BaseShape>IdOnly</t:BaseShape>
+                <t:AdditionalProperties>
+        \(calendarFields)
+                </t:AdditionalProperties>
+              </m:ItemShape>
+              <m:CalendarView MaxEntriesReturned="1000" StartDate="\(isoDate(start))" EndDate="\(isoDate(end))"/>
+              <m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds>
+            </m:FindItem>
+        """
+    }
+
+    /// One event with its attendees and notes, for the detail panel.
+    static func getEvent(id: String) -> String {
+        """
+            <m:GetItem>
+              <m:ItemShape>
+                <t:BaseShape>IdOnly</t:BaseShape>
+                <t:BodyType>HTML</t:BodyType>
+                <t:AdditionalProperties>
+        \(calendarFields)
+                  <t:FieldURI FieldURI="item:Body"/>
+                  <t:FieldURI FieldURI="calendar:RequiredAttendees"/>
+                  <t:FieldURI FieldURI="calendar:OptionalAttendees"/>
+                  <t:FieldURI FieldURI="calendar:Resources"/>
+                </t:AdditionalProperties>
+              </m:ItemShape>
+              <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>
+            </m:GetItem>
+        """
+    }
+
+    private static let calendarFields = [
+        "item:Subject", "calendar:Start", "calendar:End", "calendar:IsAllDayEvent",
+        "calendar:Location", "calendar:Organizer", "calendar:IsRecurring", "calendar:IsMeeting",
+        "calendar:IsCancelled", "calendar:MyResponseType", "calendar:LegacyFreeBusyStatus",
+        "calendar:CalendarItemType", "item:Sensitivity",
+    ].map { "          <t:FieldURI FieldURI=\"\($0)\"/>" }.joined(separator: "\n")
+
+    static func isoDate(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+
     // MARK: - Streaming notifications (M11)
 
     /// A streaming subscription to the inbox. Every change that can alter the list or the count.
@@ -262,7 +315,7 @@ enum SOAP {
     static let subscribeToInbox = """
         <m:Subscribe>
           <m:StreamingSubscriptionRequest>
-            <t:FolderIds><t:DistinguishedFolderId Id="inbox"/></t:FolderIds>
+            <t:FolderIds><t:DistinguishedFolderId Id="inbox"/><t:DistinguishedFolderId Id="calendar"/></t:FolderIds>
             <t:EventTypes>
               <t:EventType>NewMailEvent</t:EventType>
               <t:EventType>CreatedEvent</t:EventType>

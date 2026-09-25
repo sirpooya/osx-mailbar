@@ -142,6 +142,20 @@ struct EWSClient: Sendable {
         try EWSResponse.checkSuccess(data)
     }
 
+    // MARK: - Calendar (M15)
+
+    func calendarEvents(from start: Date, to end: Date, at url: URL, credential: EWSCredential) async throws -> [CalendarEvent] {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.findCalendar(start: start, end: end)),
+                                  to: url, credential: credential)
+        return try EWSResponse.calendarEvents(from: data)
+    }
+
+    func eventDetail(id: String, at url: URL, credential: EWSCredential) async throws -> EventDetail {
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.getEvent(id: id)),
+                                  to: url, credential: credential)
+        return try EWSResponse.eventDetail(from: data)
+    }
+
     // MARK: - Streaming (M11)
 
     func subscribeToInbox(at url: URL, credential: EWSCredential) async throws -> String {
