@@ -239,8 +239,21 @@ struct SchedulingAssistant: View {
             ForEach(Array(list.enumerated()), id: \.offset) { _, block in
                 if let frame = span(block.start, block.end, dayStart: dayStart) {
                     Image(nsImage: ShowAsSwatch.image(Self.state(block.type), width: max(frame.width, 4), height: Self.rowHeight - 5))
+                        // Who booked it, or what it is, where the server says (a room's
+                        // bookings carry the organizer's name), cut to the block.
+                        .overlay(alignment: .leading) {
+                            if let title = Self.title(of: block), frame.width > 24 {
+                                Text(title)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Self.state(block.type) == .away ? Color.white : Color.primary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .padding(.horizontal, 5)
+                                    .frame(width: frame.width, alignment: .leading)
+                            }
+                        }
                         .offset(x: frame.x, y: 2)
-                        .help("\(Self.label(block.type)), \(block.start.formatted(date: .omitted, time: .shortened)) to \(block.end.formatted(date: .omitted, time: .shortened))")
+                        .help(Self.tooltip(for: block))
                 }
             }
         }
@@ -406,6 +419,22 @@ struct SchedulingAssistant: View {
         let lo = max(from, 0), hi = min(to, CGFloat(hours.count))
         guard hi > lo else { return nil }
         return (lo * Self.hourWidth, (hi - lo) * Self.hourWidth)
+    }
+
+    /// The block's words: its subject, or "Private" for a private one; nil when the server gave
+    /// times only.
+    static func title(of block: BusyBlock) -> String? {
+        if block.isPrivate { return "Private" }
+        return block.subject
+    }
+
+    /// Everything the server said about a block: state and times, then subject, place, repeats.
+    static func tooltip(for block: BusyBlock) -> String {
+        var lines = ["\(label(block.type)), \(block.start.formatted(date: .omitted, time: .shortened)) to \(block.end.formatted(date: .omitted, time: .shortened))"]
+        if let title = title(of: block) { lines.append(title) }
+        if let location = block.location, !block.isPrivate { lines.append(location) }
+        if block.isRecurring { lines.append("Repeats") }
+        return lines.joined(separator: "\n")
     }
 
     /// A free/busy type as the Show as menu knows it; anything unknown reads as busy.

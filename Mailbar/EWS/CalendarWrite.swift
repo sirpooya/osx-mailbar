@@ -123,7 +123,10 @@ enum CalendarSOAP {
     /// Free or busy for each person over `start..<end`, for the People sidebar. Times go as UTC,
     /// with a zero-bias zone, so nothing depends on the server's idea of the user's zone. The
     /// window is whole days, which every Exchange version accepts.
-    static func availability(_ addresses: [String], start: Date, end: Date) -> String {
+    /// `detailed` asks for each booking's subject and location as well (the Schedule view), where
+    /// the asker may see them: a room usually shows its organizer's name as the subject. Without
+    /// the right the server answers with times only, as for the plain view.
+    static func availability(_ addresses: [String], start: Date, end: Date, detailed: Bool = false) -> String {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -144,7 +147,7 @@ enum CalendarSOAP {
               <t:FreeBusyViewOptions>
                 <t:TimeWindow><t:StartTime>\(formatter.string(from: from))</t:StartTime><t:EndTime>\(formatter.string(from: to))</t:EndTime></t:TimeWindow>
                 <t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>
-                <t:RequestedView>FreeBusy</t:RequestedView>
+                <t:RequestedView>\(detailed ? "Detailed" : "FreeBusy")</t:RequestedView>
               </t:FreeBusyViewOptions>
             </m:GetUserAvailabilityRequest>
         """
@@ -382,6 +385,11 @@ struct BusyBlock: Equatable, Sendable {
     let start: Date
     let end: Date
     let type: String
+    /// From the detailed view, when the server shows them: nil otherwise.
+    var subject: String? = nil
+    var location: String? = nil
+    var isPrivate = false
+    var isRecurring = false
 }
 
 struct Room: Equatable, Hashable, Identifiable, Sendable {
@@ -499,7 +507,14 @@ extension EWSResponse {
                 guard let from = event.child("StartTime").flatMap({ date($0.trimmedText) }),
                       let to = event.child("EndTime").flatMap({ date($0.trimmedText) }), to > from else { return nil }
                 let type = event.child("BusyType")?.trimmedText ?? "Busy"
-                return type == "Free" ? nil : BusyBlock(start: from, end: to, type: type)
+                guard type != "Free" else { return nil }
+                let details = event.child("CalendarEventDetails")
+                func text(_ name: String) -> String? {
+                    guard let value = details?.child(name)?.trimmedText, !value.isEmpty else { return nil }
+                    return value
+                }
+                return BusyBlock(start: from, end: to, type: type, subject: text("Subject"), location: text("Location"),
+                                 isPrivate: text("IsPrivate") == "true", isRecurring: text("IsRecurring") == "true")
             }
         }
         return result
@@ -569,7 +584,7 @@ extension EWSClient {
     /// Everyone's busy blocks over the days `start..<end` covers, for the Scheduling Assistant.
     func busyBlocks(_ addresses: [String], start: Date, end: Date, at url: URL,
                     credential: EWSCredential) async throws -> [String: [BusyBlock]?] {
-        let data = try await sendRaw(SOAP.envelope(.exchange2010SP2, body: CalendarSOAP.availability(addresses, start: start, end: end),
+        let data = try await sendRaw(SOAP.envelope(.exchange2010SP2, body: CalendarSOAP.availability(addresses, start: start, end: end, detailed: true),
                                                    timeZone: nil), to: url, credential: credential)
         return try EWSResponse.busyBlocks(from: data, addresses: addresses)
     }

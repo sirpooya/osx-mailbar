@@ -350,6 +350,30 @@ import Testing
         #expect((found["omid@example.org"] ?? nil)?.isEmpty == true)
     }
 
+    @Test func theDetailedViewNamesWhoBookedARoom() throws {
+        let xml = """
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>\
+        <m:GetUserAvailabilityResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">\
+        <m:FreeBusyResponseArray><m:FreeBusyResponse><m:ResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage>\
+        <m:FreeBusyView><t:CalendarEventArray>\
+        <t:CalendarEvent><t:StartTime>2026-09-26T10:00:00</t:StartTime><t:EndTime>2026-09-26T11:00:00</t:EndTime><t:BusyType>Busy</t:BusyType>\
+        <t:CalendarEventDetails><t:Subject>Sara Rahimi</t:Subject><t:Location>Room Blue</t:Location><t:IsRecurring>true</t:IsRecurring><t:IsPrivate>false</t:IsPrivate></t:CalendarEventDetails></t:CalendarEvent>\
+        <t:CalendarEvent><t:StartTime>2026-09-26T12:00:00</t:StartTime><t:EndTime>2026-09-26T13:00:00</t:EndTime><t:BusyType>Busy</t:BusyType></t:CalendarEvent>\
+        </t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse></m:FreeBusyResponseArray></m:GetUserAvailabilityResponse></s:Body></s:Envelope>
+        """
+        let found = try EWSResponse.busyBlocks(from: Data(xml.utf8), addresses: ["room.blue@example.com"])
+        let blocks = try #require(found["room.blue@example.com"] ?? nil)
+        #expect(blocks.count == 2)
+        #expect(blocks[0].subject == "Sara Rahimi")
+        #expect(blocks[0].location == "Room Blue")
+        #expect(blocks[0].isRecurring)
+        #expect(blocks[1].subject == nil)
+        #expect(CalendarSOAP.availability(["a@example.com"], start: Date(), end: Date(), detailed: true)
+            .contains("<t:RequestedView>Detailed</t:RequestedView>"))
+        #expect(CalendarSOAP.availability(["a@example.com"], start: Date(), end: Date())
+            .contains("<t:RequestedView>FreeBusy</t:RequestedView>"))
+    }
+
     @Test func theBandsEdgesResizeAndItsMiddleMoves() {
         #expect(SchedulingAssistant.part(at: 2, width: 48) == .start)
         #expect(SchedulingAssistant.part(at: 24, width: 48) == .move)

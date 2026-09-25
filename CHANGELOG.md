@@ -10,6 +10,9 @@ section when a release is cut.
 
 ## [Unreleased]
 
+### Added
+- Schedule shows who booked each room, and what people's busy times are, inside the blocks where the server allows it; hover a block for its subject, place and whether it repeats.
+
 ## [1.1.0] - 2026-09-26
 
 ### Added

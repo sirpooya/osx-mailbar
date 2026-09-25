@@ -60,8 +60,10 @@ enum MockCalendar {
     }
 
     /// Busy blocks for the People sidebar: Sara is busy whenever the mock calendar is, everyone
-    /// else is free, and an address outside the invented domains has no data.
-    static func availabilityResponse(_ addresses: [String], events: [Event]) -> String {
+    /// else is free, and an address outside the invented domains has no data. Rooms are booked
+    /// through the requested day; the detailed view adds subjects, a room's being its organizer.
+    static func availabilityResponse(_ addresses: [String], events: [Event], detailed: Bool = false,
+                                     windowStart: String? = nil) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "UTC")
@@ -70,11 +72,25 @@ enum MockCalendar {
             guard address.hasSuffix("example.com") || address.hasSuffix("example.org") else {
                 return "<m:FreeBusyResponse><m:ResponseMessage ResponseClass=\"Error\"><m:ResponseCode>ErrorMailRecipientNotFound</m:ResponseCode></m:ResponseMessage></m:FreeBusyResponse>"
             }
-            let busy = address.hasPrefix("sara") ? events.filter { !$0.isAllDay } : []
-            let blocks = busy.map {
-                "<t:CalendarEvent><t:StartTime>\(formatter.string(from: $0.start))</t:StartTime><t:EndTime>\(formatter.string(from: $0.end))</t:EndTime><t:BusyType>\($0.showAs)</t:BusyType></t:CalendarEvent>"
-            }.joined()
-            return "<m:FreeBusyResponse><m:ResponseMessage ResponseClass=\"Success\"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage><m:FreeBusyView><t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType><t:CalendarEventArray>\(blocks)</t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse>"
+            func block(_ start: Date, _ end: Date, _ type: String, _ subject: String, _ location: String) -> String {
+                let details = detailed
+                    ? "<t:CalendarEventDetails><t:Subject>\(SOAP.escape(subject))</t:Subject><t:Location>\(SOAP.escape(location))</t:Location><t:IsMeeting>true</t:IsMeeting><t:IsRecurring>false</t:IsRecurring><t:IsPrivate>false</t:IsPrivate></t:CalendarEventDetails>"
+                    : ""
+                return "<t:CalendarEvent><t:StartTime>\(formatter.string(from: start))</t:StartTime><t:EndTime>\(formatter.string(from: end))</t:EndTime><t:BusyType>\(type)</t:BusyType>\(details)</t:CalendarEvent>"
+            }
+            var blocks = (address.hasPrefix("sara") ? events.filter { !$0.isAllDay } : [])
+                .map { block($0.start, $0.end, $0.showAs, $0.subject, $0.location) }
+            if address.hasPrefix("room"), let windowStart, let day = formatter.date(from: String(windowStart.prefix(19))) {
+                let organizers = ["Sara Rahimi", "Omid Karimi", "نرگس احمدی", "Amir Karimi"]
+                let seed = address.unicodeScalars.reduce(0) { $0 + Int($1.value) }
+                for slot in 0..<4 {
+                    let hour = 5.5 + Double(slot) * 2.5 + Double(seed % 3) * 0.5
+                    let start = day.addingTimeInterval(hour * 3600)
+                    blocks.append(block(start, start.addingTimeInterval(slot == 1 ? 5400 : 3600), slot == 2 ? "Tentative" : "Busy",
+                                        organizers[(seed + slot) % organizers.count], ""))
+                }
+            }
+            return "<m:FreeBusyResponse><m:ResponseMessage ResponseClass=\"Success\"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage><m:FreeBusyView><t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType><t:CalendarEventArray>\(blocks.joined())</t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse>"
         }.joined()
         return """
         <?xml version="1.0" encoding="utf-8"?>

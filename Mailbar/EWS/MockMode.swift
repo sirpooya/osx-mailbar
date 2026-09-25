@@ -241,7 +241,9 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             }
             if request.contains("<m:GetUserAvailabilityRequest>") {
                 let addresses = Self.matches("<t:Address>([^<]*)</t:Address>", in: request).map(Self.unescape)
-                return ok(MockCalendar.availabilityResponse(addresses, events: calendarEvents()))
+                return ok(MockCalendar.availabilityResponse(addresses, events: calendarEvents(),
+                                                            detailed: request.contains("<t:RequestedView>Detailed</t:RequestedView>"),
+                                                            windowStart: Self.firstMatch("<t:StartTime>([^<]*)</t:StartTime>", in: request)))
             }
             if request.contains("<m:GetRoomLists") { return ok(MockCalendar.roomListsResponse) }
             if request.contains("<m:GetRooms>") { return ok(MockCalendar.roomsResponse) }
