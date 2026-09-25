@@ -15,9 +15,7 @@ struct SchedulingAssistant: View {
 
     /// The strip's middle: its first day is a week before, and it runs `stripDays` days.
     @State private var anchor = Date()
-    /// The day at the strip's left edge as it scrolls, for the header.
-    @State private var visibleDay: Date?
-    /// Bumped to scroll the strip to the meeting: on opening, the arrows, Next free time.
+    /// Bumped to scroll the strip to the meeting: on opening and on Next free time.
     @State private var scrollRequest = 0
     /// The strip as it was when a drag began, held until it ends: the meeting's own day stretches
     /// to take it in, and a strip that changed under the hand made the band slip.
@@ -43,7 +41,6 @@ struct SchedulingAssistant: View {
     /// Narrow, giving the hours the room (the user's call); a long name is cut, whole in its tooltip.
     private static let nameWidth: CGFloat = 200
     private static let gridSpace = "scheduleGrid"
-    private static let viewportSpace = "scheduleViewport"
 
     private var stripStart: Date {
         let calendar = Calendar.current
@@ -140,13 +137,6 @@ struct SchedulingAssistant: View {
                     // Opens at the meeting, which may sit past the hours in view.
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal) { grid }
-                            .coordinateSpace(name: Self.viewportSpace)
-                            .onPreferenceChange(DayEdgeKey.self) { edges in
-                                // The last day whose start has scrolled to the left edge or past it.
-                                let shown = edges.filter { $0.value <= 1 }.max { $0.value < $1.value }?.key
-                                    ?? edges.min { $0.value < $1.value }?.key
-                                MainActor.assumeIsolated { visibleDay = shown }
-                            }
                             .onAppear { scroll(proxy) }
                             .onChange(of: scrollRequest) { _, _ in scroll(proxy) }
                     }
@@ -161,36 +151,30 @@ struct SchedulingAssistant: View {
 
     // MARK: - Pieces
 
-    /// The day and its arrows on the left, Next free time on the right, in the row where Event
-    /// has its toolbar (the user's call: Event's items do not show here). Cancel and Send are the
+    /// "‹ Next free time ›" on the right, in the row where Event has its toolbar (the user's call:
+    /// Event's items do not show here, and the day needs no line of its own, since the strip names
+    /// each day over its hours). Cancel and Send are the
     /// form's own, in its bottom bar.
     private var header: some View {
         HStack(spacing: 8) {
-            Button { shiftDay(-1) } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.borderless)
-                .help("Move the meeting to the previous work day")
-            Text((visibleDay ?? draft?.start ?? anchor).formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                // The toolbar's 13 pt, like Event's buttons and menus (the user's call).
-                .font(.system(size: 13))
-                .frame(minWidth: 150)
-            Button { shiftDay(1) } label: { Image(systemName: "chevron.right") }
-                .buttonStyle(.borderless)
-                .help("Move the meeting to the next work day")
             if failed {
                 Text("Free/busy could not be read.").font(.system(size: 11)).foregroundStyle(.orange)
             }
             Spacer()
-            // Borderless like Event's toolbar items, not a bordered button.
-            Button(action: nextFree) {
-                // A label view, as Event's buttons have: a bare title draws grey when borderless.
-                HStack(spacing: 4) {
-                    Image(systemName: "forward.end")
-                    Text("Next free time")
-                }
+            // "‹ Next free time ›" (the user's call): the chevrons find
+            // the free time before and after the meeting, the words the one after.
+            HStack(spacing: 8) {
+                Button { findFree(forward: false) } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.borderless)
+                    .help("Previous free time")
+                Button { findFree(forward: true) } label: { Text("Next free time") }
+                    .buttonStyle(.borderless)
+                    .fixedSize()
+                Button { findFree(forward: true) } label: { Image(systemName: "chevron.right") }
+                    .buttonStyle(.borderless)
+                    .help("Next free time")
             }
-                .buttonStyle(.borderless)
-                .fixedSize()
-                .disabled(loading)
+            .disabled(loading)
         }
         .frame(height: EventEditorView.toolbarRowHeight)
         // The toolbar's own padding, so the row sits where Event's toolbar does.
@@ -253,10 +237,6 @@ struct SchedulingAssistant: View {
                         }
                     }
                     .frame(width: CGFloat(segment.hours.count) * Self.hourWidth, alignment: .leading)
-                    .background(GeometryReader { box in
-                        Color.clear.preference(key: DayEdgeKey.self,
-                                               value: [segment.dayStart: box.frame(in: .named(Self.viewportSpace)).minX])
-                    })
                 }
             }
             ZStack(alignment: .topLeading) {
@@ -458,23 +438,6 @@ struct SchedulingAssistant: View {
         loading = false
     }
 
-    /// The meeting to the previous or next work day at the same time, and the view with it. Past
-    /// the strip's ends the strip moves to the meeting's new day.
-    private func shiftDay(_ step: Int) {
-        guard let draft else { return }
-        let calendar = Calendar.current
-        let workDays = Keys.calendarWorkDays()
-        var moved = draft.start
-        for _ in 0..<14 {
-            moved = calendar.date(byAdding: .day, value: step, to: moved) ?? moved
-            if workDays.contains(calendar.component(.weekday, from: moved)) { break }
-        }
-        store.editor?.startKeepingDuration = moved
-        let stripEnd = calendar.date(byAdding: .day, value: Self.stripDays, to: stripStart) ?? stripStart
-        if moved < stripStart || moved >= stripEnd { anchor = moved }
-        scrollRequest += 1
-    }
-
     private func moveMeeting(toX x: CGFloat, timeline: ScheduleTimeline) {
         // A click on the band itself is the start of a drag, not a new time.
         if let draft, timeline.spans(draft.start, draft.end).contains(where: { x >= $0.x && x <= $0.x + $0.width }) { return }
@@ -482,12 +445,15 @@ struct SchedulingAssistant: View {
         store.editor?.startKeepingDuration = ScheduleTimeline.snapped(date, minutes: 30, down: true)
     }
 
-    /// The first half hour from the meeting's start, through the strip's work hours, that nobody
-    /// known is busy for the meeting's length and that ends inside the same day's hours.
-    private func nextFree() {
+    /// The nearest half hour after the meeting's start (or before it), through the strip's work
+    /// hours, that nobody known is busy for the meeting's length, inside one day's hours.
+    private func findFree(forward: Bool) {
         guard let draft else { return }
-        if let found = timeline.nextFree(from: draft.start, length: draft.duration,
-                                         busy: blocks.values.compactMap { $0 }.flatMap { $0 }) {
+        let busy = blocks.values.compactMap { $0 }.flatMap { $0 }
+        let found = forward
+            ? timeline.nextFree(from: draft.start.addingTimeInterval(60), length: draft.duration, busy: busy)
+            : timeline.previousFree(before: draft.start, length: draft.duration, busy: busy)
+        if let found {
             store.editor?.startKeepingDuration = found
             scrollRequest += 1
         }
@@ -522,14 +488,6 @@ struct SchedulingAssistant: View {
         case "WorkingElsewhere": return "Working elsewhere"
         default: return type
         }
-    }
-}
-
-/// Each shown day's left edge in the viewport, for the header's date.
-private struct DayEdgeKey: PreferenceKey {
-    static let defaultValue: [Date: CGFloat] = [:]
-    static func reduce(value: inout [Date: CGFloat], nextValue: () -> [Date: CGFloat]) {
-        value.merge(nextValue()) { $1 }
     }
 }
 
@@ -619,6 +577,22 @@ struct ScheduleTimeline: Equatable {
                 let end = candidate.addingTimeInterval(length)
                 if !busy.contains(where: { $0.start < end && $0.end > candidate }) { return candidate }
                 candidate = candidate.addingTimeInterval(1800)
+            }
+        }
+        return nil
+    }
+
+    /// The last half hour before `before` with room for `length` inside one day's shown hours
+    /// that no busy block overlaps.
+    func previousFree(before: Date, length: TimeInterval, busy: [BusyBlock]) -> Date? {
+        for segment in segments.reversed() where segment.start < before {
+            var candidate = min(ScheduleTimeline.snapped(before.addingTimeInterval(-60), minutes: 30, down: true),
+                                segment.end.addingTimeInterval(-length))
+            candidate = ScheduleTimeline.snapped(candidate, minutes: 30, down: true)
+            while candidate >= segment.start {
+                let end = candidate.addingTimeInterval(length)
+                if end <= segment.end, !busy.contains(where: { $0.start < end && $0.end > candidate }) { return candidate }
+                candidate = candidate.addingTimeInterval(-1800)
             }
         }
         return nil

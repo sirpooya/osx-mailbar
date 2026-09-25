@@ -17,6 +17,7 @@ section when a release is cut.
 ### Changed
 - Schedule's name column is narrower, leaving more room for the hours; hover a cut name to read it whole, and a block's tooltip now gives its length.
 - Schedule runs on across the days: only work days and work hours, side by side, so swiping goes straight into the next working day. The meeting can be dragged from one day to the next, and Next free time looks ahead into later days.
+- Schedule's top row is just ‹ Next free time ›: the arrows jump to the free time before or after the meeting. The date line is gone, since each day is named over its hours.
 
 ## [1.1.0] - 2026-09-26
 

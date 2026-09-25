@@ -444,4 +444,13 @@ import Testing
         #expect(strip.nextFree(from: date(28, 10), length: 3600, busy: busy) == date(29, 9))
         #expect(strip.nextFree(from: date(28, 16.75), length: 3600, busy: []) == date(29, 9))
     }
+
+    @Test func previousFreeTimeRunsBackIntoTheDayBefore() {
+        let strip = strip()
+        let busy = [BusyBlock(start: date(28, 9), end: date(28, 12), type: "Busy")]
+        // Before Monday 11:00, with 9 to 12 taken, the last free hour is Sunday 16:00.
+        #expect(strip.previousFree(before: date(28, 11), length: 3600, busy: busy) == date(27, 16))
+        // Half an hour back, as Next free time steps.
+        #expect(strip.previousFree(before: date(28, 11), length: 3600, busy: []) == date(28, 10.5))
+    }
 }

@@ -188,26 +188,28 @@ struct SettingsView: View {
                     onChange()
                 }))
             }
-            SettingsRow("Day starts") {
-                Picker("", selection: $workStart) {
-                    ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+            // One row, "09:00 to 17:00" (the user's call).
+            SettingsRow("Work hours") {
+                HStack(spacing: 6) {
+                    Picker("", selection: $workStart) {
+                        ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    .onChange(of: workStart) { _, start in
+                        if workEnd <= start { workEnd = start + 1 }
+                        onChange()
+                    }
+                    Text("to").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Picker("", selection: $workEnd) {
+                        ForEach((workStart + 1)...24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    .onChange(of: workEnd) { _, _ in onChange() }
                 }
-                .labelsHidden()
-                .controlSize(.small)
-                .fixedSize()
-                .onChange(of: workStart) { _, start in
-                    if workEnd <= start { workEnd = start + 1 }
-                    onChange()
-                }
-            }
-            SettingsRow("Day ends") {
-                Picker("", selection: $workEnd) {
-                    ForEach((workStart + 1)...24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .fixedSize()
-                .onChange(of: workEnd) { _, _ in onChange() }
             }
             SettingsRow("Time zone") {
                 Picker("", selection: $timeZoneID) {
