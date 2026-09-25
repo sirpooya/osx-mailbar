@@ -35,7 +35,9 @@ struct EventEditorView: View {
     private static let formSize = CGSize(width: mainWidth + sidebarWidth, height: 556)
     /// Repeat, Reminder and Show as share one width (the user's call), wide enough for the
     /// longest choice, "Working elsewhere" with its swatch.
-    private static let menuWidth: CGFloat = 150
+    /// Duration, Repeat and Until share the date boxes' width, so their right edges line up
+    /// with the dates' (the user's call).
+    private static let menuWidth: CGFloat = 134
     /// The toolbar's charm glyph, category square and Show as square share one size (the user's
     /// catch: they were 14, 10 and 14 pt).
     private static let toolbarIcon: CGFloat = 12
@@ -71,8 +73,6 @@ struct EventEditorView: View {
             return true
         }
     }
-
-    private var draft: EventDraft { store.editor ?? original }
 
     enum Pane: String, CaseIterable, Identifiable {
         case event = "Event", schedule = "Schedule"
@@ -165,6 +165,8 @@ struct EventEditorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+
+    private var draft: EventDraft { store.editor ?? original }
 
     /// A binding into the open draft, so every field edits `store.editor` directly.
     private func field<Value>(_ path: WritableKeyPath<EventDraft, Value>) -> Binding<Value> {
@@ -337,7 +339,7 @@ struct EventEditorView: View {
             // Outlook for Mac's arrangement (the user's pick): Duration and All day on one line,
             // Starts and Ends under it. The duration sets the end; editing the end updates it.
             row("Duration") {
-                PopUpMenu(items: durationItems, selected: durationID, width: 120) { id in
+                PopUpMenu(items: durationItems, selected: durationID, width: Self.menuWidth) { id in
                     if let minutes = Int(id) { store.editor?.duration = TimeInterval(minutes * 60) }
                 }
                 .boxed()
@@ -774,8 +776,6 @@ struct EventEditorView: View {
     }
 }
 
-/// Outlook's free/busy swatches for the Show as menu: Free an empty square, Working elsewhere
-/// dotted, Tentative hatched, Busy the calendar's blue, Away purple. Drawn as untinted images,
 /// Event or Schedule, drawn like the calendar's Day, Week, Month switch: a grey pill that slides
 /// between the segments inside a lightly bordered capsule.
 private struct PaneSwitcher: View {
@@ -821,6 +821,8 @@ private struct PaneSwitcher: View {
     }
 }
 
+/// Outlook's free/busy swatches for the Show as menu: Free an empty square, Working elsewhere
+/// dotted, Tentative hatched, Busy the calendar's blue, Away purple. Drawn as untinted images,
 /// because a menu draws a template image in the text colour and the colour is the point. The
 /// Scheduling Assistant draws its blocks and legend with the same art, at any width.
 enum ShowAsSwatch {

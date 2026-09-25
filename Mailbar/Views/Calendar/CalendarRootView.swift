@@ -165,13 +165,33 @@ struct CalendarRootView: View {
                     .fixedSize()
                     .help(store.account?.displayName ?? "Account")
                 } else {
-                    Picker("", selection: Binding(get: { store.account?.id }, set: { store.accountID = $0 })) {
-                        ForEach(store.mail.accounts.accounts) { account in
-                            Text(account.displayName).tag(Optional(account.id))
+                    // A grey capsule like New Event and Today beside it (the user's call); the
+                    // stock popup's square corners stood out in the row.
+                    Menu {
+                        Picker("", selection: Binding(get: { store.account?.id }, set: { store.accountID = $0 })) {
+                            ForEach(store.mail.accounts.accounts) { account in
+                                Text(account.displayName).tag(Optional(account.id))
+                            }
                         }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(store.account?.displayName ?? "Account").lineLimit(1)
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.system(size: 13))
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                        .background(Capsule().fill(CalendarControl.fill))
+                        .contentShape(Capsule())
                     }
-                    .labelsHidden()
-                    .frame(width: 150)
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Account")
                 }
             }
 
@@ -189,7 +209,7 @@ struct CalendarRootView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut("n", modifiers: .command)
-            .help("New event (Command N)")
+            .help("New Event  ⌘N")
             .disabled(store.account == nil)
 
             ModeSwitcher(selection: $store.mode, compact: compact)
@@ -204,7 +224,7 @@ struct CalendarRootView: View {
                         .contentShape(Circle())
                 }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
-                .help("Previous")
+                .help("Previous  ⌘←")
                 Button { store.goToday() } label: {
                     Text("Today").font(.system(size: 13))
                         .padding(.horizontal, compact ? 10 : 12)
@@ -213,6 +233,7 @@ struct CalendarRootView: View {
                         .contentShape(Capsule())
                 }
                 .keyboardShortcut("t", modifiers: .command)
+                .help("Today  ⌘T")
                 Button { store.slide(forward: true) } label: {
                     Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
                         .frame(width: 26, height: 26)
@@ -220,7 +241,7 @@ struct CalendarRootView: View {
                         .contentShape(Circle())
                 }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
-                .help("Next")
+                .help("Next  ⌘→")
             }
             .foregroundStyle(.primary)
             .buttonStyle(.plain)

@@ -177,7 +177,7 @@ struct PopoverRootView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut("n", modifiers: .command)
-                .help(store.draft?.hasContent == true ? "Back to the message you are writing" : "New message (Command N)")
+                .help(store.draft?.hasContent == true ? "Back to the message you are writing" : "New Message  ⌘N")
                 .accessibilityLabel("New message")
                 .disabled(store.selectedAccount == nil)
                 if accounts.count > 1 { accountMenu }
@@ -198,7 +198,7 @@ struct PopoverRootView: View {
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut("f", modifiers: .command)
-                    .help("Search the Inbox (Cmd+F)")
+                    .help("Search the Inbox  ⌘F")
                     .accessibilityLabel("Search the Inbox")
                     .disabled(store.selectedAccount == nil)
                     .transition(.identity)
@@ -208,7 +208,7 @@ struct PopoverRootView: View {
                     Image(systemName: "gearshape").font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help("Settings (Command ,)")
+                .help("Settings  ⌘,")
                 .accessibilityLabel("Settings")
             }
             .animation(nil, value: showsTodayTab)
@@ -427,7 +427,7 @@ struct PopoverRootView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
                 .keyboardShortcut("r", modifiers: .command)
-                .help("Check for new mail (Command R)")
+                .help("Check for New Mail  ⌘R")
                 .accessibilityLabel("Check for new mail")
                 .frame(width: 12, height: 12)
             }

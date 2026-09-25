@@ -128,11 +128,11 @@ struct MessageReaderView: View {
     /// reply all needs its recipients.
     private var responseButtons: some View {
         HStack(spacing: 14) {
-            responseButton("arrowshape.turn.up.left", help: "Reply (Command R)", kind: .reply)
+            responseButton("arrowshape.turn.up.left", help: "Reply  ⌘R", kind: .reply)
                 .keyboardShortcut("r", modifiers: .command)
-            responseButton("arrowshape.turn.up.left.2", help: "Reply All (Shift Command R)", kind: .replyAll)
+            responseButton("arrowshape.turn.up.left.2", help: "Reply All  ⇧⌘R", kind: .replyAll)
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-            responseButton("arrowshape.turn.up.right", help: "Forward (Shift Command F)", kind: .forward)
+            responseButton("arrowshape.turn.up.right", help: "Forward  ⇧⌘F", kind: .forward)
                 .keyboardShortcut("f", modifiers: [.command, .shift])
         }
     }

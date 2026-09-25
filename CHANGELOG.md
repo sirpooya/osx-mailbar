@@ -119,8 +119,14 @@ section when a release is cut.
 - Check availability in the room list adds the rooms to the Scheduling Assistant to compare; tick one there to book it.
 - Booked rooms show as neutral grey chips.
 - The event form's scroll bars are hidden, and the form no longer scrolls unless its content is taller than the window.
+- The calendar toolbar's account menu is a rounded capsule like the buttons beside it.
 - Scheduling Assistant is denser, like Outlook's: shorter rows grouped under Attendees and Rooms, with thin hour lines. Busy, tentative, away and working-elsewhere times look the same as in the Show as menu.
+- Duration, Repeat and Until are as wide as the date boxes, so their edges line up.
+- The Settings window is shorter.
+- Mailbar shows in the Dock while Settings is open, as it does for the calendar.
 - The Scheduling Assistant is now Schedule, a view inside the event form: switch between Event and Schedule at the top, with Cancel and Send working in both. It no longer opens as a separate sheet.
+- The calendar opens at a smaller size, and event titles and their colour bars are lighter.
+- Tooltips show shortcuts as symbols, such as New Event ⌘N.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.

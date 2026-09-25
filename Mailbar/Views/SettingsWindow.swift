@@ -9,7 +9,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
 
+    var isOpen: Bool { window?.isVisible == true }
+
     func show(accounts: AccountStore, client: EWSClient, directory: PeopleDirectory, onChange: @escaping () -> Void) {
+        DockPresence.windowOpened()
         WindowActivation.claim()
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -35,7 +38,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.setContentSize(NSSize(width: SettingsMetrics.windowWidth,
-                                     height: QCFlags.settingsHeight ?? 480 + SettingsMetrics.tabBarHeight + 28))
+                                     height: QCFlags.settingsHeight ?? 384 + SettingsMetrics.tabBarHeight + 28))
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -47,5 +50,13 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+        DockPresence.windowClosed()
+    }
+
+    /// A Dock click with Settings the only window open.
+    func bringForward() {
+        guard let window else { return }
+        WindowActivation.claim()
+        window.makeKeyAndOrderFront(nil)
     }
 }

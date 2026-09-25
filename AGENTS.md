@@ -310,9 +310,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 `LSUIElement: true` and `.accessory`: no Dock tile for the menu bar popover or
   Settings. osx-jirabar learned that flipping to `.regular` was never what let a window take
   focus; activating the app is.
-- 2026-09-25 **The calendar window is the one exception** (the user's request): while it is open
-  the app is `.regular`, so the calendar is in the Dock and Cmd+Tab; closing it returns to
-  `.accessory`. A Dock click brings the calendar forward. Do not extend this to Settings.
+- 2026-09-25 **The calendar window and Settings are the exceptions** (the user's requests):
+  while either is open the app is `.regular`, so it is in the Dock and Cmd+Tab; closing the last
+  of them returns to `.accessory` (`DockPresence`). A Dock click brings the calendar forward, or
+  Settings when it is the only one open. The popover alone never shows a Dock tile.
 - 2026-09-25 Calendar swipe copies Apple's Calendar, not a transition: three pages (-1, 0, 1)
   side by side in `PagerStrip`s that the header, all-day strip and hour grid share; the strip
   follows the fingers (`CalendarPager`), and on release a spring starting at the fingers' speed
@@ -401,7 +402,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `FieldBox` look, 28 pt tall, and popups are large-size `NSPopUpButton`s of the same height,
   every row at least 28 pt and its label CENTRED on the row (baseline alignment let each native
   control move the label, the user's recording), only Description aligned on its first line;
-  Repeat and Until one width (150); no scroll bars, and Description (60 pt at least) fills the
+  Duration, Repeat and Until one width, the date boxes' (134); no scroll bars, and Description (60 pt at least) fills the
   rest so the form does not scroll; the form is 690 x 556 (440 pt of
   fields, a 250 pt People sidebar, the user's marks); lengths and reminders use short units
   (30m, 1h 30m; reminders 15m, 1d, "At start", no "before"); every control shares one look, light
@@ -439,7 +440,12 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   crossing back above switches Day to Week; on opening, narrow is Day and wide turns a leftover
   Day into Week. Only crossings switch, so a view picked by hand holds until the next crossing.
   Day labels and Month weekday names use ONE format across the row, never per column.
-- 2026-09-25 Toolbar controls in Apple's style: "+ New Event" as a grey capsule (Cmd+N); Day,
+- 2026-09-25 Tooltips name the action then its shortcut in symbols, "New Event  ⌘N", never
+  "(Command N)" (the user's call). The calendar window opens at 870 x 620 (autosave name
+  `MailbarCalendarWindow.v2`, so the new default applied once); event titles are medium weight
+  and their leading bar 2 pt (`EventBlock.barWidth`).
+- 2026-09-25 Toolbar controls in Apple's style: the account menu (with several accounts) and
+  "+ New Event" as grey capsules (Cmd+N); Day,
   Week, Month in one capsule with a sliding grey pill (`ModeSwitcher`), a light border, no shadow; Previous and Next as round grey buttons around a Today
   capsule.
 - 2026-09-25 Changing Day, Week, Month is a hard cut, as Apple's Calendar does it (checked frame
@@ -478,7 +484,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   (event reminders, people directory).
   The top copies osx-launchpad's: no title strip, only the close button, the tab bar (glyph over
   label, 72 pt items, accent when selected on a 0.04 grey pill) straight under it, movable by its
-  background. It opens on Accounts while there is none. Pickers hug their size so they end where
+  background, with 384 pt of body under the tab bar (96 pt shorter, the user's call). It opens
+  on Accounts while there is none. Pickers hug their size so they end where
   the switches do. Rows carry no subtitles (the user: "too extra"). The Today tab is always on:
   its switch was removed. A click anywhere on an account row opens its editor; the editor has no
   "Edit ..." heading and opens with no field focused or selected, not even for a frame: a

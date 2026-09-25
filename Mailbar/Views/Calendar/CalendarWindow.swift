@@ -24,7 +24,7 @@ final class CalendarWindow: NSObject, NSWindowDelegate {
     var isOpen: Bool { window?.isVisible == true }
 
     func show(mail: MailStore) {
-        NSApp.setActivationPolicy(.regular)
+        DockPresence.windowOpened()
         WindowActivation.claim()
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -41,11 +41,13 @@ final class CalendarWindow: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.minSize = CalendarRootView.minimumSize
-        window.setContentSize(NSSize(width: 1180, height: 760))
+        // Opens at the size the user picked (2026-09-25); after that, wherever they leave it.
+        window.setContentSize(NSSize(width: 870, height: 620))
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
-        window.setFrameAutosaveName("MailbarCalendarWindow")
+        // A new name, so the new default size applies once instead of an old saved frame.
+        window.setFrameAutosaveName("MailbarCalendarWindow.v2")
         if let width = QCFlags.calendarWidth {
             // After the autosaved frame is restored, or that frame wins.
             DispatchQueue.main.async {
@@ -157,7 +159,6 @@ final class CalendarWindow: NSObject, NSWindowDelegate {
         removeSwipe()
         window = nil
         store = nil
-        // Back to menu bar only. A turn later, so the window has finished closing first.
-        DispatchQueue.main.async { NSApp.setActivationPolicy(.accessory) }
+        DockPresence.windowClosed()
     }
 }

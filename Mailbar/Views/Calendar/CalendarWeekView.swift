@@ -254,7 +254,7 @@ private struct NewEventGhost: View {
         let h = max(CGFloat(end.timeIntervalSince(start) / 3600) * height - 2, 12)
         let times = "\(start.formatted(date: .omitted, time: .shortened)) to \(end.formatted(date: .omitted, time: .shortened))"
         HStack(alignment: .top, spacing: 0) {
-            Rectangle().fill(Color.accentColor).frame(width: 4)
+            Rectangle().fill(Color.accentColor).frame(width: EventBlock.barWidth)
             VStack(alignment: .leading, spacing: 1) {
                 Text("New Event").font(.system(size: 11.5, weight: .semibold))
                 if h >= 30 {
@@ -338,7 +338,10 @@ struct EventBlock: View {
     /// The block's width, for the same reason.
     var width: CGFloat = 200
 
-    private static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+    /// Medium, not semibold: the titles read less heavy (the user's call).
+    private static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    /// The coloured bar at a block's leading edge: 2 pt, half what it was (the user's call).
+    static let barWidth: CGFloat = 2
 
     /// Wraps only between words, as Calendar does. SwiftUI will otherwise break a word that does
     /// not fit its line ("Desig / n Syste / m W..."), so when the longest word is wider than the
@@ -348,7 +351,7 @@ struct EventBlock: View {
         let byHeight = max(1, min(4, Int((height - 6) / 14)))
         guard byHeight > 1 else { return 1 }
         let icons: CGFloat = (event.isRecurring ? 13 : 0) + (event.isPrivate ? 12 : 0) + (event.charm != nil ? 14 : 0)
-        let room = width - 4 - 10 - icons
+        let room = width - Self.barWidth - 10 - icons
         let longest = event.subject.split(whereSeparator: \.isWhitespace)
             .map { (String($0) as NSString).size(withAttributes: [.font: Self.titleFont]).width }
             .max() ?? 0
@@ -373,7 +376,7 @@ struct EventBlock: View {
         // Top-aligned, as Outlook lays a block out: title in the top corner, second line under it,
         // not both floating in the middle of a tall event.
         HStack(alignment: .top, spacing: 0) {
-            Rectangle().fill(event.isTentative ? tint.opacity(0.45) : tint).frame(width: 4)
+            Rectangle().fill(event.isTentative ? tint.opacity(0.45) : tint).frame(width: Self.barWidth)
                 .frame(maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -381,7 +384,7 @@ struct EventBlock: View {
                     if let charm = event.charm.flatMap(EventCharm.init) {
                         Image(systemName: charm.symbol).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
-                    DirectionalText(event.subject, font: .system(size: 11.5, weight: .semibold), lines: titleLines)
+                    DirectionalText(event.subject, font: .system(size: 11.5, weight: .medium), lines: titleLines)
                         .strikethrough(event.isCancelled)
                         .layoutPriority(1)
                     if event.isRecurring {

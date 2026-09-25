@@ -74,7 +74,7 @@ struct ComposeView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(draft.sendProblem != nil)
-                    .help(draft.sendProblem ?? "Send (Command Return)")
+                    .help(draft.sendProblem ?? "Send  ⌘↩")
             }
         }
         .padding(.horizontal, 12)

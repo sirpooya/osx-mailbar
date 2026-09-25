@@ -330,7 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The Dock icon only exists while the calendar is open (M15), so a click on it means the
     /// calendar.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        CalendarWindow.shared.bringForward()
+        if CalendarWindow.shared.isOpen { CalendarWindow.shared.bringForward() }
+        else { SettingsWindow.shared.bringForward() }
         return false
     }
 
