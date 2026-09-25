@@ -39,8 +39,8 @@ targets:
       base:
         PRODUCT_NAME: Mailbar
         PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar
-        MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 1.1.0
+        CURRENT_PROJECT_VERSION: 2
         # Signed with the real development certificate, never ad-hoc. A Keychain item's ACL trusts
         # the app's designated requirement; ad-hoc makes that a cdhash of one exact build, so every
         # rebuild would re-prompt for the login password before reading a stored mail password.
