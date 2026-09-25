@@ -63,7 +63,7 @@ enum MockCalendar {
     /// else is free, and an address outside the invented domains has no data. Rooms are booked
     /// through the requested day; the detailed view adds subjects, a room's being its organizer.
     static func availabilityResponse(_ addresses: [String], events: [Event], detailed: Bool = false,
-                                     windowStart: String? = nil) -> String {
+                                     windowStart: String? = nil, windowEnd: String? = nil) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "UTC")
@@ -80,14 +80,22 @@ enum MockCalendar {
             }
             var blocks = (address.hasPrefix("sara") ? events.filter { !$0.isAllDay } : [])
                 .map { block($0.start, $0.end, $0.showAs, $0.subject, $0.location) }
-            if address.hasPrefix("room"), let windowStart, let day = formatter.date(from: String(windowStart.prefix(19))) {
+            if address.hasPrefix("room"), let windowStart, let first = formatter.date(from: String(windowStart.prefix(19))) {
+                let last = windowEnd.flatMap { formatter.date(from: String($0.prefix(19))) } ?? first.addingTimeInterval(86_400)
                 let organizers = ["Sara Rahimi", "Omid Karimi", "نرگس احمدی", "Amir Karimi"]
                 let seed = address.unicodeScalars.reduce(0) { $0 + Int($1.value) }
-                for slot in 0..<4 {
-                    let hour = 5.5 + Double(slot) * 2.5 + Double(seed % 3) * 0.5
-                    let start = day.addingTimeInterval(hour * 3600)
-                    blocks.append(block(start, start.addingTimeInterval(slot == 1 ? 5400 : 3600), slot == 2 ? "Tentative" : "Busy",
-                                        organizers[(seed + slot) % organizers.count], ""))
+                var day = first
+                var index = 0
+                // Booked through every day of the window, a little differently each day.
+                while day < last {
+                    for slot in 0..<4 {
+                        let hour = 5.5 + Double(slot) * 2.5 + Double((seed + index) % 3) * 0.5
+                        let start = day.addingTimeInterval(hour * 3600)
+                        blocks.append(block(start, start.addingTimeInterval(slot == 1 ? 5400 : 3600), slot == 2 ? "Tentative" : "Busy",
+                                            organizers[(seed + slot + index) % organizers.count], ""))
+                    }
+                    day = day.addingTimeInterval(86_400)
+                    index += 1
                 }
             }
             return "<m:FreeBusyResponse><m:ResponseMessage ResponseClass=\"Success\"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage><m:FreeBusyView><t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType><t:CalendarEventArray>\(blocks.joined())</t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse>"

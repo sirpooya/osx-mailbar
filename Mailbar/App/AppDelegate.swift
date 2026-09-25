@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // First, always: anything whose default is not 0 or false must be registered before
         // anything reads it.
         Keys.registerDefaults()
+        Keys.applyTimeZone()
 
         if let mock = MockMode.current {
             accounts = AccountStore(inMemory: MockMode.accounts, passwords: MockMode.passwords)

@@ -11,6 +11,10 @@ struct SettingsView: View {
     @AppStorage(Keys.notifyNewMail) private var notifyNewMail = true
     @AppStorage(Keys.eventReminders) private var eventReminders = true
     @AppStorage(Keys.peopleDirectoryURL) private var directoryURL = ""
+    @AppStorage(Keys.calendarWorkDays) private var workDaysText = "7,1,2,3,4"
+    @AppStorage(Keys.calendarWorkStartHour) private var workStart = 9
+    @AppStorage(Keys.calendarWorkEndHour) private var workEnd = 17
+    @AppStorage(Keys.calendarTimeZone) private var timeZoneID = ""
     @State private var launchAtLogin = false
     @State private var directoryDraft = ""
     @State private var editingDirectory = false
@@ -47,6 +51,7 @@ struct SettingsView: View {
             case .calendar:
                 SettingsTabBody {
                     calendarSection
+                    workTimeSection
                     directorySection
                 }
             }
@@ -170,6 +175,71 @@ struct SettingsView: View {
                 SettingsSwitch(isOn: $eventReminders)
             }
         }
+    }
+
+    /// Outlook's work time (the user's request, 2026-09-26): the work week, when the day starts
+    /// and ends, and the time zone. Schedule shows only these days and hours; the calendar shades
+    /// the rest; repeats offer "Every workday" from the days.
+    private var workTimeSection: some View {
+        SettingsSection("Work time", footnote: "Schedule shows only these days and hours.") {
+            SettingsRow("Work week") {
+                WorkWeekPicker(days: Binding(get: { Keys.calendarWorkDays() }, set: { days in
+                    workDaysText = days.sorted().map(String.init).joined(separator: ",")
+                    onChange()
+                }))
+            }
+            SettingsRow("Day starts") {
+                Picker("", selection: $workStart) {
+                    ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .onChange(of: workStart) { _, start in
+                    if workEnd <= start { workEnd = start + 1 }
+                    onChange()
+                }
+            }
+            SettingsRow("Day ends") {
+                Picker("", selection: $workEnd) {
+                    ForEach((workStart + 1)...24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .onChange(of: workEnd) { _, _ in onChange() }
+            }
+            SettingsRow("Time zone") {
+                Picker("", selection: $timeZoneID) {
+                    Text("Mac's (\(Self.zoneLabel(NSTimeZone.system)))").tag("")
+                    Divider()
+                    ForEach(Self.zoneChoices, id: \.self) { id in
+                        if let zone = TimeZone(identifier: id) { Text(Self.zoneLabel(zone)).tag(id) }
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .onChange(of: timeZoneID) { _, _ in
+                    Keys.applyTimeZone()
+                    onChange()
+                }
+            }
+        }
+    }
+
+    /// The zones Exchange can be told about (`WindowsTimeZone`), so events are always written in
+    /// a zone the server knows; west to east.
+    private static let zoneChoices: [String] = WindowsTimeZone.byIANA.keys
+        .filter { TimeZone(identifier: $0) != nil }
+        .sorted { (TimeZone(identifier: $0)!.secondsFromGMT(), $0) < (TimeZone(identifier: $1)!.secondsFromGMT(), $1) }
+
+    /// "GMT+03:30 Asia/Tehran".
+    private static func zoneLabel(_ zone: TimeZone) -> String {
+        let seconds = zone.secondsFromGMT()
+        let sign = seconds < 0 ? "-" : "+"
+        let minutes = abs(seconds) / 60
+        return String(format: "GMT%@%02d:%02d ", sign, minutes / 60, minutes % 60) + zone.identifier
     }
 
     // MARK: - Tabs
@@ -335,5 +405,38 @@ private struct SettingsTabItem: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// The seven days as toggles, in the order the week starts on (Settings' first weekday), each
+/// its one-letter name; at least one always stays on.
+private struct WorkWeekPicker: View {
+    @Binding var days: Set<Int>
+
+    var body: some View {
+        let calendar = Calendar.current
+        let first = Keys.calendarWeekStart()
+        HStack(spacing: 4) {
+            ForEach(0..<7, id: \.self) { offset in
+                let day = (first - 1 + offset) % 7 + 1
+                let on = days.contains(day)
+                Button {
+                    var next = days
+                    if on { next.remove(day) } else { next.insert(day) }
+                    if !next.isEmpty { days = next }
+                } label: {
+                    Text(calendar.veryShortStandaloneWeekdaySymbols[day - 1])
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(on ? Color.white : Color.primary)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(on ? Color.accentColor : Color.primary.opacity(0.07)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(calendar.standaloneWeekdaySymbols[day - 1])
+                .accessibilityLabel(calendar.standaloneWeekdaySymbols[day - 1])
+                .accessibilityValue(on ? "Work day" : "Day off")
+            }
+        }
     }
 }

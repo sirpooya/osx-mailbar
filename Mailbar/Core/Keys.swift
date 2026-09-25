@@ -34,6 +34,8 @@ enum Keys {
     static let calendarWorkDays = "mailbar.calendarWorkDays"
     static let calendarWorkStartHour = "mailbar.calendarWorkStartHour"
     static let calendarWorkEndHour = "mailbar.calendarWorkEndHour"
+    /// An IANA zone the app runs in instead of the Mac's, or empty for the Mac's own.
+    static let calendarTimeZone = "mailbar.calendarTimeZone"
 
     static let pollMinuteChoices = [1, 2, 3, 5, 10]
 
@@ -66,6 +68,13 @@ enum Keys {
         let start = min(max(defaults.integer(forKey: calendarWorkStartHour), 0), 23)
         let end = min(max(defaults.integer(forKey: calendarWorkEndHour), start + 1), 24)
         return start...end
+    }
+
+    /// Sets the zone the whole app shows and writes times in: the chosen one, or the Mac's. Every
+    /// `Calendar.current`, formatter and `WindowsTimeZone.current` follows `NSTimeZone.default`.
+    static func applyTimeZone(_ defaults: UserDefaults = .standard) {
+        let chosen = defaults.string(forKey: calendarTimeZone).flatMap { TimeZone(identifier: $0) }
+        NSTimeZone.default = chosen ?? NSTimeZone.system
     }
 
     /// Clamped so a hand-edited plist cannot make the app poll every second.

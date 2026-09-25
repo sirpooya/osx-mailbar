@@ -12,6 +12,11 @@ section when a release is cut.
 
 ### Added
 - Schedule shows who booked each room, and what people's busy times are, inside the blocks where the server allows it; hover a block for its subject, place and whether it repeats.
+- Work time in Settings, Calendar: pick your work week, when the day starts and ends, and the time zone.
+
+### Changed
+- Schedule's name column is narrower, leaving more room for the hours; hover a cut name to read it whole, and a block's tooltip now gives its length.
+- Schedule runs on across the days: only work days and work hours, side by side, so swiping goes straight into the next working day. The meeting can be dragged from one day to the next, and Next free time looks ahead into later days.
 
 ## [1.1.0] - 2026-09-26
 

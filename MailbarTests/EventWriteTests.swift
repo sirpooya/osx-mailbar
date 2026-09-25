@@ -382,3 +382,66 @@ import Testing
         #expect(SchedulingAssistant.part(at: 6, width: 12) == .move)
     }
 }
+
+@Suite struct ScheduleTimelineTests {
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func date(_ day: Int, _ hour: Double) -> Date {
+        // September 2026: the 26th is a Saturday.
+        let base = calendar.date(from: DateComponents(year: 2026, month: 9, day: day))!
+        return base.addingTimeInterval(hour * 3600)
+    }
+
+    /// Saturday to Wednesday, 9 to 17, a meeting on Monday at 10.
+    private func strip(meeting: (Date, Date)? = nil) -> ScheduleTimeline {
+        ScheduleTimeline(first: date(26, 0), days: 7, workDays: [7, 1, 2, 3, 4], workHours: 9...17,
+                         meeting: meeting ?? (date(28, 10), date(28, 11)), hourWidth: 48, calendar: calendar)
+    }
+
+    @Test func onlyWorkDaysAndWorkHoursShow() {
+        let strip = strip()
+        #expect(strip.segments.count == 5)
+        #expect(strip.segments.allSatisfy { $0.hours == 9..<17 })
+        #expect(strip.width == CGFloat(5 * 8 * 48))
+        // Sunday's 09:00 sits right after Saturday's 17:00: nothing empty between.
+        #expect(strip.x(for: date(27, 9)) == CGFloat(8 * 48))
+        #expect(strip.x(for: date(26, 20)) == nil)
+    }
+
+    @Test func theMeetingsDayStretchesToTakeItInEvenOnADayOff() {
+        // "September 31" is Thursday October 1, a day off in this work week.
+        let strip = strip(meeting: (date(31, 18), date(31, 19)))
+        let thursday = strip.segments.first { calendar.component(.weekday, from: $0.dayStart) == 5 }
+        #expect(thursday?.hours == 9..<19)
+    }
+
+    @Test func pointsAndMomentsMapBothWays() {
+        let strip = strip()
+        let x = strip.x(for: date(28, 10))!
+        #expect(strip.date(atX: x) == date(28, 10))
+        #expect(strip.date(atX: -5) == date(26, 9))
+        // At the seam, an end belongs to the earlier day.
+        #expect(strip.date(atX: 8 * 48, preferEnd: true) == date(26, 17))
+        #expect(strip.date(atX: 8 * 48) == date(27, 9))
+        #expect(strip.x(for: date(26, 17), preferEnd: true) == CGFloat(8 * 48))
+    }
+
+    @Test func aRangeOverNightShowsAsOnePiecePerDay() {
+        let strip = strip()
+        let pieces = strip.spans(date(26, 16), date(27, 10))
+        #expect(pieces.count == 2)
+        #expect(pieces[0].width == 48)
+        #expect(pieces[1].width == 48)
+    }
+
+    @Test func nextFreeTimeRunsOnIntoTheNextWorkDay() {
+        let strip = strip()
+        let busy = [BusyBlock(start: date(28, 9), end: date(28, 17), type: "Busy")]
+        #expect(strip.nextFree(from: date(28, 10), length: 3600, busy: busy) == date(29, 9))
+        #expect(strip.nextFree(from: date(28, 16.75), length: 3600, busy: []) == date(29, 9))
+    }
+}

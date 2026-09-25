@@ -451,9 +451,14 @@ final class CalendarStore {
     /// Busy blocks for the Scheduling Assistant, over the whole day of `day`. Held by the
     /// assistant only, in memory. Nil when the server could not be asked.
     func busyBlocks(for addresses: [String], on day: Date) async -> [String: [BusyBlock]?]? {
+        await busyBlocks(for: addresses, from: day, days: 1)
+    }
+
+    /// The same over `days` whole days from `from`'s, in one request: Schedule's strip of days.
+    func busyBlocks(for addresses: [String], from: Date, days: Int) async -> [String: [BusyBlock]?]? {
         guard !addresses.isEmpty, let account, let (url, credential) = mail.connection(for: account.id) else { return nil }
-        let start = Calendar.current.startOfDay(for: day)
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+        let start = Calendar.current.startOfDay(for: from)
+        let end = Calendar.current.date(byAdding: .day, value: max(days, 1), to: start) ?? start
         return try? await mail.client.busyBlocks(addresses, start: start, end: end, at: url, credential: credential)
     }
 
