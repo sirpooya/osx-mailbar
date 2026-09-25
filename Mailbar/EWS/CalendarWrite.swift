@@ -227,6 +227,16 @@ enum CalendarSOAP {
         """
     }
 
+    /// One person's directory entry in full (job title, department, office, phones, address),
+    /// for the contact card an attendee's row opens.
+    static func resolveContact(_ address: String) -> String {
+        """
+            <m:ResolveNames ReturnFullContactData="true" SearchScope="ActiveDirectory">
+              <m:UnresolvedEntry>\(SOAP.escape(address))</m:UnresolvedEntry>
+            </m:ResolveNames>
+        """
+    }
+
     /// A distribution group's members, one level down (a group inside is listed as a group).
     static func expandGroup(_ address: String) -> String {
         """
@@ -343,6 +353,37 @@ enum WindowsTimeZone {
     static var current: String? { byIANA[TimeZone.current.identifier] }
 }
 
+/// What the server's directory says about a person: the contact card an attendee's row opens,
+/// after Outlook's. Fetched when the card opens and held by it alone.
+struct ContactCard: Equatable, Sendable {
+    struct Phone: Equatable, Sendable {
+        let label: String
+        let number: String
+    }
+
+    let name: String
+    let address: String
+    let jobTitle: String
+    let department: String
+    let company: String
+    let office: String
+    let manager: String
+    let phones: [Phone]
+    /// The business address on one line.
+    let place: String
+
+    /// "Senior Engineering Manager, Technology", as under the name in Outlook's card.
+    var headline: String { [jobTitle, department].filter { !$0.isEmpty }.joined(separator: ", ") }
+}
+
+/// A stretch of someone's calendar that is not free: `Busy`, `Tentative`, `OOF` or
+/// `WorkingElsewhere`, as `GetUserAvailability` reports it.
+struct BusyBlock: Equatable, Sendable {
+    let start: Date
+    let end: Date
+    let type: String
+}
+
 struct Room: Equatable, Hashable, Identifiable, Sendable {
     let name: String
     let address: String
@@ -356,6 +397,35 @@ extension EWSResponse {
         if root.first("ResponseCode")?.trimmedText == "ErrorNameResolutionNoResults" { return [] }
         _ = try responseMessages(in: root)
         return root.all("Resolution").compactMap { $0.child("Mailbox").flatMap(person) }
+    }
+
+    /// The directory entry whose address is this one, when the server has it.
+    static func contactCard(from data: Data, address: String) throws -> ContactCard? {
+        let root = try parse(data)
+        if root.first("ResponseCode")?.trimmedText == "ErrorNameResolutionNoResults" { return nil }
+        _ = try responseMessages(in: root)
+        let key = address.lowercased()
+        let resolutions = root.all("Resolution")
+        guard let resolution = resolutions.first(where: {
+            $0.child("Mailbox")?.child("EmailAddress")?.trimmedText.lowercased() == key
+        }) ?? (resolutions.count == 1 ? resolutions.first : nil) else { return nil }
+        let contact = resolution.child("Contact")
+        func text(_ name: String) -> String { contact?.child(name)?.trimmedText ?? "" }
+        func entries(_ list: String) -> [XMLTreeNode] { contact?.child(list)?.all("Entry") ?? [] }
+        let phoneLabels = ["BusinessPhone": "Work", "MobilePhone": "Mobile", "BusinessPhone2": "Work",
+                           "HomePhone": "Home", "OtherTelephone": "Other"]
+        let phones = entries("PhoneNumbers").compactMap { entry -> ContactCard.Phone? in
+            guard let label = phoneLabels[entry.attributes["Key"] ?? ""], !entry.trimmedText.isEmpty else { return nil }
+            return ContactCard.Phone(label: label, number: entry.trimmedText)
+        }
+        let business = entries("PhysicalAddresses").first { $0.attributes["Key"] == "Business" }
+        let place = ["Street", "City", "State", "PostalCode", "CountryOrRegion"]
+            .compactMap { business?.child($0)?.trimmedText }.filter { !$0.isEmpty }.joined(separator: ", ")
+        let mailbox = resolution.child("Mailbox")
+        return ContactCard(name: text("DisplayName").isEmpty ? mailbox?.child("Name")?.trimmedText ?? "" : text("DisplayName"),
+                           address: mailbox?.child("EmailAddress")?.trimmedText ?? address,
+                           jobTitle: text("JobTitle"), department: text("Department"), company: text("CompanyName"),
+                           office: text("OfficeLocation"), manager: text("Manager"), phones: phones, place: place)
     }
 
     /// A group's members, and whether the server listed them all.
@@ -400,6 +470,31 @@ extension EWSResponse {
                 if (rank[type] ?? 0) > (rank[state] ?? 0) { state = type }
             }
             result[address.lowercased()] = state
+        }
+        return result
+    }
+
+    /// Each address's busy blocks, for the Scheduling Assistant; nil for an address the server
+    /// could not say anything about.
+    static func busyBlocks(from data: Data, addresses: [String]) throws -> [String: [BusyBlock]?] {
+        let root = try parse(data)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        func date(_ text: String) -> Date? { parseDate(text) ?? formatter.date(from: String(text.prefix(19))) }
+        var result: [String: [BusyBlock]?] = [:]
+        for (address, response) in zip(addresses, root.all("FreeBusyResponse")) {
+            guard response.child("ResponseMessage")?.attributes["ResponseClass"] != "Error" else {
+                result[address.lowercased()] = .some(nil)
+                continue
+            }
+            result[address.lowercased()] = response.all("CalendarEvent").compactMap { event in
+                guard let from = event.child("StartTime").flatMap({ date($0.trimmedText) }),
+                      let to = event.child("EndTime").flatMap({ date($0.trimmedText) }), to > from else { return nil }
+                let type = event.child("BusyType")?.trimmedText ?? "Busy"
+                return type == "Free" ? nil : BusyBlock(start: from, end: to, type: type)
+            }
         }
         return result
     }
@@ -465,6 +560,14 @@ extension EWSClient {
         return Data(base64Encoded: picture)
     }
 
+    /// Everyone's busy blocks over the days `start..<end` covers, for the Scheduling Assistant.
+    func busyBlocks(_ addresses: [String], start: Date, end: Date, at url: URL,
+                    credential: EWSCredential) async throws -> [String: [BusyBlock]?] {
+        let data = try await sendRaw(SOAP.envelope(.exchange2010SP2, body: CalendarSOAP.availability(addresses, start: start, end: end),
+                                                   timeZone: nil), to: url, credential: credential)
+        return try EWSResponse.busyBlocks(from: data, addresses: addresses)
+    }
+
     /// Each address's state over the event's time: the busiest thing they have in it.
     func availability(_ addresses: [String], start: Date, end: Date, at url: URL,
                       credential: EWSCredential) async throws -> [String: String] {
@@ -492,6 +595,11 @@ extension EWSClient {
 
     func resolveNames(_ text: String, at url: URL, credential: EWSCredential) async throws -> [PersonSuggestion] {
         try EWSResponse.resolvedNames(from: try await raw(CalendarSOAP.resolveNames(text), url: url, credential: credential))
+    }
+
+    func contactCard(_ address: String, at url: URL, credential: EWSCredential) async throws -> ContactCard? {
+        try EWSResponse.contactCard(from: try await raw(CalendarSOAP.resolveContact(address), url: url, credential: credential),
+                                    address: address)
     }
 
     func expandGroup(_ address: String, at url: URL, credential: EWSCredential) async throws -> (members: [PersonSuggestion], complete: Bool) {

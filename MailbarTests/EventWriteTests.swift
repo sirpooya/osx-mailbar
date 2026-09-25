@@ -135,9 +135,9 @@ import Testing
         #expect(EventDraft.durationLabel(minutes: 90) == "1h 30m")
         #expect(EventDraft.durationLabel(minutes: 60) == "1h")
         #expect(EventDraft.durationLabel(minutes: 45) == "45m")
-        #expect(EventDraft.reminderLabel(15) == "15m before")
-        #expect(EventDraft.reminderLabel(120) == "2h before")
-        #expect(EventDraft.reminderLabel(1440) == "1d before")
+        #expect(EventDraft.reminderLabel(15) == "15m")
+        #expect(EventDraft.reminderLabel(120) == "2h")
+        #expect(EventDraft.reminderLabel(1440) == "1d")
     }
 
     @Test func availabilityTakesTheBusiestBlockInTheEvent() throws {

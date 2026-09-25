@@ -48,6 +48,7 @@ section when a release is cut.
 - Settings, People directory: set the address of a JSON list of people to add a whole team or department at once when inviting people or writing mail, with their photos.
 - Command-comma opens Settings while the popover is open.
 - The team picker filters by department, team and role, each list holding only what the one before leaves.
+- Click a person in the event form's People to see their contact card from the Exchange directory: job title, department, office, manager, phones and address.
 
 ### Changed
 - The new menu bar and app icons.
@@ -98,6 +99,17 @@ section when a release is cut.
 - The privacy note moved to the Accounts tab, under the account list.
 - The Response options gear beside People matches the team button's size and colour.
 - The privacy note in Settings sits right under the account list.
+- The event form is narrower and shorter, its menus are as tall as its fields, and Until no longer shifts the form when it changes.
+- Reminders and durations use short units: 15m, 1h 30m, 1d.
+- The event form's toolbar menus share one text colour and one chevron.
+- Private is a lock button in the event form's toolbar: tap it to make the event private or not.
+- Each person in the event form's People has a remove button that always shows, not only on hover.
+- The Private toggle shows its name, with an outlined lock that fills when the event is private.
+- Reminder choices read simply 5m, 15m, 1h, 1d, without "before".
+- The calendar's weekend and off-hours shading is lighter, in the calendar window and the Today tab.
+- The event form's menus, checkbox and Description share the text fields' white look.
+- The contact card shows the people directory's role, team and department under the name, and the Exchange directory's details below the line.
+- The event form's fields, menus, checkbox and Description are one light grey, without borders.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
@@ -129,4 +141,5 @@ section when a release is cut.
 - The account editor no longer flashes the e-mail field selected as it opens.
 - The event form no longer flashes its Title field focused as it opens.
 - Wide Persian emails fit the reader instead of being cut off on the left.
+- The room list under Location is no longer covered by the Description box.
 

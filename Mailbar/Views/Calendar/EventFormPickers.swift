@@ -112,7 +112,9 @@ struct PeopleSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("People").font(.system(size: 17, weight: .semibold)).allowsHitTesting(false)
+                // A quieter heading than the form's fields (the user's call).
+                Text("People").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                    .allowsHitTesting(false)
                 Spacer()
                 responseOptions
             }
@@ -128,7 +130,10 @@ struct PeopleSidebar: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(fieldFocused ? 0.35 : 0.18)))
+            // The form's field look: light grey, no border, the accent ring while typing.
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(FieldBoxFill.color))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(fieldFocused ? Color.accentColor.opacity(0.8) : Color.clear, lineWidth: 2))
             if let expandProblem {
                 Label(expandProblem, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
@@ -254,7 +259,20 @@ struct PeopleSidebar: View {
 
     private func personRow(name: String, address: String, note: String?, removable: (() -> Void)?) -> some View {
         PersonRow(name: name, address: address, note: note, status: statuses[address.lowercased()],
-                  photo: photos[address.lowercased()], onRemove: removable)
+                  photo: photos[address.lowercased()], makeCard: { card(name: name, address: address) },
+                  onRemove: removable)
+    }
+
+    /// The contact card for a row: the people directory's role, team and department at the top,
+    /// the Exchange directory's entry below.
+    private func card(name: String, address: String) -> PersonCardView {
+        let known = store.mail.directory.person(for: address)
+        let headline = [known?.role ?? "", known?.team ?? "", known?.department ?? ""]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        return PersonCardView(name: name, address: address, photo: photos[address.lowercased()],
+                              directoryHeadline: headline) {
+            try await store.mail.contactCard(address, accountID: store.account?.id)
+        }
     }
 
     /// An invitee, or a group with Expand (a group has no free or busy of its own).
@@ -265,6 +283,7 @@ struct PeopleSidebar: View {
                          status: group ? nil : statuses[person.id], photo: group ? nil : photos[person.id],
                          isGroup: group, isExpanding: expanding.contains(person.id),
                          onExpand: group ? { Task { await expand(person) } } : nil,
+                         makeCard: group ? nil : { card(name: person.display, address: person.address) },
                          onRemove: { store.editor?.people.removeAll { $0 == person } })
     }
 
@@ -339,7 +358,9 @@ struct PeopleSidebar: View {
 }
 
 /// One person in the sidebar: initials, name, and free or busy at the event's time. A group
-/// has Expand instead, always showing, since it is the thing to do with one.
+/// has Expand instead, always showing, since it is the thing to do with one. A click opens the
+/// person's contact card; the remove button always shows (the user's call), except on the
+/// organizer.
 private struct PersonRow: View {
     let name: String
     let address: String
@@ -349,9 +370,10 @@ private struct PersonRow: View {
     var isGroup = false
     var isExpanding = false
     var onExpand: (() -> Void)? = nil
+    var makeCard: (() -> PersonCardView)? = nil
     let onRemove: (() -> Void)?
 
-    @State private var hovering = false
+    @State private var cardOpen = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -378,17 +400,23 @@ private struct PersonRow: View {
                     .foregroundStyle(Color.accentColor)
                     .help("Replace \(name) with its members")
             }
-            if let onRemove, hovering {
-                Button(action: onRemove) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
+            if let onRemove {
+                Button(action: onRemove) { Image(systemName: "xmark.circle.fill").font(.system(size: 14)) }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .help("Remove \(name)")
             }
         }
         .padding(.vertical, 5)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onTapGesture { if makeCard != nil { cardOpen = true } }
+        .popover(isPresented: $cardOpen, arrowEdge: .leading) { makeCard?() }
         .help(address)
+        .task {
+            guard QCFlags.personCard == address.lowercased() else { return }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            cardOpen = true
+        }
     }
 
     static func label(_ status: String) -> String? {

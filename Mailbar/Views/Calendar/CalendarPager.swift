@@ -184,6 +184,7 @@ enum CalendarSurface {
 
     static let shade = Color(nsColor: NSColor(name: nil) { appearance in
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 1, alpha: 0.05) : NSColor(white: 0, alpha: 0.045)
+        // Lighter again (the user's call, 2026-09-25): the weekend and off hours only just grey.
+        return dark ? NSColor(white: 1, alpha: 0.035) : NSColor(white: 0, alpha: 0.028)
     })
 }

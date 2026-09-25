@@ -218,6 +218,7 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 | Flag or clear flag | `UpdateItem` `SetItemField item:Flag`, `FlagStatus` `Flagged` or `NotFlagged` |
 | Delete | `DeleteItem` `DeleteType="MoveToDeletedItems"`. **Never** `HardDelete` or `SoftDelete` |
 | Expand a group | `ExpandDL` on the group's address; members listed one level down |
+| An attendee's contact card | `ResolveNames` `ReturnFullContactData="true"` on the address; the `Contact`'s JobTitle, Department, CompanyName, OfficeLocation, Manager, PhoneNumbers, PhysicalAddresses (Business) |
 | Archive | `FindFolder` for a top-level `Archive` under `msgfolderroot` (id kept in memory), then `MoveItem`. No folder: `CreateFolder` only after the user presses "Create and Archive" |
 
 Writes send the `ItemId` without its `ChangeKey` and `AlwaysOverwrite`. Setting one boolean is
@@ -312,7 +313,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   and sideways events are consumed so the hours do not also scroll. Neighbours are fetched with
   the visible page (`fetchRange`). The earlier fade-and-slide transition was janky and is gone.
 - 2026-09-25 Calendar look, the user's calls: weekend and off-hours shading neutral grey, never
-  an accent tint; no band behind the day names; toolbar "‹ Today ›" on the right; no Work week.
+  an accent tint, and light (black at 2.8 percent, white at 3.5 in dark); no band behind the day names; toolbar "‹ Today ›" on the right; no Work week.
 - 2026-09-25 Event colour is **exactly what the server says**: the first category's colour from
   the master list (`GetUserConfiguration` "CategoryList" on the calendar folder, presets 0 to 24
   in `CategoryColors`). A category the list gives no colour (`color="-1"`), or does not list, is
@@ -337,7 +338,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   one for screenshots, since QC cannot synthesize a drag without Accessibility.
 - 2026-09-25 The event form, rebuilt at the user's request, times after Outlook for Mac (the
   user's pick after trying a lone Duration menu and a slider): a Duration menu with All day event
-  and Private on one line, then Starts and Ends, each a date box with its calendar inside and a
+  on one line (Private is a lock toggle at the end of the toolbar, the user's call), then Starts and Ends, each a date box with its calendar inside and a
   time box; the duration sets the end, editing the end updates it. Labels are right-aligned with
   a colon throughout. Location has no icon. The series end row is "Until", so it never reads as
   a second "Ends"; Category
@@ -346,7 +347,11 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   Files or drop onto the form, bytes in memory until Save, 25 MB together at most); and a People
   sidebar on the right after OWA's, where typing suggests from `ResolveNames` plus inbox senders,
   Up, Down and Return pick (no plus button beside the field, removed 2026-09-25 as useless, the
-  user's call), and each person shows Free, Busy, Tentative, Away or No information
+  user's call); a click on a person opens their contact card after Outlook's (`PersonCardView`:
+  at the top only the people directory's data, photo and role, team and department under the
+  name, plus the address with Copy; below the line only the Exchange directory's, job title,
+  department, company, office, manager, phones, business address; never mixed, the user's call), and every invitee row has a
+  remove button that always shows (the user's call); each person shows Free, Busy, Tentative, Away or No information
   for the event's time (`GetUserAvailability`, UTC in the request, no zone header). Rooms are
   found by typing in Location (no separate Rooms button, the user's call): the matching rooms
   list under the field (every word, ignoring case and the Arabic and Persian ye and kaf); a click
@@ -383,7 +388,13 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   takes no format; Shift with Up or Down moves a time by 10 minutes (`SteppingDatePicker`).
   Repeat's Other editor offers Outlook's Daily, Weekly, Monthly, Yearly; Monthly then asks "day
   25" or "the fourth Friday". Fields are one
-  `FieldBox` look, 28 pt tall; dates and times are
+  `FieldBox` look, 28 pt tall, and popups are large-size `NSPopUpButton`s of the same height,
+  every row at least 28 pt so Until never shifts the form; the form is 690 x 556 (440 pt of
+  fields, a 250 pt People sidebar, the user's marks); lengths and reminders use short units
+  (30m, 1h 30m; reminders 15m, 1d, "At start", no "before"); every control shares one look, light
+  grey with no border (`FieldBoxFill`, the Description box's grey; white was a misreading the
+  user rejected): popups borderless inside a `FieldBox` (`PopUpMenu.boxed()`), the checkbox
+  (`FieldCheckboxStyle`), Description; dates and times are
   bezel-less `NSDatePicker`s inside it, the calendar button inside the date box; popups are
   `NSPopUpButton`s at a set width (`PopUpMenu`), since a SwiftUI menu Picker ignores its frame.
   OWA's Response options sit behind a gear beside People, drawn like the team button in the
@@ -559,7 +570,8 @@ WebKit cache, no thumbnails, no "offline" mode.
   images, not sender photos. Each time a message opens they are fetched again (and remote ones only
   after "Load images"). People's photos in the event form's sidebar follow the same rule: fetched
   with `GetUserPhoto` when the form opens, held by the form alone, gone when it closes. The
-  people directory's photos too: fetched by the view that shows them, held by it alone.
+  people directory's photos too: fetched by the view that shows them, held by it alone. A
+  contact card's directory details are read when it opens and dropped when it closes.
 - The people directory's list (names, work addresses, teams) is held in memory only, read again
   after ten minutes or a relaunch. Only the last read's count and time are stored, for Settings.
 - `URLSession` uses `URLSessionConfiguration.ephemeral` with `urlCache = nil`.

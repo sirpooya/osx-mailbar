@@ -530,6 +530,14 @@ final class MailStore {
         }
     }
 
+    /// A person's full directory entry, for the contact card. Nil when the server has none.
+    func contactCard(_ address: String, accountID: UUID?) async throws -> ContactCard? {
+        guard let accountID, let (url, credential) = connection(for: accountID) else {
+            throw EWSError.invalidResponse("No account to ask.")
+        }
+        return try await client.contactCard(address, at: url, credential: credential)
+    }
+
     /// A group's members, one level down, with nested groups marked so they can be expanded
     /// in turn. Throws when the server cannot say; `complete` is false when it listed only some.
     func expandGroup(_ address: String, accountID: UUID?) async throws -> (members: [PersonSuggestion], complete: Bool) {

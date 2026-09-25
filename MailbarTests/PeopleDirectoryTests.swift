@@ -66,6 +66,21 @@ import Testing
         #expect(person.map(\.isGroup) == [false])
     }
 
+    @Test func theContactCardReadsTheFullDirectoryEntry() throws {
+        let data = Data(MockCalendar.resolveResponse("omid@example.org", full: true).utf8)
+        let card = try #require(try EWSResponse.contactCard(from: data, address: "Omid@example.org"))
+        #expect(card.headline == "Senior Engineering Manager, Technology")
+        #expect(card.office == "Building B")
+        #expect(card.phones == [ContactCard.Phone(label: "Work", number: "+1 555 0103")])
+        #expect(card.place == "Springfield, Example Land")
+        #expect(CalendarSOAP.resolveContact("a@example.com").contains(#"ReturnFullContactData="true""#))
+    }
+
+    @Test func noDirectoryEntryIsNoCard() throws {
+        let data = Data(MockCalendar.resolveResponse("nobody@example.com", full: true).utf8)
+        #expect(try EWSResponse.contactCard(from: data, address: "nobody@example.com") == nil)
+    }
+
     @Test func expandDLRequestNamesTheGroup() {
         let body = CalendarSOAP.expandGroup("team&co@example.com")
         #expect(body.contains("<m:ExpandDL>"))

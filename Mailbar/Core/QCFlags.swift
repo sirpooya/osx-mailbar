@@ -93,6 +93,16 @@ enum QCFlags {
     static var calendarCharms: Bool { has("--calendar-charms") }
     static var calendarCategories: Bool { has("--calendar-categories") }
 
+    /// `--person-card=omid@example.org`: with `--calendar-new`, that attendee's contact card open.
+    static var personCard: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--person-card=") }
+            .map { String($0.dropFirst("--person-card=".count)).lowercased() }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--directory-picker`: with `--calendar-new`, the Team and Department picker open.
     static var directoryPicker: Bool { has("--directory-picker") }
 
@@ -120,6 +130,9 @@ enum QCFlags {
         return nil
         #endif
     }
+
+    /// `--calendar-assistant`: with `--calendar-new`, the Scheduling Assistant open.
+    static var calendarAssistant: Bool { has("--calendar-assistant") }
 
     /// `--calendar-drag`: the calendar with a new event being dragged out today, 10:00 to 11:30.
     static var calendarDrag: Bool { has("--calendar-drag") }

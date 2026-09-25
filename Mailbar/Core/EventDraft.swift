@@ -24,11 +24,11 @@ struct EventDraft: Equatable, Identifiable {
     static func reminderLabel(_ minutes: Int?) -> String {
         switch minutes {
         case nil: return "None"
-        case 0?: return "At start time"
-        // Short units, m, h, d (the user's call).
-        case let m? where m % 1440 == 0: return "\(m / 1440)d before"
-        case let m? where m >= 60: return "\(durationLabel(minutes: m)) before"
-        case let m?: return "\(m)m before"
+        case 0?: return "At start"
+        // Short units, no "before": the bell says what it is (the user's call).
+        case let m? where m % 1440 == 0: return "\(m / 1440)d"
+        case let m? where m >= 60: return durationLabel(minutes: m)
+        case let m?: return "\(m)m"
         }
     }
 

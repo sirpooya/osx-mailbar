@@ -218,13 +218,32 @@ enum MockCalendar {
             + "<t:RoutingType>SMTP</t:RoutingType><t:MailboxType>\(group ? "PublicDL" : "Mailbox")</t:MailboxType></t:Mailbox>"
     }
 
-    static func resolveResponse(_ query: String) -> String {
+    /// Invented directory details for the contact card: job title, department, office, phone.
+    private static let details: [String: (title: String, department: String, office: String, phone: String)] = [
+        "sara.rahimi@example.com": ("UX Researcher", "Product", "Building A, floor 3", "+1 555 0101"),
+        "amir.karimi@example.com": ("iOS Engineer", "Engineering", "Building A, floor 7", "+1 555 0102"),
+        "omid@example.org": ("Senior Engineering Manager", "Technology", "Building B", "+1 555 0103"),
+    ]
+
+    /// With `full`, each person carries a `Contact` as `ReturnFullContactData="true"` asks.
+    static func resolveResponse(_ query: String, full: Bool = false) -> String {
         let everyone = directory.map { ($0.0, $0.1, false) } + groups.map { ($0.name, $0.address, true) }
         let matches = everyone.filter { $0.0.lowercased().contains(query) || $0.1.lowercased().contains(query) }
         guard !matches.isEmpty else {
             return wrapError("ResolveNames", code: "ErrorNameResolutionNoResults")
         }
-        let resolutions = matches.map { "<t:Resolution>\(mailbox($0.0, $0.1, group: $0.2))</t:Resolution>" }.joined()
+        func contact(_ name: String, _ address: String) -> String {
+            guard full, let info = details[address] else { return "" }
+            return "<t:Contact><t:DisplayName>\(name)</t:DisplayName><t:CompanyName>Example Co</t:CompanyName>"
+                + "<t:PhysicalAddresses><t:Entry Key=\"Business\"><t:City>Springfield</t:City>"
+                + "<t:CountryOrRegion>Example Land</t:CountryOrRegion></t:Entry></t:PhysicalAddresses>"
+                + "<t:PhoneNumbers><t:Entry Key=\"BusinessPhone\">\(info.phone)</t:Entry></t:PhoneNumbers>"
+                + "<t:Department>\(info.department)</t:Department><t:JobTitle>\(info.title)</t:JobTitle>"
+                + "<t:Manager>Omid Karimi</t:Manager><t:OfficeLocation>\(info.office)</t:OfficeLocation></t:Contact>"
+        }
+        let resolutions = matches.map {
+            "<t:Resolution>\(mailbox($0.0, $0.1, group: $0.2))\(contact($0.0, $0.1))</t:Resolution>"
+        }.joined()
         return wrap("ResolveNames", "<m:ResolutionSet TotalItemsInView=\"\(matches.count)\">\(resolutions)</m:ResolutionSet>")
     }
 

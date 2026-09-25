@@ -437,6 +437,15 @@ final class CalendarStore {
         return (try? await mail.client.availability(addresses, start: start, end: end, at: url, credential: credential)) ?? [:]
     }
 
+    /// Busy blocks for the Scheduling Assistant, over the whole day of `day`. Held by the
+    /// assistant only, in memory. Nil when the server could not be asked.
+    func busyBlocks(for addresses: [String], on day: Date) async -> [String: [BusyBlock]?]? {
+        guard !addresses.isEmpty, let account, let (url, credential) = mail.connection(for: account.id) else { return nil }
+        let start = Calendar.current.startOfDay(for: day)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+        return try? await mail.client.busyBlocks(addresses, start: start, end: end, at: url, credential: credential)
+    }
+
     func loadRooms() async {
         guard rooms == nil, let account, let (url, credential) = mail.connection(for: account.id) else { return }
         rooms = (try? await mail.client.rooms(at: url, credential: credential)) ?? []

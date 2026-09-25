@@ -11,11 +11,17 @@ struct FieldBox<Content: View>: View {
         HStack(spacing: 4) { content() }
             .padding(.horizontal, 8)
             .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
+            // Light grey, no border, like the Description box (the user's call, 2026-09-25); the
+            // accent ring shows while the field is being edited.
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(FieldBoxFill.color))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(focused ? Color.accentColor.opacity(0.8) : Color.primary.opacity(0.16),
-                              lineWidth: focused ? 2 : 1))
+                .strokeBorder(focused ? Color.accentColor.opacity(0.8) : Color.clear, lineWidth: 2))
     }
+}
+
+/// The one fill every field in the event form shares.
+enum FieldBoxFill {
+    static let color = Color.primary.opacity(0.045)
 }
 
 /// An `NSDatePicker` without its own bezel, so it can sit inside a `FieldBox` with the calendar
@@ -110,6 +116,8 @@ struct PopUpMenu: NSViewRepresentable {
     /// Items that do something rather than stay chosen ("Other..."): the popup goes back to the
     /// current choice after one is picked.
     var actions: Set<String> = []
+    /// False inside a `FieldBox` (`boxed()`), which draws the white field instead.
+    var bordered = true
     let onSelect: (String) -> Void
 
     func makeNSView(context: Context) -> NSPopUpButton {
@@ -118,6 +126,7 @@ struct PopUpMenu: NSViewRepresentable {
         // the regular popup was shorter, and swapping one for a box shifted the row).
         button.controlSize = .large
         button.font = .systemFont(ofSize: NSFont.systemFontSize)
+        button.isBordered = bordered
         button.target = context.coordinator
         button.action = #selector(Coordinator.picked(_:))
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -145,7 +154,7 @@ struct PopUpMenu: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSPopUpButton, context: Context) -> CGSize? {
-        CGSize(width: width, height: nsView.intrinsicContentSize.height)
+        CGSize(width: proposal.width ?? width, height: nsView.intrinsicContentSize.height)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -168,6 +177,34 @@ struct PopUpMenu: NSViewRepresentable {
             if actions.contains(id) { select(selected, in: sender) }
             onSelect(id)
         }
+    }
+}
+
+extension PopUpMenu {
+    /// The popup inside the form's field box, so a menu has the text fields' light grey look.
+    func boxed() -> some View {
+        var menu = self
+        menu.bordered = false
+        return FieldBox { menu }.frame(width: width)
+    }
+}
+
+/// A checkbox drawn like the form's fields: their light grey, the accent and a check when on.
+struct FieldCheckboxStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(configuration.isOn ? Color.accentColor : Color.primary.opacity(0.08))
+                    .overlay(Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white).opacity(configuration.isOn ? 1 : 0))
+                    .frame(width: 15, height: 15)
+                configuration.label
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
     }
 }
 
@@ -221,6 +258,7 @@ struct RepeatPatternEditor: View {
                     default: pattern.kind = .yearly
                     }
                 }
+                .boxed()
             }
             if pattern.kind == .monthlyDay || pattern.kind == .monthlyWeek {
                 HStack(spacing: 8) {

@@ -219,7 +219,7 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             }
             if request.contains("<m:ResolveNames") {
                 let query = (Self.firstMatch("<m:UnresolvedEntry>([^<]*)</m:UnresolvedEntry>", in: request) ?? "").lowercased()
-                return ok(MockCalendar.resolveResponse(query))
+                return ok(MockCalendar.resolveResponse(query, full: request.contains(#"ReturnFullContactData="true""#)))
             }
             if request.contains("<m:CreateAttachment>"), let parent = Self.firstMatch(#"ParentItemId Id="([^"]+)""#, in: request) {
                 sent.append(request)

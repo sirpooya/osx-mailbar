@@ -12,6 +12,9 @@ struct EventEditorView: View {
     @State private var highlightedRoom: Room.ID?
     @State private var roomAvailability: [String: String] = [:]
     @State private var categoriesOpen = QCFlags.calendarCategories
+    @State private var showAsOpen = false
+    @State private var schedulingOpen = QCFlags.calendarAssistant
+    @State private var reminderOpen = false
     @State private var charmsOpen = QCFlags.calendarCharms
     @State private var calendarOpen = false
     /// Whether Title is being edited, for its box's accent border. Nothing is focused on open.
@@ -72,8 +75,17 @@ struct EventEditorView: View {
                         // form leaves, down to the bottom bar, never shorter than 110 pt (the
                         // user's catch: a fixed box left dead space under it).
                         row("Description") {
-                            ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } },
-                                          takesFocus: false)
+                            // A text view is AppKit and draws above any SwiftUI overlay, whatever
+                            // the z-index: while the room list covers it, an empty box of the same
+                            // size stands in (the user's catch).
+                            Group {
+                                if roomListShown {
+                                    Color.clear
+                                } else {
+                                    ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } },
+                                                  takesFocus: false)
+                                }
+                            }
                                 .frame(height: max(110, formHeight - 36 - fieldsHeight - 12))
                                 // The text view has no baseline SwiftUI can see: its first line
                                 // sits at the 8 pt inset plus the 13 pt font's ascender, so the
@@ -91,7 +103,9 @@ struct EventEditorView: View {
                                             .allowsHitTesting(false)
                                     }
                                 }
-                                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+                                // The same light grey as every field above it.
+                                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(FieldBoxFill.color))
                         }
                     }
                     .padding(.horizontal, 16)
@@ -112,6 +126,9 @@ struct EventEditorView: View {
             bottomBar
         }
         .frame(width: Self.formSize.width, height: Self.formSize.height)
+        .sheet(isPresented: $schedulingOpen) {
+            SchedulingAssistant(store: store) { schedulingOpen = false }
+        }
         .background(CalendarSurface.background)
         .task {
             // A turn after the sheet is up, or the focus has nowhere to go yet.
@@ -153,16 +170,28 @@ struct EventEditorView: View {
                 categoryButton
                 showAsMenu
                 reminderMenu
+                privateButton
                 Spacer()
             }
+            // Room above and below, between the title and the divider (the user's call).
             .padding(.horizontal, 14)
-            .padding(.bottom, 7)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
         }
     }
 
     /// What saving will do, or what stops it, on the left; Cancel and Send on the right.
     private var bottomBar: some View {
         HStack(spacing: 10) {
+            // Outlook's Scheduling Assistant, where the "Saving sends the invitations" note was:
+            // Send already says that (the user's call).
+            Button { schedulingOpen = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar.day.timeline.left")
+                    Text("Scheduling Assistant")
+                }
+            }
+            .help("See when everyone is free")
             footer
             Spacer()
             Button("Cancel") { store.editor = nil }
@@ -170,8 +199,8 @@ struct EventEditorView: View {
             if draft.isSaving {
                 ProgressView().controlSize(.small).frame(width: 60)
             } else {
-                // Says "Send" when saving will mail invitations or updates, so nobody is surprised.
-                Button(draft.sendsInvitations ? "Send" : "Save") { Task { await store.saveEditor() } }
+                // Always "Send" (the user's call); an event with nobody invited just saves.
+                Button("Send") { Task { await store.saveEditor() } }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(draft.problem != nil)
@@ -205,7 +234,7 @@ struct EventEditorView: View {
                 }
             }
             .overlay(alignment: .topLeading) {
-                if locationFocused, !draft.location.trimmingCharacters(in: .whitespaces).isEmpty, !roomMatches.isEmpty {
+                if roomListShown {
                     RoomDropdown(rooms: roomMatches, chosen: draft.rooms, highlighted: highlightedRoom,
                                  availability: roomAvailability,
                                  onSelect: { highlightedRoom = $0.id },
@@ -231,6 +260,11 @@ struct EventEditorView: View {
         .zIndex(1)
         .task { await store.loadRooms() }
         .onChange(of: draft.location) { _, _ in highlightedRoom = nil; roomAvailability = [:] }
+    }
+
+    /// The room list is up: typing in Location, with rooms matching.
+    private var roomListShown: Bool {
+        locationFocused && !draft.location.trimmingCharacters(in: .whitespaces).isEmpty && !roomMatches.isEmpty
     }
 
     private var roomMatches: [Room] {
@@ -274,12 +308,10 @@ struct EventEditorView: View {
                 PopUpMenu(items: durationItems, selected: durationID, width: 120) { id in
                     if let minutes = Int(id) { store.editor?.duration = TimeInterval(minutes * 60) }
                 }
+                .boxed()
                 .disabled(draft.isAllDay)
                 Toggle("All day event", isOn: field(\.isAllDay))
-                    .toggleStyle(.checkbox)
-                    .padding(.leading, 8)
-                Toggle("Private", isOn: field(\.isPrivate))
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(FieldCheckboxStyle())
                     .padding(.leading, 8)
             }
             .onChange(of: draft.isAllDay) { _, allDay in
@@ -344,6 +376,7 @@ struct EventEditorView: View {
                 } else if draft.isNew {
                     PopUpMenu(items: repeatItems, selected: repeatSelection, width: Self.menuWidth,
                               actions: ["other"], onSelect: pickRepeat)
+                        .boxed()
                         .popover(isPresented: $repeatEditorOpen, arrowEdge: .bottom) {
                             RepeatPatternEditor(pattern: QCFlags.calendarRepeat ? RepeatPattern(kind: .monthlyWeek) : draft.repeatPattern, start: draft.start, workDays: workDays,
                                                 onSave: { store.editor?.repeatPattern = $0; repeatEditorOpen = false },
@@ -427,6 +460,7 @@ struct EventEditorView: View {
                 default: store.editor?.repeatEnd = .never
                 }
             }
+            .boxed()
             switch draft.repeatEnd {
             case .on(let last):
                 dateBox(Binding(get: { last }, set: { store.editor?.repeatEnd = .on($0) }),
@@ -496,37 +530,76 @@ struct EventEditorView: View {
 
     /// Show as and Reminder live in the toolbar too, as in OWA (the user's layout): each shows
     /// the current choice, and the choices carry the system checkmark.
+    /// Show as and Reminder: plain toolbar buttons like Charm and Categorize, so all four share
+    /// one text colour and one chevron (the user's catch: menu buttons drew their own darker,
+    /// heavier chevron). Each opens a short list with a check on the current choice.
     private var showAsMenu: some View {
-        Menu {
-            Picker("", selection: field(\.showAs)) {
-                ForEach(EventDraft.ShowAs.allCases) { state in
-                    Label { Text(state.label) } icon: { Image(nsImage: ShowAsSwatch.image(state)) }.tag(state)
-                }
+        Button { showAsOpen.toggle() } label: {
+            toolbarLabel(draft.showAs.label) {
+                Image(nsImage: ShowAsSwatch.image(draft.showAs, size: Self.toolbarIcon))
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Label { Text(draft.showAs.label) } icon: { Image(nsImage: ShowAsSwatch.image(draft.showAs, size: Self.toolbarIcon)) }
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.borderless)
         .fixedSize()
         .help("Show as")
+        .popover(isPresented: $showAsOpen, arrowEdge: .bottom) {
+            ChoiceList(choices: EventDraft.ShowAs.allCases.map { ($0.rawValue, $0.label, ShowAsSwatch.image($0)) },
+                       selected: draft.showAs.rawValue) { id in
+                if let state = EventDraft.ShowAs(rawValue: id) { store.editor?.showAs = state }
+                showAsOpen = false
+            }
+        }
     }
 
     private var reminderMenu: some View {
-        Menu {
-            Picker("", selection: field(\.reminderMinutes)) {
-                ForEach(EventDraft.reminderChoices, id: \.self) { Text(EventDraft.reminderLabel($0)).tag($0) }
+        Button { reminderOpen.toggle() } label: {
+            toolbarLabel(EventDraft.reminderLabel(draft.reminderMinutes)) {
+                Image(systemName: draft.reminderMinutes == nil ? "bell.slash" : "bell")
+                    .font(.system(size: Self.toolbarIcon - 1))
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Label(EventDraft.reminderLabel(draft.reminderMinutes),
-                  systemImage: draft.reminderMinutes == nil ? "bell.slash" : "bell")
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.borderless)
         .fixedSize()
         .help("Reminder")
+        .popover(isPresented: $reminderOpen, arrowEdge: .bottom) {
+            ChoiceList(choices: EventDraft.reminderChoices.map { (reminderID($0), EventDraft.reminderLabel($0), nil) },
+                       selected: reminderID(draft.reminderMinutes)) { id in
+                store.editor?.reminderMinutes = EventDraft.reminderChoices.first { reminderID($0) == id } ?? nil
+                reminderOpen = false
+            }
+        }
+    }
+
+    /// Private as a lock that toggles (the user's call): outlined and grey when anyone may see the
+    /// details, filled on a grey pill when the event is private.
+    private var privateButton: some View {
+        Button { store.editor?.isPrivate.toggle() } label: {
+            // The lock outlined when off and filled when on, with its word (the user's call: an
+            // open lock alone read as nothing).
+            HStack(spacing: 4) {
+                Image(systemName: draft.isPrivate ? "lock.fill" : "lock")
+                    .font(.system(size: Self.toolbarIcon - 1))
+                Text("Private")
+            }
+            // On: neutral and tonal, a grey pill with dark text, not the accent (the user's call).
+            .foregroundStyle(draft.isPrivate ? Color.primary : Color.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(draft.isPrivate ? Color.primary.opacity(0.08) : Color.clear))
+        }
+        .buttonStyle(.borderless)
+        .help(draft.isPrivate ? "Private: others see only that you are busy" : "Not private")
+        .accessibilityLabel("Private")
+        .accessibilityValue(draft.isPrivate ? "On" : "Off")
+    }
+
+    /// One toolbar label: icon, text, and the shared chevron, all in the toolbar's colours.
+    private func toolbarLabel<Icon: View>(_ text: String, @ViewBuilder icon: () -> Icon) -> some View {
+        HStack(spacing: 5) {
+            icon()
+            Text(text)
+            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+        }
     }
 
     private var charmButton: some View {
@@ -622,9 +695,6 @@ struct EventEditorView: View {
                 .font(.system(size: 11)).foregroundStyle(.orange)
         } else if let problem = draft.problem {
             Text(problem).font(.system(size: 11)).foregroundStyle(.orange)
-        } else if draft.sendsInvitations {
-            Text(draft.isNew ? "Saving sends the invitations." : "Saving sends the changes to everyone invited.")
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
         }
     }
 
@@ -859,5 +929,37 @@ enum RoomSearch {
             .replacingOccurrences(of: "\u{0649}", with: "\u{06CC}")   // alef maksura
             .replacingOccurrences(of: "\u{0643}", with: "\u{06A9}")   // Arabic kaf to Persian keheh
             .replacingOccurrences(of: "\u{200C}", with: "")            // zero-width non-joiner
+    }
+}
+
+/// A short list of choices for a toolbar popover: a check on the current one, an optional swatch.
+private struct ChoiceList: View {
+    let choices: [(id: String, title: String, image: NSImage?)]
+    let selected: String
+    let pick: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(choices, id: \.id) { choice in
+                Button { pick(choice.id) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .opacity(choice.id == selected ? 1 : 0)
+                        if let image = choice.image { Image(nsImage: image) }
+                        Text(choice.title)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(choice.id == selected ? .isSelected : [])
+            }
+        }
+        .padding(.vertical, 5)
+        .frame(minWidth: 170)
     }
 }
