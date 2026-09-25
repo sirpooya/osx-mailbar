@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>Mailbar</title>
+        <link>https://raw.githubusercontent.com/sirpooya/osx-mailbar/main/appcast.xml</link>
+        <description>Most recent changes to Mailbar.</description>
+        <language>en</language>
+        <item>
+            <title>1.1.0</title>
+            <pubDate>Fri, 25 Sep 2026 21:14:24 +0000</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[
+<h3>Added</h3>
+<ul>
+    <li>Automatic updates: Mailbar checks for a new version once a day and offers to install it. Check for Updates... is in the menu bar icon's right-click menu.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+    <li>Schedule's name column is wider, so room names fit.</li>
+    <li>Long room names are shortened from the building name, so the room itself stays visible.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+    <li>Dragging the meeting in Schedule now follows the pointer; before, it lagged and slipped as the grid shifted under it. Schedule always shows the whole day.</li>
+    <li>Location shows a spinner while the rooms load, fetches all room lists at once, and says when no rooms match.</li>
+    <li>A room no longer shows up twice in Schedule when its address is spelled with different capitals.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/sirpooya/osx-mailbar/releases/download/v1.1.0/Mailbar-1.1.0.zip"
+                length="6627618"
+                type="application/octet-stream"
+                sparkle:edSignature="G6BA+g1hAj77cFM03QuEphtZ20uDSxiXXLglxtNPVhBxmaTaExC0UZbNc3C/STGLTOagHL6m+SpZRx1SIJ5WDw==" />
+        </item>
+    </channel>
+</rss>
