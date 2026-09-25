@@ -10,6 +10,8 @@ section when a release is cut.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
 ### Added
 - Automatic updates: Mailbar checks for a new version once a day and offers to install it. Check for Updates... is in the menu bar icon's right-click menu.
 
