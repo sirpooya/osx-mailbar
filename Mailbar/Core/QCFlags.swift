@@ -57,6 +57,16 @@ enum QCFlags {
         #endif
     }
 
+    /// `--settings-height=1200`: the Settings window that tall, to photograph the lower sections.
+    static var settingsHeight: CGFloat? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--settings-height=") }
+            .flatMap { Double($0.dropFirst("--settings-height=".count)) }.map { CGFloat($0) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--calendar-new`: the calendar with the new event form open.
     static var calendarNew: Bool { has("--calendar-new") }
 
@@ -72,6 +82,12 @@ enum QCFlags {
     /// `--calendar-charms`, `--calendar-categories`: with `--calendar-new`, that picker open.
     static var calendarCharms: Bool { has("--calendar-charms") }
     static var calendarCategories: Bool { has("--calendar-categories") }
+
+    /// `--directory-picker`: with `--calendar-new`, the Team and Department picker open.
+    static var directoryPicker: Bool { has("--directory-picker") }
+
+    /// `--with-group`: with `--calendar-new` or `--compose=new`, a distribution group already added.
+    static var withGroup: Bool { has("--with-group") }
 
     /// `--calendar-people=sar`: with `--calendar-new`, that typed into the People field.
     static var calendarPeople: String? {

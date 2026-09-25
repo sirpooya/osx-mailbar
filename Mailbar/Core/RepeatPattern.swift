@@ -60,12 +60,14 @@ struct RepeatPattern: Equatable, Sendable {
         }
     }
 
-    /// The quick choices, in OWA's order.
+    /// The quick choices, Outlook for Mac's list (the user's pick over OWA's worded one): Daily,
+    /// Weekly on the start's day, Monthly on its date, Yearly. Anything else is Other.
     static func presets(workDays: Set<Int>) -> [RepeatPattern] {
-        [RepeatPattern(kind: .daily), RepeatPattern(kind: .weekly),
-         RepeatPattern(kind: .weekly, weekdays: workDays), RepeatPattern(kind: .monthlyDay),
-         RepeatPattern(kind: .monthlyWeek), RepeatPattern(kind: .yearly)]
+        [RepeatPattern(kind: .daily), RepeatPattern(kind: .weekly), RepeatPattern(kind: .monthlyDay),
+         RepeatPattern(kind: .yearly)]
     }
+
+    static let presetNames = ["Daily", "Weekly", "Monthly", "Yearly"]
 
     /// The name of each kind in the Other editor.
     static func kindName(_ kind: Kind, start: Date, calendar: Calendar = .current) -> String {

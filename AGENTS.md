@@ -39,7 +39,8 @@ in mock mode. The Milestones section below is the record; none is open.
 - Move to folder, folder list, folder picker.
 - Follow up, categories, rules, junk, snooze, pin.
 - Contacts, tasks, notes, an LDAP client. (People suggestions for events use the server's own
-  directory search, EWS `ResolveNames`, since M16; that is not LDAP.)
+  directory search, EWS `ResolveNames`, since M16; that is not LDAP. The optional people
+  directory endpoint below is a read-only JSON list for pickers and photos, not a contacts store.)
 - Offline mode, local search index, any disk cache.
 
 ### Wanted (v1.1, built 2026-09-24, milestones M7 to M11)
@@ -55,7 +56,24 @@ in mock mode. The Milestones section below is the record; none is open.
 - Reply, reply all, forward, new message. Plain text writing, right to left for Persian. The
   server builds quotes and keeps copies in Sent Items (EWS `ReplyToItem`, `ForwardItem`,
   `CreateItem` with `SendAndSaveCopy`).
-- Not in it: rich text, drafts folder, signatures editor, outgoing attachments, directory lookup.
+- Not in it: rich text, drafts folder, signatures editor, outgoing attachments.
+
+### Groups and the people directory (built 2026-09-25, the user's request)
+- **Distribution groups**: `ResolveNames` reports a group as `MailboxType` `PublicDL` or
+  `PrivateDL`; the event form's People and the composer's To and Cc mark it as a group with
+  Expand, which swaps it in place for its members (EWS `ExpandDL`, one level; a nested group
+  stays a group, to expand in turn). Typed addresses are checked with `ResolveNames` once each,
+  in memory (`MailStore.knownGroups`). Unexpanded, a group is invited or mailed as itself.
+- **People directory** (Settings, People directory): an optional https address returning a JSON
+  list of people. Parsed generically (`DirectoryJSON`): `items`, `users`, `people`, `data` or a
+  bare array; name; the work address from `workEmail`, `email`, or any field ending in "email";
+  team; department; role; avatar (relative paths resolve against the endpoint). Departed people
+  are dropped. It adds a "Add a team or department" picker (department and team popups, each
+  person ticked, `DirectoryPicker`) beside People and on To and Cc, puts its people and their
+  team in the type-ahead, and its photo wins over `GetUserPhoto` for any address it lists.
+  Photos load only from the endpoint's own host; a file named `default` is the placeholder, not
+  a face. **The URL is never in code** (public repo): the user types it; the real one is in
+  `AGENTS.local.md`. **Unproven on the real server**: `ExpandDL` on a real group.
 
 ### Calendar (M15 to M19, built 2026-09-25)
 - View, create, edit, delete, answer invitations, reminders, a Today tab in the popover, over the same
@@ -114,7 +132,7 @@ Testing rule for the calendar: never create, change, cancel or answer a real eve
 user names it; an event with people sends real invitations.
 
 ## Status
-2026-09-25 (latest): **everything built, M0 to M19**, 132 tests green; the popover has Inbox and
+2026-09-25 (latest): **everything built, M0 to M19**, plus groups and the people directory (160 tests green); the popover has Inbox and
 Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
 Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
@@ -195,6 +213,7 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 | Mark read or unread | `UpdateItem` `SetItemField message:IsRead`, `ConflictResolution="AlwaysOverwrite"`, no `ChangeKey`, `SuppressReadReceipts="true"` on 2013+ |
 | Flag or clear flag | `UpdateItem` `SetItemField item:Flag`, `FlagStatus` `Flagged` or `NotFlagged` |
 | Delete | `DeleteItem` `DeleteType="MoveToDeletedItems"`. **Never** `HardDelete` or `SoftDelete` |
+| Expand a group | `ExpandDL` on the group's address; members listed one level down |
 | Archive | `FindFolder` for a top-level `Archive` under `msgfolderroot` (id kept in memory), then `MoveItem`. No folder: `CreateFolder` only after the user presses "Create and Archive" |
 
 Writes send the `ItemId` without its `ChangeKey` and `AlwaysOverwrite`. Setting one boolean is
@@ -343,7 +362,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   A click on the form's empty space ends editing (`EndEditingArea`); labels let clicks through.
   Layout after OWA (the user's sketch): a title bar with the form's name alone, a toolbar under
   it with Attach, Charm and Categorize (each showing what is chosen), white like the form with no
-  line between them; the form opens with the cursor in Title; the body is "Description" (OWA's
+  line between them; the form opens with no field focused (the user's call,
+  after first asking for the cursor in Title); the body is "Description" (OWA's
   word), never "Notes"; a bottom bar with the status line on the
   left and Cancel and Send on the right. The Files row shows only when there are files.
   Repeat follows OWA's list, worded from the start date: Never, Every day, Every Wednesday,
@@ -439,7 +459,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   use `ReplyToItem`, `ReplyAllToItem`, `ForwardItem`, so the server builds the quote, subject and
   forwarded attachments; a fresh `ChangeKey` is read right before (opening marks read, which
   changes it). The body goes as HTML built from the plain text, one `<div>` per paragraph with
-  `dir="rtl"` on Persian ones. Recipient suggestions come only from inbox senders in memory.
+  `dir="rtl"` on Persian ones. Recipient suggestions come from the people directory, the
+  Exchange directory (`ResolveNames`, since the groups work) and inbox senders in memory.
   The composer's paragraphs are `.natural` direction, each on its own, matching what is sent.
 - 2026-09-24 Streaming (M11): one loop per account in `MailStreamer`. Subscribe, then
   `GetStreamingEvents` for 29 minutes over a second URLSession with a 35-minute idle timeout that
@@ -479,6 +500,9 @@ No telemetry, no analytics. Network calls, exhaustively:
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and
   no DNS SRV lookup.
 - Remote images inside a message, only when the user clicks "Load images" for that message.
+- The people directory, only when the user has set its address in Settings: one plain GET for
+  the list (at most every ten minutes, when a picker, a People field or a recipient field needs
+  it), and GETs for photos on that same host only. No credentials are sent.
 
 Reading the login Keychain: while adding an account, the sheet looks up internet-password items
 for the address's user names, on the email's own domain only, attributes only (no prompt, no
@@ -501,7 +525,10 @@ WebKit cache, no thumbnails, no "offline" mode.
 - **Images are never cached anywhere**, memory or disk: not remote images, not inline `cid:`
   images, not sender photos. Each time a message opens they are fetched again (and remote ones only
   after "Load images"). People's photos in the event form's sidebar follow the same rule: fetched
-  with `GetUserPhoto` when the form opens, held by the form alone, gone when it closes.
+  with `GetUserPhoto` when the form opens, held by the form alone, gone when it closes. The
+  people directory's photos too: fetched by the view that shows them, held by it alone.
+- The people directory's list (names, work addresses, teams) is held in memory only, read again
+  after ten minutes or a relaunch.
 - `URLSession` uses `URLSessionConfiguration.ephemeral` with `urlCache = nil`.
   `WKWebView` uses `WKWebsiteDataStore.nonPersistent()`, one store per reader, released on close.
 - Pre-2013 servers only: previews built from text bodies are held in memory for rows still in the

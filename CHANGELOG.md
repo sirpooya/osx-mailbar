@@ -44,6 +44,8 @@ section when a release is cut.
 - The event form has OWA's Response options: choose whether to request responses and whether invitees may forward the invitation.
 - Repeat offers OWA's choices worded from the start date (every day, every Wednesday, every workday, day 23 of every month, every fourth Wednesday, every September 23) and Other for any pattern, with an end date or a number of times.
 - In the event form's time fields, Shift with the Up or Down arrow moves the time by 10 minutes.
+- Distribution groups show as groups in the event form's People and in a message's To and Cc, with Expand to put their members in their place.
+- Settings, People directory: set the address of a JSON list of people to add a whole team or department at once when inviting people or writing mail, with their photos.
 
 ### Changed
 - The new menu bar and app icons.
@@ -82,6 +84,10 @@ section when a release is cut.
 - Event times are 24-hour with a leading zero, such as 09:00, so they line up.
 - Repeat's Other editor offers Daily, Weekly, Monthly and Yearly as Outlook does, with Monthly on a day or on a weekday of the month.
 - The calendar toolbar's add button reads New Event, and the Day, Week, Month switcher has a lighter border.
+- Repeat lists Outlook's Never, Daily, Weekly, Monthly, Yearly and Other, with a line saying what the choice means.
+- The event form's Description fills the space down to the buttons, attached files sit just above it, and the toolbar's icons share one size.
+- The event form opens with no field selected.
+- Recipient suggestions in the composer now include your company directory, not only people who have written to you.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
@@ -103,4 +109,5 @@ section when a release is cut.
 - Clicking empty space in the event form now ends editing the field you were typing in.
 - The Description label lines up with the first line of its box.
 - Dates and times in the event form sit centred in their boxes and start at the same inset as the other fields.
+- The date picker no longer shows a focus ring when it opens.
 

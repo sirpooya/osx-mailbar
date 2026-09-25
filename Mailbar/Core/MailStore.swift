@@ -13,6 +13,13 @@ import SwiftUI
 final class MailStore {
     let accounts: AccountStore
     let client: EWSClient
+    /// The people directory from Settings, for Team and Department pickers and photos.
+    let directory: PeopleDirectory
+
+    /// Addresses the server said are distribution groups, lowercased, with the group's name.
+    /// In memory only; `checkedAddresses` are those already asked about, groups or not.
+    private(set) var knownGroups: [String: String] = [:]
+    @ObservationIgnored private var checkedAddresses: Set<String> = []
 
     private(set) var states: [UUID: InboxState] = [:]
     private(set) var unreadCounts: [UUID: Int] = [:]
@@ -225,9 +232,10 @@ final class MailStore {
         var at: Date
     }
 
-    init(accounts: AccountStore, client: EWSClient) {
+    init(accounts: AccountStore, client: EWSClient, directory: PeopleDirectory = PeopleDirectory()) {
         self.accounts = accounts
         self.client = client
+        self.directory = directory
         if accounts.persists,
            let raw = UserDefaults.standard.string(forKey: Keys.selectedAccount) {
             selectedAccountID = UUID(uuidString: raw)
@@ -450,22 +458,98 @@ final class MailStore {
 
     /// Addresses to offer while typing a recipient: everyone who has written to any inbox here,
     /// from the rows already in memory. Nothing is looked up anywhere.
-    func recipientSuggestions(for token: String, excluding typed: String) -> [(name: String, address: String)] {
+    func recipientSuggestions(for token: String, excluding typed: String) -> [PersonSuggestion] {
         let needle = token.lowercased()
         guard needle.count >= 2 else { return [] }
         let already = Set(Recipients.parse(typed).map { $0.lowercased() })
         var seen: Set<String> = []
-        var result: [(name: String, address: String)] = []
+        var result: [PersonSuggestion] = []
         for message in states.values.flatMap(\.messages) {
             let address = message.senderAddress
             let key = address.lowercased()
             guard Recipients.isValid(address), !already.contains(key), !seen.contains(key),
                   key.contains(needle) || message.senderName.lowercased().contains(needle) else { continue }
             seen.insert(key)
-            result.append((message.senderName, address))
+            result.append(PersonSuggestion(name: message.senderName, address: address))
             if result.count == 4 { break }
         }
         return result
+    }
+
+    // MARK: - People and groups
+
+    /// Everyone to offer for what is being typed, in a mail field or the event form's People:
+    /// the people directory, then the Exchange directory (which also finds groups), then inbox
+    /// senders. Each address once, with its team when the people directory knows it.
+    func peopleSuggestions(for token: String, excluding typed: String, accountID: UUID?,
+                           limit: Int = 6) async -> [PersonSuggestion] {
+        let already = Set(Recipients.parse(typed).map { $0.lowercased() })
+        let local = recipientSuggestions(for: token, excluding: typed)
+        await directory.loadIfNeeded()
+        let fromDirectory = directory.matches(token).filter { !already.contains($0.id) }
+            .map { PersonSuggestion(name: $0.name, address: $0.address, detail: $0.detail) }
+        var fromServer: [PersonSuggestion] = []
+        if token.count >= 2, let accountID, let (url, credential) = connection(for: accountID) {
+            fromServer = ((try? await client.resolveNames(token, at: url, credential: credential)) ?? [])
+                .filter { !already.contains($0.id) }
+            learn(fromServer)
+        }
+        var seen = Set<String>()
+        return (fromDirectory + fromServer + local)
+            .map { person in
+                var person = person
+                if person.detail.isEmpty, let known = directory.person(for: person.address) { person.detail = known.detail }
+                if knownGroups[person.id] != nil { person.isGroup = true }
+                return person
+            }
+            .filter { seen.insert($0.id).inserted }
+            .prefix(limit).map { $0 }
+    }
+
+    func isGroup(_ address: String) -> Bool { knownGroups[address.lowercased()] != nil }
+
+    func groupName(_ address: String) -> String? { knownGroups[address.lowercased()].flatMap { $0.isEmpty ? nil : $0 } }
+
+    /// Asks the server which of these addresses are groups, once per address. A person the
+    /// people directory lists is a person, and is not asked about.
+    func checkGroups(_ addresses: [String], accountID: UUID?) async {
+        guard let accountID, let (url, credential) = connection(for: accountID) else { return }
+        await directory.loadIfNeeded()
+        let unknown = addresses.map { $0.lowercased() }
+            .filter { Recipients.isValid($0) && !checkedAddresses.contains($0) && directory.person(for: $0) == nil }
+        for address in Set(unknown) {
+            checkedAddresses.insert(address)
+            guard let found = try? await client.resolveNames(address, at: url, credential: credential) else {
+                checkedAddresses.remove(address)
+                continue
+            }
+            learn(found.filter { $0.id == address })
+        }
+    }
+
+    /// A group's members, one level down, with nested groups marked so they can be expanded
+    /// in turn. Throws when the server cannot say; `complete` is false when it listed only some.
+    func expandGroup(_ address: String, accountID: UUID?) async throws -> (members: [PersonSuggestion], complete: Bool) {
+        guard let accountID, let (url, credential) = connection(for: accountID) else {
+            throw EWSError.invalidResponse("No account to ask.")
+        }
+        async let expansion = client.expandGroup(address, at: url, credential: credential)
+        await directory.loadIfNeeded()
+        let result = try await expansion
+        learn(result.members)
+        let members = result.members.map { member in
+            var member = member
+            if let known = directory.person(for: member.address) { member.detail = known.detail }
+            return member
+        }
+        return (members, result.complete)
+    }
+
+    private func learn(_ people: [PersonSuggestion]) {
+        for person in people {
+            checkedAddresses.insert(person.id)
+            if person.isGroup { knownGroups[person.id] = person.name }
+        }
     }
 
     // MARK: - Invitations (M17)

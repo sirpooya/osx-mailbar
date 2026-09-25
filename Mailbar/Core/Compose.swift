@@ -116,6 +116,25 @@ enum Recipients {
         }
         return address + ", "
     }
+
+    /// The group's address swapped, where it stands, for its members' addresses. Anyone
+    /// already in the field (or in `elsewhere`, the other field) is not added twice.
+    static func expanding(_ text: String, group: String, into members: [String], elsewhere: String = "") -> String {
+        let key = group.lowercased()
+        let parts = parse(text)
+        var seen = Set((parts.filter { $0.lowercased() != key } + parse(elsewhere)).map { $0.lowercased() })
+        let added = members.filter { seen.insert($0.lowercased()).inserted }
+        let result = parts.flatMap { $0.lowercased() == key ? added : [$0] }
+        return result.isEmpty ? "" : join(result) + ", "
+    }
+
+    /// These addresses after what is already in the field, each once.
+    static func appending(_ addresses: [String], to text: String, elsewhere: String = "") -> String {
+        let parts = parse(text)
+        var seen = Set((parts + parse(elsewhere)).map { $0.lowercased() })
+        let result = parts + addresses.filter { seen.insert($0.lowercased()).inserted }
+        return result.isEmpty ? "" : join(result) + ", "
+    }
 }
 
 /// The written text as the HTML body Exchange receives.

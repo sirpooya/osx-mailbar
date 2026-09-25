@@ -51,15 +51,16 @@ import Testing
         #expect(root.first("NoEndRecurrence")?.child("StartDate") != nil)
     }
 
-    @Test func repeatChoicesAreWordedFromTheStartAsOWADoes() {
+    @Test func repeatChoicesAreWordedFromTheStart() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
         // Wednesday 23 September 2026: the fourth Wednesday of the month.
         let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 13))!
         let workDays: Set<Int> = [7, 1, 2, 3, 4]
         let labels = RepeatPattern.presets(workDays: workDays).map { $0.label(start: start, workDays: workDays, calendar: calendar) }
-        #expect(labels == ["Every day", "Every Wednesday", "Every workday", "Day 23 of every month",
-                           "Every fourth Wednesday", "Every September 23"])
+        #expect(labels == ["Every day", "Every Wednesday", "Day 23 of every month", "Every September 23"])
+        #expect(RepeatPattern(kind: .weekly, weekdays: workDays).label(start: start, workDays: workDays, calendar: calendar) == "Every workday")
+        #expect(RepeatPattern(kind: .monthlyWeek).label(start: start, workDays: workDays, calendar: calendar) == "Every fourth Wednesday")
         let custom = RepeatPattern(kind: .weekly, interval: 2, weekdays: [2, 4])
         #expect(custom.label(start: start, workDays: workDays, calendar: calendar) == "Every 2 weeks on Monday and Wednesday")
         #expect(RepeatPattern(kind: .monthlyWeek).xml(start: start, calendar: calendar)

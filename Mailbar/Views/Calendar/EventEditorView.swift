@@ -14,8 +14,11 @@ struct EventEditorView: View {
     @State private var categoriesOpen = QCFlags.calendarCategories
     @State private var charmsOpen = QCFlags.calendarCharms
     @State private var calendarOpen = false
-    /// The form opens with the cursor in the title (the user's call).
+    /// Whether Title is being edited, for its box's accent border. Nothing is focused on open.
     @FocusState private var titleFocused: Bool
+    /// The scroll area's height and the fields' above Description, so Description can fill the rest.
+    @State private var formHeight: CGFloat = 0
+    @State private var fieldsHeight: CGFloat = 0
     @FocusState private var locationFocused: Bool
     @State private var repeatEditorOpen = QCFlags.calendarRepeat
     @State private var endCalendarOpenForSeries = false
@@ -25,6 +28,9 @@ struct EventEditorView: View {
     /// Repeat, Reminder and Show as share one width (the user's call), wide enough for the
     /// longest choice, "Working elsewhere" with its swatch.
     private static let menuWidth: CGFloat = 190
+    /// The toolbar's charm glyph, category square and Show as square share one size (the user's
+    /// catch: they were 14, 10 and 14 pt).
+    private static let toolbarIcon: CGFloat = 12
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +39,7 @@ struct EventEditorView: View {
             HStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                      VStack(alignment: .leading, spacing: 12) {
                         // A plain bordered field like Location, with its label (the user's call).
                         row("Title") {
                             FieldBox(focused: titleFocused) {
@@ -48,11 +55,19 @@ struct EventEditorView: View {
                         options
                         Divider().opacity(0.5)
                         files
-                        // The event's body, which OWA calls the description.
+                      }
+                      .background(GeometryReader { box in
+                          Color.clear
+                              .onAppear { fieldsHeight = box.size.height }
+                              .onChange(of: box.size.height) { _, height in fieldsHeight = height }
+                      })
+                        // The event's body, which OWA calls the description. It fills what the
+                        // form leaves, down to the bottom bar, never shorter than 110 pt (the
+                        // user's catch: a fixed box left dead space under it).
                         row("Description") {
                             ComposeEditor(text: field(\.notes), onSend: { Task { await store.saveEditor() } },
                                           takesFocus: false)
-                                .frame(height: 110)
+                                .frame(height: max(110, formHeight - 36 - fieldsHeight - 12))
                                 // The text view has no baseline SwiftUI can see: its first line
                                 // sits at the 8 pt inset plus the 13 pt font's ascender, so the
                                 // label lines up with it exactly (the user's catch, twice).
@@ -75,6 +90,11 @@ struct EventEditorView: View {
                     .padding(18)
                     .background(EndEditingArea())
                 }
+                .background(GeometryReader { box in
+                    Color.clear
+                        .onAppear { formHeight = box.size.height }
+                        .onChange(of: box.size.height) { _, height in formHeight = height }
+                })
                 .frame(width: 540)
                 Divider().opacity(0.6)
                 PeopleSidebar(store: store, draft: draft)
@@ -92,7 +112,10 @@ struct EventEditorView: View {
                 store.editor?.location = rooms
                 locationFocused = true
             } else if QCFlags.calendarPeople == nil {
-                titleFocused = true
+                // No field takes the focus when the form opens (the user's call, reversing the
+                // cursor-in-Title rule): AppKit would otherwise put the window's first text field
+                // in edit mode, selected, on its own.
+                NSApp.keyWindow?.makeFirstResponder(nil)
             }
         }
         // Files dropped anywhere on the form are attached.
@@ -299,6 +322,9 @@ struct EventEditorView: View {
                 DatePicker("", selection: date, displayedComponents: [.date])
                     .labelsHidden()
                     .datePickerStyle(.graphical)
+                    // It takes the keyboard as the popover opens; no ring around the whole
+                    // calendar for that (the user's catch).
+                    .focusEffectDisabled()
                     .padding(10)
             }
         }
@@ -320,6 +346,12 @@ struct EventEditorView: View {
                                                 onSave: { store.editor?.repeatPattern = $0; repeatEditorOpen = false },
                                                 onCancel: { repeatEditorOpen = false })
                         }
+                    // What the choice means for this start date, as Outlook's summary line says it.
+                    if let pattern = draft.repeatPattern, presetIndex(pattern) != nil {
+                        Text(pattern.label(start: draft.start, workDays: workDays))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Text("Never").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
@@ -338,8 +370,8 @@ struct EventEditorView: View {
     /// none of those, and Other itself.
     private var repeatItems: [PopUpMenu.Item] {
         var items: [PopUpMenu.Item] = [.init(id: "never", title: "Never")]
-        for (index, preset) in RepeatPattern.presets(workDays: workDays).enumerated() {
-            items.append(.init(id: "preset-\(index)", title: preset.label(start: draft.start, workDays: workDays)))
+        for index in RepeatPattern.presets(workDays: workDays).indices {
+            items.append(.init(id: "preset-\(index)", title: RepeatPattern.presetNames[index]))
         }
         if let pattern = draft.repeatPattern, presetIndex(pattern) == nil {
             items.append(.init(id: "custom", title: pattern.label(start: draft.start, workDays: workDays), separatorBefore: true))
@@ -432,7 +464,8 @@ struct EventEditorView: View {
                 } else {
                     ForEach(draft.categories, id: \.self) { name in
                         HStack(spacing: 4) {
-                            RoundedRectangle(cornerRadius: 2).fill(store.categoryColor(name)).frame(width: 10, height: 10)
+                            RoundedRectangle(cornerRadius: 2).fill(store.categoryColor(name))
+                                .frame(width: Self.toolbarIcon, height: Self.toolbarIcon)
                             Text(name).lineLimit(1)
                         }
                     }
@@ -470,7 +503,7 @@ struct EventEditorView: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            Label { Text(draft.showAs.label) } icon: { Image(nsImage: ShowAsSwatch.image(draft.showAs)) }
+            Label { Text(draft.showAs.label) } icon: { Image(nsImage: ShowAsSwatch.image(draft.showAs, size: Self.toolbarIcon)) }
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -497,7 +530,7 @@ struct EventEditorView: View {
         Button { charmsOpen.toggle() } label: {
             HStack(spacing: 5) {
                 if let charm = draft.charm.flatMap(EventCharm.init) {
-                    Image(systemName: charm.symbol)
+                    Image(systemName: charm.symbol).font(.system(size: Self.toolbarIcon - 1))
                     Text(charm.label)
                 } else {
                     Text("Charm")
@@ -542,7 +575,9 @@ struct EventEditorView: View {
     @ViewBuilder
     private var files: some View {
         if !draft.keptFiles.isEmpty || !draft.newFiles.isEmpty {
-            row("Files") {
+            // No label and no line under it: the files sit just above Description (the user's
+            // sketch).
+            row("") {
                 FlowChips {
                     ForEach(draft.keptFiles) { file in
                         fileChip(file.name, size: file.sizeLabel) { store.editor?.removedFileIDs.insert(file.id) }
@@ -552,7 +587,7 @@ struct EventEditorView: View {
                     }
                 }
             }
-            Divider().opacity(0.5)
+            .padding(.bottom, -4)
         }
     }
 
@@ -624,8 +659,8 @@ struct EventEditorView: View {
 /// dotted, Tentative hatched, Busy the calendar's blue, Away purple. Drawn as untinted images,
 /// because a menu draws a template image in the text colour and the colour is the point.
 enum ShowAsSwatch {
-    static func image(_ state: EventDraft.ShowAs) -> NSImage {
-        let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
+    static func image(_ state: EventDraft.ShowAs, size: CGFloat = 14) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let box = rect.insetBy(dx: 1, dy: 1)
             let border = NSColor(srgbRed: 0.45, green: 0.5, blue: 0.6, alpha: 1)
             let blue = NSColor(srgbRed: 0.72, green: 0.8, blue: 0.93, alpha: 1)

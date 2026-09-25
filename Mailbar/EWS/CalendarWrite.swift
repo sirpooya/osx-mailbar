@@ -227,6 +227,15 @@ enum CalendarSOAP {
         """
     }
 
+    /// A distribution group's members, one level down (a group inside is listed as a group).
+    static func expandGroup(_ address: String) -> String {
+        """
+            <m:ExpandDL>
+              <m:Mailbox><t:EmailAddress>\(SOAP.escape(address))</t:EmailAddress></m:Mailbox>
+            </m:ExpandDL>
+        """
+    }
+
     static let getRoomLists = "    <m:GetRoomLists/>"
 
     static func getRooms(list address: String) -> String {
@@ -342,15 +351,28 @@ struct Room: Equatable, Hashable, Identifiable, Sendable {
 
 extension EWSResponse {
     /// Directory matches. "No results" is an empty list, not an error.
-    static func resolvedNames(from data: Data) throws -> [(name: String, address: String)] {
+    static func resolvedNames(from data: Data) throws -> [PersonSuggestion] {
         let root = try parse(data)
         if root.first("ResponseCode")?.trimmedText == "ErrorNameResolutionNoResults" { return [] }
         _ = try responseMessages(in: root)
-        return root.all("Resolution").compactMap { resolution in
-            guard let mailbox = resolution.child("Mailbox"),
-                  let address = mailbox.child("EmailAddress")?.trimmedText, !address.isEmpty else { return nil }
-            return (mailbox.child("Name")?.trimmedText ?? "", address)
-        }
+        return root.all("Resolution").compactMap { $0.child("Mailbox").flatMap(person) }
+    }
+
+    /// A group's members, and whether the server listed them all.
+    static func groupMembers(from data: Data) throws -> (members: [PersonSuggestion], complete: Bool) {
+        let root = try parse(data)
+        _ = try responseMessages(in: root)
+        let expansion = root.first("DLExpansion")
+        let members = (expansion?.all("Mailbox") ?? []).compactMap(person)
+        return (members, expansion?.attributes["IncludesLastItemInRange"] != "false")
+    }
+
+    /// `PublicDL` is a directory group, `PrivateDL` one saved in someone's contacts.
+    private static func person(_ mailbox: XMLTreeNode) -> PersonSuggestion? {
+        guard let address = mailbox.child("EmailAddress")?.trimmedText, !address.isEmpty else { return nil }
+        let type = mailbox.child("MailboxType")?.trimmedText ?? ""
+        return PersonSuggestion(name: mailbox.child("Name")?.trimmedText ?? "", address: address,
+                                isGroup: type == "PublicDL" || type == "PrivateDL")
     }
 
     /// One state per address, in request order, as the reply lists them: `Free`, `Tentative`,
@@ -468,8 +490,12 @@ extension EWSClient {
                                 url: url, credential: credential)
     }
 
-    func resolveNames(_ text: String, at url: URL, credential: EWSCredential) async throws -> [(name: String, address: String)] {
+    func resolveNames(_ text: String, at url: URL, credential: EWSCredential) async throws -> [PersonSuggestion] {
         try EWSResponse.resolvedNames(from: try await raw(CalendarSOAP.resolveNames(text), url: url, credential: credential))
+    }
+
+    func expandGroup(_ address: String, at url: URL, credential: EWSCredential) async throws -> (members: [PersonSuggestion], complete: Bool) {
+        try EWSResponse.groupMembers(from: try await raw(CalendarSOAP.expandGroup(address), url: url, credential: credential))
     }
 
     /// Every room in every room list the organization publishes. Empty when it publishes none.

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var accounts: AccountStore
     let client: EWSClient
+    let directory: PeopleDirectory
     /// Called after an account is added, edited or deleted, so the menu bar refreshes.
     let onChange: () -> Void
 
@@ -11,6 +12,7 @@ struct SettingsView: View {
     @AppStorage(Keys.notificationDetails) private var notificationDetails = true
     @AppStorage(Keys.eventReminders) private var eventReminders = true
     @AppStorage(Keys.showToday) private var showToday = true
+    @AppStorage(Keys.peopleDirectoryURL) private var directoryURL = ""
     @State private var launchAtLogin = false
     @State private var launchAtLoginMessage: String?
 
@@ -29,6 +31,7 @@ struct SettingsView: View {
             accountsSection
             refreshSection
             notificationsSection
+            directorySection
             generalSection
             privacySection
         }
@@ -152,6 +155,41 @@ struct SettingsView: View {
         }
     }
 
+    /// An optional JSON list of people (name, work email, team, department, photo). It adds the
+    /// Team and Department picker to the event form and the composer, and its photos are shown
+    /// for the addresses it lists.
+    private var directorySection: some View {
+        SettingsSection("People directory",
+                        footnote: "Optional. An https address that returns a JSON list of people with their work email, team and department. It adds a team and department picker when inviting people or writing mail, and its photos are shown for the addresses it lists. Mailbar reads it with a plain request, keeps it in memory only, and loads photos from the same server without saving them.") {
+            SettingsFieldRow(title: "Address", placeholder: "https://example.com/api/users", text: $directoryURL)
+                .onChange(of: directoryURL) { _, _ in directory.reset() }
+            SettingsDivider()
+            SettingsRow(directoryStatus.title, subtitle: directoryStatus.subtitle) {
+                Button(directory.phase == .loaded ? "Reload" : "Load") { Task { await directory.load() } }
+                    .controlSize(.small)
+                    .disabled(directoryURL.trimmingCharacters(in: .whitespaces).isEmpty || directory.phase == .loading)
+            }
+        }
+    }
+
+    private var directoryStatus: (title: String, subtitle: String?) {
+        switch directory.phase {
+        case .idle:
+            return directoryURL.trimmingCharacters(in: .whitespaces).isEmpty
+                ? ("Not set", nil) : ("Not loaded yet", "Loads the first time a picker opens.")
+        case .loading:
+            return ("Loading...", nil)
+        case .failed(let message):
+            return ("Could not load", message)
+        case .loaded:
+            let people = directory.people.count
+            let teams = directory.teams(in: nil).count
+            let departments = directory.departments.count
+            return ("\(people) \(people == 1 ? "person" : "people")",
+                    "\(teams) \(teams == 1 ? "team" : "teams") in \(departments) \(departments == 1 ? "department" : "departments")")
+        }
+    }
+
     private var generalSection: some View {
         SettingsSection("General", footnote: launchAtLoginMessage) {
             SettingsRow("Launch at login") {
@@ -168,6 +206,6 @@ struct SettingsView: View {
     }
 
     private var privacySection: some View {
-        SettingsFootnote("Passwords are kept in your Keychain. Mail is held in memory only while Mailbar runs and is never written to disk, except an attachment you choose to open, which waits in a private temporary folder until Mailbar quits. Mailbar talks to your accounts' servers and nothing else.")
+        SettingsFootnote("Passwords are kept in your Keychain. Mail is held in memory only while Mailbar runs and is never written to disk, except an attachment you choose to open, which waits in a private temporary folder until Mailbar quits. Mailbar talks to your accounts' servers and, when you set one, the people directory, and nothing else.")
     }
 }

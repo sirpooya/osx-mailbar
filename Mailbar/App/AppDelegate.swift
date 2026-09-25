@@ -33,7 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             client = EWSClient()
         }
 
-        store = MailStore(accounts: accounts, client: client)
+        let directory = MockMode.current == nil ? PeopleDirectory()
+            : PeopleDirectory(address: { MockDirectory.address }, fetch: MockDirectory.fetch)
+        store = MailStore(accounts: accounts, client: client, directory: directory)
         reminders = EventReminders(mail: store)
         if QCFlags.openToday { store.popoverTab = .today }
         if let offset = QCFlags.todayOffset { store.dayOffset = offset }
@@ -141,9 +143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           let first = self.store.state(for: account.id).messages.first,
                           let (url, credential) = self.store.connection(for: account.id) else { return }
                     Task {
-                        if kind == "new" {
+                        if kind == "blank" {
+                            // Exactly what the New Message button does, nothing typed.
                             self.store.startNewMessage()
-                            self.store.draft?.to = "sa"
+                            return
+                        } else if kind == "new" {
+                            self.store.startNewMessage()
+                            self.store.draft?.to = QCFlags.withGroup ? "designteam@example.com, sa" : "sa"
                             self.store.draft?.subject = "Review on Thursday"
                         } else {
                             let body = try await self.store.client.message(id: first.id, at: url, credential: credential)
@@ -183,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 CalendarWindow.shared.store?.editor?.subject = "Design review"
                 CalendarWindow.shared.store?.editor?.people = [.init(name: "Sara Rahimi", address: "sara.rahimi@example.com"),
                                                                .init(name: "Omid Karimi", address: "omid@example.org")]
+                    + (QCFlags.withGroup ? [.init(name: "Design Team", address: "designteam@example.com")] : [])
                 CalendarWindow.shared.store?.editor?.categories = ["Storybook"]
                 CalendarWindow.shared.store?.editor?.charm = EventCharm.group.rawValue
                 CalendarWindow.shared.store?.editor?.newFiles = [.init(name: "Agenda.pdf", data: Data(count: 18_400))]
@@ -206,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings() {
         // An account added, edited or deleted, or a new interval, all mean "check now".
-        SettingsWindow.shared.show(accounts: accounts, client: client,
+        SettingsWindow.shared.show(accounts: accounts, client: client, directory: store.directory,
                                    onChange: { [weak self] in
                                        guard let self else { return }
                                        self.poller.refreshNow()

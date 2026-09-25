@@ -214,6 +214,9 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 }
                 return ok(MockFixtures.success("CreateItem"))
             }
+            if request.contains("<m:ExpandDL>") {
+                return ok(MockCalendar.expandResponse(Self.firstMatch("<t:EmailAddress>([^<]*)</t:EmailAddress>", in: request) ?? ""))
+            }
             if request.contains("<m:ResolveNames") {
                 let query = (Self.firstMatch("<m:UnresolvedEntry>([^<]*)</m:UnresolvedEntry>", in: request) ?? "").lowercased()
                 return ok(MockCalendar.resolveResponse(query))

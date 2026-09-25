@@ -89,18 +89,24 @@ struct CharmPicker: View {
 /// The form's right side, after OWA's People pane: a field that suggests people from the
 /// company directory and inbox senders as you type, and everyone invited with whether they are
 /// free at the event's time. The organizer (this account) is listed first and cannot be removed.
+/// A distribution group shows as a group with Expand, which puts its members in its place; with
+/// a people directory in Settings, the button beside the field adds a whole team or department.
 struct PeopleSidebar: View {
     @Bindable var store: CalendarStore
     let draft: EventDraft
 
     @State private var query = QCFlags.calendarPeople ?? ""
-    @State private var suggestions: [(name: String, address: String)] = []
+    @State private var suggestions: [PersonSuggestion] = []
     @State private var highlighted = 0
     @State private var statuses: [String: String] = [:]
     /// Photos by lowercased address, held only while the form is open.
     @State private var photos: [String: NSImage] = [:]
     @State private var photoAsked: Set<String> = []
     @State private var optionsOpen = false
+    @State private var directoryOpen = QCFlags.directoryPicker
+    /// Groups being expanded, and why the last one could not be.
+    @State private var expanding: Set<String> = []
+    @State private var expandProblem: String?
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -121,10 +127,17 @@ struct PeopleSidebar: View {
                     .buttonStyle(.borderless)
                     .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
                     .help("Add")
+                if store.mail.directory.isConfigured { directoryButton }
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
             .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(fieldFocused ? 0.35 : 0.18)))
+            if let expandProblem {
+                Label(expandProblem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             ZStack(alignment: .top) {
                 GeometryReader { geometry in
@@ -135,9 +148,7 @@ struct PeopleSidebar: View {
                                           address: account.email, note: "Organizer", removable: nil)
                             }
                             ForEach(draft.people) { person in
-                                personRow(name: person.display, address: person.address, note: nil) {
-                                    store.editor?.people.removeAll { $0 == person }
-                                }
+                                personRow(person)
                             }
                         }
                         // The whole height, so a click under the list also ends editing.
@@ -169,6 +180,8 @@ struct PeopleSidebar: View {
             }
         }
         .task(id: draft.attendeeList.joined(separator: ",")) {
+            // Which of them are groups, for the Expand button; the server is asked once each.
+            await store.mail.checkGroups(draft.attendeeList, accountID: store.account?.id)
             var addresses = draft.attendeeList
             if let own = store.account?.email, !own.isEmpty { addresses.insert(own, at: 0) }
             for address in addresses.map({ $0.lowercased() }) where !photoAsked.contains(address) {
@@ -187,12 +200,13 @@ struct PeopleSidebar: View {
         }
     }
 
-    /// OWA's gear beside People, as light as the field's plus (the user's call): a plain button,
+    /// OWA's gear beside People, in secondary grey (the user's call: lighter than the text, but not
+    /// as faint as the field's plus): a plain button,
     /// because a menu button ignores the colour of its icon. It opens Response options, Request
     /// responses and Allow forwarding.
     private var responseOptions: some View {
         Button { optionsOpen.toggle() } label: {
-            Image(systemName: "gearshape").foregroundStyle(.tertiary)
+            Image(systemName: "gearshape").font(.system(size: 15)).foregroundStyle(.secondary)
         }
         .buttonStyle(.borderless)
         .help("Response options")
@@ -216,14 +230,15 @@ struct PeopleSidebar: View {
 
     private var dropdown: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(suggestions.enumerated()), id: \.element.address) { index, person in
+            ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, person in
                 Button { add(name: person.name, address: person.address) } label: {
                     HStack(spacing: 8) {
-                        Avatar(name: person.name.isEmpty ? person.address : person.name, size: 26,
-                               photo: photos[person.address.lowercased()])
+                        Avatar(name: person.display, size: 26, photo: photos[person.id], isGroup: person.isGroup)
                         VStack(alignment: .leading, spacing: 0) {
-                            DirectionalText(person.name.isEmpty ? person.address : person.name, font: .system(size: 12.5))
-                            Text(person.address).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                            DirectionalText(person.display, font: .system(size: 12.5))
+                            Text([person.isGroup ? "Group" : person.detail, person.address].filter { !$0.isEmpty }
+                                    .joined(separator: " · "))
+                                .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -248,8 +263,52 @@ struct PeopleSidebar: View {
                   photo: photos[address.lowercased()], onRemove: removable)
     }
 
-    private func personRow(name: String, address: String, note: String?, onRemove: @escaping () -> Void) -> some View {
-        personRow(name: name, address: address, note: note, removable: onRemove)
+    /// An invitee, or a group with Expand (a group has no free or busy of its own).
+    private func personRow(_ person: EventDraft.Invitee) -> some View {
+        let group = store.mail.isGroup(person.address)
+        return PersonRow(name: group ? store.mail.groupName(person.address) ?? person.display : person.display,
+                         address: person.address, note: group ? "Group" : nil,
+                         status: group ? nil : statuses[person.id], photo: group ? nil : photos[person.id],
+                         isGroup: group, isExpanding: expanding.contains(person.id),
+                         onExpand: group ? { Task { await expand(person) } } : nil,
+                         onRemove: { store.editor?.people.removeAll { $0 == person } })
+    }
+
+    private var directoryButton: some View {
+        Button { directoryOpen.toggle() } label: { Image(systemName: "person.3") }
+            .buttonStyle(.borderless)
+            .help("Add a team or department")
+            .popover(isPresented: $directoryOpen, arrowEdge: .bottom) {
+                DirectoryPicker(directory: store.mail.directory,
+                                already: Set(draft.attendeeList.map { $0.lowercased() } + [store.account?.email.lowercased() ?? ""])) { people in
+                    for person in people { append(name: person.name, address: person.address) }
+                    directoryOpen = false
+                }
+            }
+    }
+
+    /// The group's members in its place, each once, never the organizer. A group inside it
+    /// stays a group, to expand in turn.
+    private func expand(_ group: EventDraft.Invitee) async {
+        expanding.insert(group.id)
+        defer { expanding.remove(group.id) }
+        let name = store.mail.groupName(group.address) ?? group.display
+        do {
+            let result = try await store.mail.expandGroup(group.address, accountID: store.account?.id)
+            guard var people = store.editor?.people, let index = people.firstIndex(of: group) else { return }
+            guard !result.members.isEmpty else {
+                expandProblem = "The server lists no members for \(name)."
+                return
+            }
+            var seen = Set(people.map(\.id) + [store.account?.email.lowercased() ?? ""])
+            let members = result.members.filter { seen.insert($0.id).inserted }
+                .map { EventDraft.Invitee(name: $0.name, address: $0.address) }
+            people.replaceSubrange(index...index, with: members)
+            store.editor?.people = people
+            expandProblem = result.complete ? nil : "The server listed only some of \(name)'s members."
+        } catch {
+            expandProblem = "Could not expand \(name): \(error.localizedDescription)"
+        }
     }
 
     private func move(_ step: Int) {
@@ -271,30 +330,38 @@ struct PeopleSidebar: View {
     }
 
     private func add(name: String, address: String) {
-        let person = EventDraft.Invitee(name: name, address: address)
-        if store.editor?.people.contains(where: { $0.id == person.id }) == false {
-            store.editor?.people.append(person)
-        }
+        append(name: name, address: address)
         query = ""
         suggestions = []
         fieldFocused = true
     }
+
+    private func append(name: String, address: String) {
+        let person = EventDraft.Invitee(name: name, address: address)
+        if store.editor?.people.contains(where: { $0.id == person.id }) == false {
+            store.editor?.people.append(person)
+        }
+    }
 }
 
-/// One person in the sidebar: initials, name, and free or busy at the event's time.
+/// One person in the sidebar: initials, name, and free or busy at the event's time. A group
+/// has Expand instead, always showing, since it is the thing to do with one.
 private struct PersonRow: View {
     let name: String
     let address: String
     let note: String?
     let status: String?
     let photo: NSImage?
+    var isGroup = false
+    var isExpanding = false
+    var onExpand: (() -> Void)? = nil
     let onRemove: (() -> Void)?
 
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 10) {
-            Avatar(name: name, size: 36, photo: photo)
+            Avatar(name: name, size: 36, photo: photo, isGroup: isGroup)
             VStack(alignment: .leading, spacing: 1) {
                 DirectionalText(name, font: .system(size: 13))
                 HStack(spacing: 4) {
@@ -308,6 +375,15 @@ private struct PersonRow: View {
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if isExpanding {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+            } else if let onExpand {
+                Button("Expand", action: onExpand)
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .help("Replace \(name) with its members")
+            }
             if let onRemove, hovering {
                 Button(action: onRemove) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
                     .buttonStyle(.plain)
@@ -345,14 +421,24 @@ private struct PersonRow: View {
     }
 }
 
-/// The person's photo from Exchange, else a neutral circle with their initials.
-private struct Avatar: View {
+/// The person's photo (the people directory's or Exchange's), else a neutral circle with their
+/// initials, or with a group glyph for a distribution group.
+struct Avatar: View {
     let name: String
     let size: CGFloat
     var photo: NSImage? = nil
+    var isGroup = false
 
     var body: some View {
-        if let photo {
+        if isGroup {
+            Circle()
+                .fill(Color.accentColor.opacity(0.14))
+                .frame(width: size, height: size)
+                .overlay(Image(systemName: "person.3.fill")
+                    .font(.system(size: size * 0.32))
+                    .foregroundStyle(Color.accentColor))
+                .accessibilityHidden(true)
+        } else if let photo {
             Image(nsImage: photo)
                 .resizable()
                 .scaledToFill()

@@ -9,6 +9,13 @@ struct ComposeView: View {
 
     @State private var confirmingDiscard = false
     @FocusState private var focus: Field?
+    /// What to offer under the field being typed in, from the people directory, the Exchange
+    /// directory and inbox senders.
+    @State private var suggestions: [PersonSuggestion] = []
+    /// The field whose Team and Department picker is open.
+    @State private var pickingFor: Field?
+    @State private var expanding: Set<String> = []
+    @State private var groupProblem: String?
 
     private enum Field { case to, cc, subject }
 
@@ -92,10 +99,17 @@ struct ComposeView: View {
     private func fields(_ draft: Draft) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             recipientField("To", text: Binding(get: { store.draft?.to ?? "" }, set: { store.draft?.to = $0 }),
-                           field: .to)
+                           other: draft.cc, field: .to, accountID: draft.accountID)
             thinDivider
             recipientField("Cc", text: Binding(get: { store.draft?.cc ?? "" }, set: { store.draft?.cc = $0 }),
-                           field: .cc)
+                           other: draft.to, field: .cc, accountID: draft.accountID)
+            if let groupProblem {
+                Label(groupProblem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
             thinDivider
             HStack(spacing: 6) {
                 label("Subject")
@@ -116,35 +130,60 @@ struct ComposeView: View {
         }
     }
 
-    private func recipientField(_ title: String, text: Binding<String>, field: Field) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    /// A recipient line: the addresses, a button for a whole team or department when a people
+    /// directory is set, and one strip under it with the groups in the field (each with Expand,
+    /// which swaps it for its members) and suggestions for what is being typed.
+    private func recipientField(_ title: String, text: Binding<String>, other: String, field: Field,
+                                accountID: UUID) -> some View {
+        let groups = Recipients.parse(text.wrappedValue).filter(store.isGroup)
+        let offered = focus == field ? suggestions : []
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 label(title)
                 TextField("", text: text)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .focused($focus, equals: field)
+                if store.directory.isConfigured {
+                    Button { pickingFor = field } label: {
+                        Image(systemName: "person.3").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add a team or department")
+                    .popover(isPresented: Binding(get: { pickingFor == field }, set: { if !$0 { pickingFor = nil } }),
+                             arrowEdge: .bottom) {
+                        DirectoryPicker(directory: store.directory,
+                                        already: Set((Recipients.parse(text.wrappedValue) + Recipients.parse(other))
+                                            .map { $0.lowercased() })) { people in
+                            text.wrappedValue = Recipients.appending(people.map(\.address), to: text.wrappedValue,
+                                                                     elsewhere: other)
+                            pickingFor = nil
+                        }
+                    }
+                }
             }
-            // Suggestions for the address being typed, from senders already in the inbox.
-            let suggestions = focus == field
-                ? store.recipientSuggestions(for: Recipients.currentToken(in: text.wrappedValue),
-                                             excluding: text.wrappedValue)
-                : []
-            if !suggestions.isEmpty {
+            if !groups.isEmpty || !offered.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
-                        ForEach(suggestions, id: \.address) { person in
+                        ForEach(groups, id: \.self) { address in
+                            groupChip(address, text: text, other: other, accountID: accountID)
+                        }
+                        ForEach(offered) { person in
                             Button {
                                 text.wrappedValue = Recipients.completing(text.wrappedValue, with: person.address)
                             } label: {
-                                Text(person.name.isEmpty ? person.address : "\(person.name)  \(person.address)")
-                                    .font(.system(size: 11))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                                HStack(spacing: 4) {
+                                    if person.isGroup { Image(systemName: "person.3.fill").font(.system(size: 9)) }
+                                    Text(person.name.isEmpty ? person.address : "\(person.name)  \(person.address)")
+                                }
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                             }
                             .buttonStyle(.plain)
+                            .help(person.detail.isEmpty ? (person.isGroup ? "A group" : person.address) : person.detail)
                         }
                     }
                 }
@@ -153,6 +192,67 @@ struct ComposeView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .task(id: focus == field ? Recipients.currentToken(in: text.wrappedValue) : "") {
+            let token = focus == field ? Recipients.currentToken(in: text.wrappedValue) : ""
+            guard token.count >= 2 else {
+                if focus == field { suggestions = [] }
+                return
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let found = await store.peopleSuggestions(for: token, excluding: text.wrappedValue + ", " + other,
+                                                      accountID: accountID, limit: 5)
+            guard !Task.isCancelled, focus == field else { return }
+            suggestions = found
+        }
+        // Which addresses are groups: asked once each, after typing settles.
+        .task(id: text.wrappedValue) {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled else { return }
+            await store.checkGroups(Recipients.parse(text.wrappedValue), accountID: accountID)
+        }
+    }
+
+    private func groupChip(_ address: String, text: Binding<String>, other: String, accountID: UUID) -> some View {
+        let name = store.groupName(address) ?? address
+        return HStack(spacing: 5) {
+            Image(systemName: "person.3.fill").font(.system(size: 9))
+            Text(name).lineLimit(1)
+            if expanding.contains(address.lowercased()) {
+                ProgressView().controlSize(.mini)
+            } else {
+                Button("Expand") {
+                    Task { await expand(address, name: name, text: text, other: other, accountID: accountID) }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .fontWeight(.medium)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().strokeBorder(Color.accentColor.opacity(0.35)))
+        .help("\(address) is a group. Expand puts its members here instead.")
+    }
+
+    /// The group's address swapped for its members. A group inside it stays, to expand in turn.
+    private func expand(_ address: String, name: String, text: Binding<String>, other: String, accountID: UUID) async {
+        expanding.insert(address.lowercased())
+        defer { expanding.remove(address.lowercased()) }
+        do {
+            let result = try await store.expandGroup(address, accountID: accountID)
+            guard !result.members.isEmpty else {
+                groupProblem = "The server lists no members for \(name)."
+                return
+            }
+            let me = store.accounts.account(accountID)?.email ?? ""
+            text.wrappedValue = Recipients.expanding(text.wrappedValue, group: address,
+                                                     into: result.members.map(\.address), elsewhere: other + ", " + me)
+            groupProblem = result.complete ? nil : "The server listed only some of \(name)'s members."
+        } catch {
+            groupProblem = "Could not expand \(name): \(error.localizedDescription)"
+        }
     }
 
     private func label(_ text: String) -> some View {

@@ -394,15 +394,9 @@ final class CalendarStore {
 
     // MARK: - People and rooms
 
-    /// Directory matches for the name being typed (the server searches it), plus inbox senders.
-    func peopleSuggestions(for token: String, excluding typed: String) async -> [(name: String, address: String)] {
-        let local = mail.recipientSuggestions(for: token, excluding: typed)
-        guard token.count >= 2, let account, let (url, credential) = mail.connection(for: account.id) else { return local }
-        let already = Set(Recipients.parse(typed).map { $0.lowercased() })
-        let directory = ((try? await mail.client.resolveNames(token, at: url, credential: credential)) ?? [])
-            .filter { !already.contains($0.address.lowercased()) }
-        var seen = Set<String>()
-        return (directory + local).filter { seen.insert($0.address.lowercased()).inserted }.prefix(6).map { $0 }
+    /// The people directory, the Exchange directory and inbox senders, for the name being typed.
+    func peopleSuggestions(for token: String, excluding typed: String) async -> [PersonSuggestion] {
+        await mail.peopleSuggestions(for: token, excluding: typed, accountID: account?.id)
     }
 
     /// Categories the form offers: the master list's, in name order, else OWA's defaults.
@@ -415,10 +409,12 @@ final class CalendarStore {
         CategoryColors.color(forName: name, colors: categoryColors)
     }
 
-    /// A person's photo from the server, for the People sidebar. Never kept here: the sidebar
-    /// holds it while the form is open and it goes when the form closes (no image is cached,
-    /// the user's rule). Nil on servers older than 2013, which have no photos to give.
+    /// A person's photo, for the People sidebar: the people directory's when it has one for this
+    /// address, else the Exchange server's. Never kept here: the sidebar holds it while the form
+    /// is open and it goes when the form closes (no image is cached, the user's rule). The
+    /// server has none to give before Exchange 2013.
     func photo(for address: String) async -> NSImage? {
+        if let avatar = await mail.directory.avatar(for: address) { return avatar }
         guard let account, let (url, credential) = mail.connection(for: account.id) else { return nil }
         guard mail.isModern(account.id) else {
             EWSClient.photoLog.info("No photos: the server is older than Exchange 2013")

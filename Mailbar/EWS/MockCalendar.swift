@@ -205,15 +205,43 @@ enum MockCalendar {
         ("Omid Karimi", "omid@example.org"), ("Sara Rahimi", "sara.rahimi@example.com"),
     ]
 
+    /// Invented distribution groups, with their members; a group can hold a group.
+    static let groups: [(name: String, address: String, members: [String])] = [
+        ("Design Team", "designteam@example.com",
+         ["narges@example.com", "ali.tavakoli@example.com", "sara.rahimi@example.com", "maryam.salehi@example.com",
+          "design-leads@example.com"]),
+        ("Design Leads", "design-leads@example.com", ["ali.tavakoli@example.com", "narges@example.com"]),
+    ]
+
+    private static func mailbox(_ name: String, _ address: String, group: Bool) -> String {
+        "<t:Mailbox><t:Name>\(name)</t:Name><t:EmailAddress>\(address)</t:EmailAddress>"
+            + "<t:RoutingType>SMTP</t:RoutingType><t:MailboxType>\(group ? "PublicDL" : "Mailbox")</t:MailboxType></t:Mailbox>"
+    }
+
     static func resolveResponse(_ query: String) -> String {
-        let matches = directory.filter { $0.0.lowercased().contains(query) || $0.1.lowercased().contains(query) }
+        let everyone = directory.map { ($0.0, $0.1, false) } + groups.map { ($0.name, $0.address, true) }
+        let matches = everyone.filter { $0.0.lowercased().contains(query) || $0.1.lowercased().contains(query) }
         guard !matches.isEmpty else {
             return wrapError("ResolveNames", code: "ErrorNameResolutionNoResults")
         }
-        let resolutions = matches.map { name, address in
-            "<t:Resolution><t:Mailbox><t:Name>\(name)</t:Name><t:EmailAddress>\(address)</t:EmailAddress></t:Mailbox></t:Resolution>"
-        }.joined()
+        let resolutions = matches.map { "<t:Resolution>\(mailbox($0.0, $0.1, group: $0.2))</t:Resolution>" }.joined()
         return wrap("ResolveNames", "<m:ResolutionSet TotalItemsInView=\"\(matches.count)\">\(resolutions)</m:ResolutionSet>")
+    }
+
+    /// Members by name from the invented directory (and the people directory's invented
+    /// people, who are not all in it), groups marked as groups.
+    static func expandResponse(_ address: String) -> String {
+        guard let group = groups.first(where: { $0.address == address.lowercased() }) else {
+            return wrapError("ExpandDL", code: "ErrorNameResolutionNoResults")
+        }
+        let names = Dictionary(uniqueKeysWithValues: (directory + [("مریم صالحی", "maryam.salehi@example.com")]).map { ($0.1, $0.0) })
+        let members = group.members.map { member in
+            if let inner = groups.first(where: { $0.address == member }) { return mailbox(inner.name, inner.address, group: true) }
+            return mailbox(names[member] ?? member, member, group: false)
+        }.joined()
+        return wrap("ExpandDL", """
+        <m:DLExpansion TotalItemsInView="\(group.members.count)" IncludesLastItemInRange="true">\(members)</m:DLExpansion>
+        """)
     }
 
     static let roomListsResponse = wrap("GetRoomLists", """

@@ -21,6 +21,9 @@ enum Keys {
     static let eventReminders = "mailbar.eventReminders"
     /// The Today strip above the inbox (M19).
     static let showToday = "mailbar.showToday"
+    /// The people directory's address (a JSON list of people with team and department), or
+    /// empty for none. Never a default: the user types it.
+    static let peopleDirectoryURL = "mailbar.peopleDirectoryURL"
 
     // Calendar (M15)
     /// Day, work week, week or month, as last chosen.
