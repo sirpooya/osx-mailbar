@@ -31,5 +31,13 @@
 	</dict>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/sirpooya/osx-mailbar/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>m3S4ZNk5wyug18duQxz01d4josXyik3Td9JYOc+9nCY=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

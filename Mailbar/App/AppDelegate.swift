@@ -129,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         installMainMenu()
         installEditingShortcuts()
+        UpdateController.shared.start()
         observeSleepAndWake()
 
         if accounts.accounts.isEmpty || QCFlags.openSettings {

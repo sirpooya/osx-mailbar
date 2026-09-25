@@ -10,6 +10,18 @@ section when a release is cut.
 
 ## [Unreleased]
 
+### Added
+- Automatic updates: Mailbar checks for a new version once a day and offers to install it. Check for Updates... is in the menu bar icon's right-click menu.
+
+### Changed
+- Schedule's name column is wider, so room names fit.
+- Long room names are shortened from the building name, so the room itself stays visible.
+
+### Fixed
+- Dragging the meeting in Schedule now follows the pointer; before, it lagged and slipped as the grid shifted under it. Schedule always shows the whole day.
+- Location shows a spinner while the rooms load, fetches all room lists at once, and says when no rooms match.
+- A room no longer shows up twice in Schedule when its address is spelled with different capitals.
+
 ## [1.0.0] - 2026-09-26
 
 ### Added

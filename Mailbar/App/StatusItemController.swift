@@ -100,6 +100,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Refresh Now", action: #selector(menuRefresh), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Settings...", action: #selector(menuSettings), keyEquivalent: ",").target = self
+        if UpdateController.isEnabled {
+            menu.addItem(withTitle: "Check for Updates...", action: #selector(menuCheckForUpdates), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Mailbar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
@@ -110,6 +113,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func menuRefresh() { onRefresh() }
+
+    @objc private func menuCheckForUpdates() { UpdateController.shared.checkForUpdates() }
 
     /// Set by the app delegate: opens the calendar window (M15).
     var onOpenCalendar: (() -> Void)?

@@ -93,7 +93,7 @@ in mock mode. The Milestones section below is the record; none is open.
      the People sidebar giving way to the grid; the form's Cancel and Send serve both, so there
      is no Done, and the legend sits in the bottom bar's left. Event's toolbar (Attach, Charm, Categorize, Show as, Reminder, Private) shows in Event only; in Schedule its row holds the day with its arrows (regular weight) and Next free time on the right (the user's call), at the toolbar's size: 13 pt text, and Next free time a borderless icon-and-word button like Attach. That row is one height in both (`EventEditorView.toolbarRowHeight`, 24 pt), so switching moves nothing under it. Rows for you, the invitees and
      rooms with their busy blocks from `GetUserAvailability` for the day, the meeting as a band,
-     a click moves it, and it drags with the hand (open, then closed while held) or resizes from either edge (the resize cursor), in 15-minute steps within the day, never shorter than 15 minutes; Next free time finds the first open slot. Dense, after Outlook's (the user's call): 24 pt rows under Attendees and Rooms bands, thin hour and half-hour lines, and busy blocks and legend drawn with the Show as menu's own swatches (`ShowAsSwatch`: dotted, hatched, blue, purple), never colours of their own. Charm and Categorize were left out at first (crossed off in an
+     a click moves it, and it drags with the hand (open, then closed while held) or resizes from either edge (the resize cursor), in 15-minute steps within the day, never shorter than 15 minutes. The grid is always the whole day, 00:00 to 24:00, scrolled to the meeting: a range stretched around the meeting shifted under the hand mid-drag, and the drag is measured in the grid's coordinate space, not the band's, which moves with it; Next free time finds the first open slot. Dense, after Outlook's (the user's call): 24 pt rows under Attendees and Rooms bands, thin hour and half-hour lines, and busy blocks and legend drawn with the Show as menu's own swatches (`ShowAsSwatch`: dotted, hatched, blue, purple), never colours of their own. Charm and Categorize were left out at first (crossed off in an
      early screenshot) and added 2026-09-25 when the user asked for them.
 - No calendar library: checked 2026-09-25. KVKCalendar is UIKit and reaches the Mac only through
   Catalyst; swift-week-view and CalendarKit are iOS; GECalendar and Mijick's CalendarView are date
@@ -143,6 +143,9 @@ Testing rule for the calendar: never create, change, cancel or answer a real eve
 user names it; an event with people sends real invitations.
 
 ## Status
+2026-09-26: **v1.0.0 released** on GitHub Releases (sirpooya/osx-mailbar), `Mailbar-1.0.0.zip`,
+signed with the Apple Development certificate, not notarized (users click Open Anyway).
+
 2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and its Schedule view (163 tests green); the popover has Inbox and
 Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
@@ -249,7 +252,8 @@ first draft planned. Delete and move do not take a change key at all.
   the account's UUID. Never plist or UserDefaults for a password.
 - Format: XcodeGen `project.yml` is the source of truth; the `.xcodeproj` is generated and ignored.
 
-> Do NOT add a Swift package unless a task truly needs it. Ask first. No approved exceptions yet.
+> Do NOT add a Swift package unless a task truly needs it. Ask first. Approved: Sparkle (2026-09-26,
+> for updates).
 
 ## Project layout
 ```
@@ -445,7 +449,11 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `formStatuses`, dropped when the form closes), so the Event and Schedule tabs switch without
   fetching them again; typing in Location opens the room list itself (`roomQueryActive`, closed
   by Escape, a pick, Check availability or leaving the field), because the focus state alone
-  went stale on the real account; an empty room list is read again.
+  went stale on the real account; an empty room list is read again (also on typing), all room
+  lists are fetched at once, a spinner shows in Location while they load, and "No rooms match"
+  says so when nothing fits. A room is its address, compared without case (`Room` ==), so one
+  room never lists twice; long room names truncate at the head (`DirectionalText` truncation),
+  keeping the room and losing the building; Schedule's name column is 270 pt.
 - 2026-09-25 Tooltips name the action then its shortcut in symbols, "New Event  ⌘N", never
   "(Command N)" (the user's call). The calendar window opens at 870 x 620 (autosave name
   `MailbarCalendarWindow.v2`, so the new default applied once); event titles are medium weight
@@ -572,6 +580,10 @@ No telemetry, no analytics. Network calls, exhaustively:
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and
   no DNS SRV lookup.
 - Remote images inside a message, only when the user clicks "Load images" for that message.
+- Sparkle, Release builds only: `appcast.xml` from raw.githubusercontent.com (this repo) once a
+  day and on Check for Updates, and the update zip from GitHub Releases when the user installs.
+  No system profile is sent. Sparkle keeps a downloaded update in the app's Caches folder until
+  it installs; that is the app, never mailbox data.
 - The people directory, only when the user has set its address in Settings: one plain GET for
   the list (at most every ten minutes, when a picker, a People field, a recipient field or the
   Settings tab needs it), and GETs for photos on that same host only. No credentials are sent.
@@ -632,7 +644,21 @@ python3 ~/Documents/GitHub/claude-skills/skills/release/changelog.py add <type> 
 
 Types: added, changed, deprecated, removed, fixed, security. Write the entry for someone reading
 release notes, not a commit message. Skip pure refactors, formatting, and doc-only edits.
-Releases are cut with the `release` skill.
+Releases are cut with the `release` skill, whose `.release.json` runs `scripts/release.sh <version>`:
+it bumps `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` (Sparkle compares the build number),
+builds Release, zips with `ditto`, signs the zip with Sparkle's `sign_update --account mailbar`,
+tags and pushes, publishes the GitHub release with the changelog section, then writes and pushes
+`appcast.xml` (after the zip is up, so the feed never names a missing download). Info.plist reads
+both versions from the build settings.
+
+**Sparkle (2026-09-26, the user's request).** `UpdateController`, Release builds only (a Debug
+build must never offer to replace itself with the shipped app): a daily check of `SUFeedURL`
+(appcast.xml on main via raw.githubusercontent.com) and "Check for Updates..." in the tray menu;
+Sparkle's windows make the app `.regular` while shown (`DockPresence`). The EdDSA key is the trust
+anchor, since the app is not notarized: public half `SUPublicEDKey` in `project.yml`, private half
+in the login Keychain as Sparkle's item with account `mailbar`. **Lose the private key and no
+installed copy can ever update again**; back it up with `generate_keys --account mailbar -x <file>`
+somewhere safe, never in the tree.
 
 ## Working style
 - Read this file first, the Scope section above all.
