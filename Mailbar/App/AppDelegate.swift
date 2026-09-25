@@ -144,6 +144,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let chosen = CalendarStore.Mode(rawValue: mode) {
             store.mode = chosen
         }
+        if QCFlags.calendarNew {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                CalendarWindow.shared.store?.startNewEvent()
+                CalendarWindow.shared.store?.editor?.subject = "Design review"
+                CalendarWindow.shared.store?.editor?.attendees = "sara.rahimi@example.com, "
+                CalendarWindow.shared.store?.editor?.rooms = [Room(name: "Room Blue", address: "room.blue@example.com")]
+            }
+        }
         if let title = QCFlags.calendarSelect {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 guard let store = CalendarWindow.shared.store,

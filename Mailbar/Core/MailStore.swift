@@ -343,6 +343,18 @@ final class MailStore {
         return result
     }
 
+    // MARK: - Invitations (M17)
+
+    /// Answers an invitation email. The organizer is told; the event in the calendar follows.
+    func answerInvitation(_ answer: CalendarSOAP.Answer, message id: String, in accountID: UUID,
+                          note: String) async throws {
+        guard let (url, credential) = connection(for: accountID) else {
+            throw EWSError.server("The password for this account is missing. Enter it in Settings.")
+        }
+        try await client.answer(answer, to: id, note: note, at: url, credential: credential)
+        await setRead(true, message: id, in: accountID)
+    }
+
     // MARK: - Searching
 
     /// Runs the typed query against the server, for the selected account. A result that comes

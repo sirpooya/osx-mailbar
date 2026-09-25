@@ -192,6 +192,13 @@ private struct DayColumn: View {
                 }
             }
             .contentShape(Rectangle())
+            // Double-click an empty slot: a new event there, on the half hour, as Calendar does.
+            .onTapGesture(count: 2) { location in
+                let minutes = Int((location.y / hourHeight * 60 / 30).rounded(.down)) * 30
+                let slot = calendar.date(byAdding: .minute, value: max(0, min(minutes, 23 * 60 + 30)),
+                                         to: calendar.startOfDay(for: day))
+                store.startNewEvent(at: slot)
+            }
             .onTapGesture { Task { await store.select(nil) } }
         }
     }

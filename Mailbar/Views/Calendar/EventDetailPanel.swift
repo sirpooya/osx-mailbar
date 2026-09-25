@@ -5,9 +5,19 @@ import SwiftUI
 struct EventDetailPanel: View {
     @Bindable var store: CalendarStore
 
+    @State private var note = ""
+    @State private var confirmingDelete = false
+    @State private var answering: CalendarSOAP.Answer?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
+                // Edit and delete: the user's own appointments and the meetings they organized.
+                if store.canEditSelected {
+                    Button("Edit") { store.startEditing() }
+                        .disabled({ if case .loaded = store.detail { return false } else { return true } }())
+                    Button(role: .destructive) { confirmingDelete = true } label: { Text("Delete") }
+                }
                 Spacer()
                 Button { Task { await store.select(nil) } } label: {
                     Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
@@ -20,8 +30,13 @@ struct EventDetailPanel: View {
             .padding(.horizontal, 14)
             .padding(.top, 10)
 
+            if confirmingDelete, let event = store.selectedEvent {
+                deleteConfirmation(event)
+            }
+
             if let event = store.selectedEvent {
                 summary(event)
+                if store.canAnswerSelected { answerBar(event) }
             }
 
             switch store.detail {
@@ -45,6 +60,72 @@ struct EventDetailPanel: View {
             }
         }
         .background(CalendarSurface.background)
+    }
+
+    // MARK: - Delete (M16)
+
+    private func deleteConfirmation(_ event: CalendarEvent) -> some View {
+        let cancels = event.isMeeting && event.isOrganizer
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(cancels ? "Cancel this meeting? Everyone invited is told." : "Delete this event?")
+                .font(.system(size: 12))
+            if event.isRecurring {
+                Text("Only this occurrence.").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Keep") { confirmingDelete = false }
+                Button(cancels ? "Cancel Meeting" : "Delete", role: .destructive) {
+                    confirmingDelete = false
+                    Task { await store.deleteSelected() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.07)))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    // MARK: - Answer (M17)
+
+    /// Accept, Tentative, Decline, with an optional note to the organizer. The current answer is
+    /// the filled one.
+    private func answerBar(_ event: CalendarEvent) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(CalendarSOAP.Answer.allCases, id: \.self) { answer in
+                    let current = event.myResponse == answer.responseType
+                    Button {
+                        answering = answer
+                        Task {
+                            await store.answerSelected(answer, note: note)
+                            note = ""
+                            answering = nil
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if answering == answer { ProgressView().controlSize(.mini) }
+                            Text(answer.label).font(.system(size: 12, weight: current ? .semibold : .regular))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                        .background(Capsule().fill(current ? Color.accentColor.opacity(0.2) : CalendarControl.fill))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(answering != nil)
+                }
+            }
+            TextField("Add a note for the organizer (optional)", text: $note)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     private func summary(_ event: CalendarEvent) -> some View {

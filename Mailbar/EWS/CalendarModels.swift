@@ -64,6 +64,10 @@ struct EventDetail: Equatable, Sendable {
     let attendees: [Attendee]
     let rooms: [String]
     let html: String
+    /// Minutes before the start, or nil when no reminder is set.
+    var reminderMinutes: Int? = nil
+    /// The rooms with their addresses, for editing the booking.
+    var roomBoxes: [Room] = []
 }
 
 extension EWSResponse {
@@ -116,11 +120,19 @@ extension EWSResponse {
             }
         }
         let rooms = (item.child("Resources")?.children ?? []).compactMap { $0.path("Mailbox", "Name")?.trimmedText }
+        let roomBoxes: [Room] = (item.child("Resources")?.children ?? []).compactMap { attendee in
+            guard let address = attendee.path("Mailbox", "EmailAddress")?.trimmedText, !address.isEmpty else { return nil }
+            return Room(name: attendee.path("Mailbox", "Name")?.trimmedText ?? address, address: address)
+        }
+        let reminderSet = item.child("ReminderIsSet")?.trimmedText == "true"
+        let reminder = item.child("ReminderMinutesBeforeStart").flatMap { Int($0.trimmedText) }
         return EventDetail(event: event,
                            organizerAddress: item.path("Organizer", "Mailbox", "EmailAddress")?.trimmedText ?? "",
                            attendees: attendees("RequiredAttendees", optional: false)
                                + attendees("OptionalAttendees", optional: true),
                            rooms: rooms,
-                           html: item.child("Body")?.text ?? "")
+                           html: item.child("Body")?.text ?? "",
+                           reminderMinutes: reminderSet ? (reminder ?? 15) : nil,
+                           roomBoxes: roomBoxes)
     }
 }

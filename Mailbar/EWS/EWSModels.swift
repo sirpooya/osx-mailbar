@@ -40,6 +40,8 @@ struct MailMessage: Identifiable, Equatable, Sendable {
     var isRead: Bool
     var isFlagged: Bool
     let hasAttachments: Bool
+    /// An invitation (`t:MeetingRequest`): the reader offers Accept, Tentative, Decline (M17).
+    var isMeetingRequest = false
 }
 
 /// One opened message. Lives in the reader's state while it is open and nowhere else: when the
@@ -300,7 +302,8 @@ enum EWSResponse {
             received: received,
             isRead: item.child("IsRead")?.trimmedText == "true",
             isFlagged: isFlagged(item),
-            hasAttachments: item.child("HasAttachments")?.trimmedText == "true")
+            hasAttachments: item.child("HasAttachments")?.trimmedText == "true",
+            isMeetingRequest: item.name == "MeetingRequest")
     }
 
     /// `item:Flag` on 2013 and later, the MAPI flag status (2 is flagged) on older servers.

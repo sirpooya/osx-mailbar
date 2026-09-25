@@ -20,6 +20,18 @@ struct CalendarRootView: View {
             VStack(spacing: 0) {
                 toolbar
                 Divider().opacity(0.6)
+                if let notice = store.notice {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        Text(notice)
+                        Spacer()
+                    }
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.green.opacity(0.08))
+                    .transition(.opacity)
+                }
                 ZStack(alignment: .topTrailing) {
                     HStack(spacing: 0) {
                         content
@@ -51,6 +63,12 @@ struct CalendarRootView: View {
         }
         .background(CalendarSurface.background)
         .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
+        .animation(.snappy(duration: 0.2), value: store.notice)
+        .sheet(isPresented: Binding(get: { store.editor != nil }, set: { if !$0 { store.editor = nil } })) {
+            if let draft = store.editor {
+                EventEditorView(store: store, original: draft)
+            }
+        }
     }
 
     /// Switches only when the width CROSSES the line, so a view picked by hand sticks until the
@@ -156,6 +174,18 @@ struct CalendarRootView: View {
                     .frame(width: 150)
                 }
             }
+
+            // New event, as Apple's Calendar puts its "+" in the toolbar.
+            Button { store.startNewEvent() } label: {
+                Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(CalendarControl.fill))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("n", modifiers: .command)
+            .help("New event (Command N)")
+            .disabled(store.account == nil)
 
             ModeSwitcher(selection: $store.mode, compact: compact)
 

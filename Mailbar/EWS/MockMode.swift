@@ -51,6 +51,44 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     private var readOverrides: [String: Bool] = [:]
     private var flagOverrides: [String: Bool] = [:]
     private var teamHasArchive = false
+    /// Calendar changes made while the app runs (M16, M17): created events, edits by id, and the
+    /// answer given to each invitation.
+    private var createdEvents: [MockCalendar.Event] = []
+    private var editedEvents: [String: (subject: String, start: Date, end: Date, location: String)] = [:]
+    private var answers: [String: String] = [:]
+
+    /// The mock calendar with every change so far applied. Call with the lock held.
+    private func calendarEvents() -> [MockCalendar.Event] {
+        (MockCalendar.events() + createdEvents).compactMap { event in
+            guard !removed.contains(event.id) else { return nil }
+            var event = event
+            if let edit = editedEvents[event.id] {
+                event = MockCalendar.Event(id: event.id, subject: edit.subject, start: edit.start, end: edit.end,
+                                           isAllDay: event.isAllDay, location: edit.location, organizer: event.organizer,
+                                           organizerAddress: event.organizerAddress, isRecurring: event.isRecurring,
+                                           isMeeting: event.isMeeting, isCancelled: event.isCancelled,
+                                           response: event.response, showAs: event.showAs,
+                                           attendees: event.attendees, notes: event.notes, categories: event.categories)
+            }
+            if let answer = answers[event.id] { event.response = answer }
+            return event
+        }
+    }
+
+    private static func calendarFields(in request: String) -> (subject: String, start: Date, end: Date, location: String, allDay: Bool)? {
+        guard let subject = firstMatch("<t:Subject>([^<]*)</t:Subject>", in: request),
+              let start = firstMatch("<t:Start>([^<]+)</t:Start>", in: request).flatMap(EWSResponse.parseDate),
+              let end = firstMatch("<t:End>([^<]+)</t:End>", in: request).flatMap(EWSResponse.parseDate) else { return nil }
+        return (unescape(subject), start, end, unescape(firstMatch("<t:Location>([^<]*)</t:Location>", in: request) ?? ""),
+                firstMatch("<t:IsAllDayEvent>(true|false)</t:IsAllDayEvent>", in: request) == "true")
+    }
+
+    private static func unescape(_ text: String) -> String {
+        text.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+
     /// Every send request received, for tests. Nothing is delivered anywhere.
     private(set) var sent: [String] = []
 
@@ -128,7 +166,41 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         return lock.withLock {
             if request.contains("<m:CreateItem") {
                 sent.append(request)
+                if request.contains("<t:CalendarItem>"), let fields = Self.calendarFields(in: request) {
+                    var event = MockCalendar.Event(id: "ev-new-\(createdEvents.count)", subject: fields.subject,
+                                                   start: fields.start, end: fields.end, isAllDay: fields.allDay,
+                                                   location: fields.location, organizer: "Sample User",
+                                                   organizerAddress: "sample.user@example.com",
+                                                   isMeeting: request.contains("<t:RequiredAttendees>"),
+                                                   response: "Organizer")
+                    event.isRecurring = request.contains("<t:Recurrence>")
+                    createdEvents.append(event)
+                }
+                for (element, response) in [("AcceptItem", "Accept"), ("TentativelyAcceptItem", "Tentative"), ("DeclineItem", "Decline")]
+                where request.contains("<t:\(element)>") {
+                    if let reference = Self.firstMatch(#"ReferenceItemId Id="([^"]+)""#, in: request) {
+                        // Answering the invitation email answers the event it is for.
+                        answers[reference == "work-new-invite" || reference.hasPrefix("work-") ? "ev-next-planning" : reference] = response
+                    }
+                }
                 return ok(MockFixtures.success("CreateItem"))
+            }
+            if request.contains("<m:ResolveNames") {
+                let query = (Self.firstMatch("<m:UnresolvedEntry>([^<]*)</m:UnresolvedEntry>", in: request) ?? "").lowercased()
+                return ok(MockCalendar.resolveResponse(query))
+            }
+            if request.contains("<m:GetRoomLists") { return ok(MockCalendar.roomListsResponse) }
+            if request.contains("<m:GetRooms>") { return ok(MockCalendar.roomsResponse) }
+            if request.contains("<m:UpdateItem"), let itemID, itemID.hasPrefix("ev-"),
+               let fields = Self.calendarFields(in: request) {
+                sent.append(request)
+                editedEvents[itemID] = (fields.subject, fields.start, fields.end, fields.location)
+                return ok(MockFixtures.success("UpdateItem"))
+            }
+            if request.contains("<m:DeleteItem"), let itemID, itemID.hasPrefix("ev-") {
+                sent.append(request)
+                removed.insert(itemID)
+                return ok(MockFixtures.success("DeleteItem"))
             }
             if request.contains("<m:GetUserConfiguration>") {
                 return ok(MockCalendar.categoryListResponse)
@@ -138,10 +210,10 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 guard !isTeam else { return ok(MockCalendar.findResponse(start: .distantPast, end: .distantPast, events: [])) }
                 let start = Self.firstMatch(#"StartDate="([^"]+)""#, in: request).flatMap(EWSResponse.parseDate) ?? .distantPast
                 let end = Self.firstMatch(#"EndDate="([^"]+)""#, in: request).flatMap(EWSResponse.parseDate) ?? .distantFuture
-                return ok(MockCalendar.findResponse(start: start, end: end, events: MockCalendar.events()))
+                return ok(MockCalendar.findResponse(start: start, end: end, events: calendarEvents()))
             }
             if request.contains("<m:GetItem>"), let itemID, itemID.hasPrefix("ev-"),
-               let event = MockCalendar.events().first(where: { $0.id == itemID }) {
+               let event = calendarEvents().first(where: { $0.id == itemID }) {
                 return ok(MockCalendar.getResponse(event))
             }
             if request.contains("<m:Subscribe>") {
@@ -241,6 +313,7 @@ enum MockFixtures {
         var isRead = false
         var isFlagged = false
         var hasAttachments = false
+        var isMeetingRequest = false
     }
 
     static let workInbox: [Message] = [
@@ -248,6 +321,10 @@ enum MockFixtures {
                 subject: "یادآوری: خودارزیابی نیم‌سال را هنوز ثبت نکرده‌اید | مهلت تا پایان هفته",
                 preview: "همکار گرامی سلام، دورهٔ ارزیابی عملکرد نیم‌سال آغاز شده است و فرم خودارزیابی شما هنوز تکمیل نشده است.",
                 hoursAgo: 1.5),
+        Message(sender: "Omid Karimi", address: "omid@example.org",
+                subject: "Invitation: Quarterly planning",
+                preview: "Sunday 10:00 to 12:00, Room Blue. Planning for next quarter; bring your team's list.",
+                hoursAgo: 0.8, isMeetingRequest: true),
         Message(sender: "Build Server", address: "ci@example.com",
                 subject: "Nightly build 2417 passed",
                 preview: "All 312 tests passed in 14 minutes. No new warnings. Artifacts are attached to the run.",
@@ -320,7 +397,7 @@ enum MockFixtures {
         let formatter = ISO8601DateFormatter()
         let items = messages.enumerated().map { index, message in
             """
-                      <t:Message>
+                      <t:\(message.isMeetingRequest ? "MeetingRequest" : "Message")>
                         <t:ItemId Id="\(message.id.isEmpty ? "item-\(index)" : message.id)" ChangeKey="ck-\(index)"/>
                         <t:Subject>\(SOAP.escape(message.subject))</t:Subject>
                         <t:HasAttachments>\(message.hasAttachments)</t:HasAttachments>
@@ -330,7 +407,7 @@ enum MockFixtures {
             <t:EmailAddress>\(message.address)</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:From>
                         <t:IsRead>\(message.isRead)</t:IsRead>
                         <t:Flag><t:FlagStatus>\(message.isFlagged ? "Flagged" : "NotFlagged")</t:FlagStatus></t:Flag>
-                      </t:Message>
+                      </t:\(message.isMeetingRequest ? "MeetingRequest" : "Message")>
             """
         }.joined(separator: "\n")
         return """

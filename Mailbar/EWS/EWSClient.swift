@@ -221,6 +221,11 @@ struct EWSClient: Sendable {
         try EWSResponse.checkSuccess(data)
     }
 
+    /// For requests built elsewhere (calendar writes), with the same error mapping as the rest.
+    func sendRaw(_ body: Data, to url: URL, credential: EWSCredential) async throws -> Data {
+        try await send(body, to: url, credential: credential)
+    }
+
     private func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> Data {
         let data: Data
         let status: Int

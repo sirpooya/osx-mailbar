@@ -37,7 +37,8 @@ in mock mode. The Milestones section below is the record; none is open.
 - Anything beyond simple sending: rich-text editing, drafts, signatures, outgoing attachments.
 - Move to folder, folder list, folder picker.
 - Follow up, categories, rules, junk, snooze, pin.
-- Contacts, tasks, notes, directory (LDAP) lookup. (Calendar: later, see above.)
+- Contacts, tasks, notes, an LDAP client. (People suggestions for events use the server's own
+  directory search, EWS `ResolveNames`, since M16; that is not LDAP.)
 - Offline mode, local search index, any disk cache.
 
 ### Wanted (v1.1, built 2026-09-24, milestones M7 to M11)
@@ -90,6 +91,8 @@ real-account column is what is still unproven. Work in progress is planned in `P
 | M13 | Forward | a real send |
 | M14 | New message, suggestions from inbox senders | a real send |
 | M15 | Calendar window: Day, Week, Month, swipe paging, category colours, detail panel (tray menu, Cmd+K) | the real calendar |
+| M16 | Create, edit, delete events: form with rooms, people, repeat, reminder, show as | writing a real event |
+| M17 | Answer invitations from the calendar and from the invitation email | answering a real one |
 
 Testing rule for sending: **never send real mail** unless the user names the exact message and
 recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
@@ -269,6 +272,13 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   "19 Saturday", "Sat 19", "19"; below 900 pt the detail panel floats over the grid as a card;
   event titles wrap onto the lines a block has room for, but only between words (the longest
   word is measured; if it does not fit, one truncated line, never a word broken mid-way).
+- 2026-09-25 Events (M16): one form for new and edit, in memory only. Saving an event with
+  people or rooms says "Send" and sends invitations or updates; a plain appointment sends
+  nothing. Deleting a meeting the user organized sends the cancellation. Invitations are
+  answered (M17), never edited or deleted from here. Edits to a recurring event apply to that
+  occurrence only; the repeat rule is set only when creating. Every calendar write carries the
+  user's Windows time zone (`WindowsTimeZone`) so all-day and repeating events keep their days.
+  Notes are plain text: an Outlook note's formatting is not kept on save.
 - 2026-09-25 Width decides the view (the user's rule): crossing below 580 pt switches to Day,
   crossing back above switches Day to Week; on opening, narrow is Day and wide turns a leftover
   Day into Week. Only crossings switch, so a view picked by hand holds until the next crossing.
@@ -343,7 +353,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 
 ## Privacy (local-first)
 No telemetry, no analytics. Network calls, exhaustively:
-- Each configured account's EWS URL (mail and, since M15, the calendar: same URL, same sign-in).
+- Each configured account's EWS URL (mail and, since M15, the calendar: same URL, same sign-in;
+  the directory search and room lists of M16 go to the same URL too).
 - While adding an account, and only when the user presses Sign In: Autodiscover at
   `https://autodiscover.<email domain>/autodiscover/autodiscover.xml`, then
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and

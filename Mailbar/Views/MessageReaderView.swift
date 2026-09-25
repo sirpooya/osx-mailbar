@@ -110,6 +110,11 @@ struct MessageReaderView: View {
                 .padding(.top, 2)
             }
 
+            if current.isMeetingRequest {
+                InvitationBar(store: store, accountID: accountID, messageID: current.id)
+                    .padding(.top, 4)
+            }
+
             if let files = loadedBody?.files, !files.isEmpty {
                 AttachmentStrip(files: files, accountID: accountID, store: store)
                     .padding(.top, 4)
@@ -349,6 +354,69 @@ struct AttachmentStrip: View {
             problem = error.message(host: store.accounts.account(accountID)?.host ?? "The server")
         } catch {
             problem = "Could not \(save ? "save" : "open") \(file.name): \(error.localizedDescription)"
+        }
+    }
+}
+
+/// Accept, Tentative, Decline on an invitation email (M17), with an optional note. Once answered
+/// it says so; the calendar, when open, picks the change up from the stream.
+struct InvitationBar: View {
+    @Bindable var store: MailStore
+    let accountID: UUID
+    let messageID: String
+
+    @State private var note = ""
+    @State private var sending: CalendarSOAP.Answer?
+    @State private var answered: CalendarSOAP.Answer?
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar.badge.clock").foregroundStyle(.secondary)
+                if let answered {
+                    Text("\(answered.done). The organizer was told.").font(.system(size: 12))
+                } else {
+                    ForEach(CalendarSOAP.Answer.allCases, id: \.self) { answer in
+                        Button {
+                            sending = answer
+                            problem = nil
+                            Task {
+                                do {
+                                    try await store.answerInvitation(answer, message: messageID, in: accountID, note: note)
+                                    answered = answer
+                                    CalendarWindow.shared.refreshIfOpen()
+                                } catch let error as EWSError {
+                                    problem = error.message(host: store.accounts.account(accountID)?.host ?? "The server")
+                                } catch {
+                                    problem = error.localizedDescription
+                                }
+                                sending = nil
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                if sending == answer { ProgressView().controlSize(.mini) }
+                                Text(answer.label).font(.system(size: 12))
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(Capsule().fill(CalendarControl.fill))
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(sending != nil)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            if answered == nil {
+                TextField("Add a note for the organizer (optional)", text: $note)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+            }
+            if let problem {
+                Text(problem).font(.system(size: 11)).foregroundStyle(.orange)
+            }
         }
     }
 }

@@ -116,6 +116,46 @@ enum MockCalendar {
         return list
     }
 
+    /// An invented company directory for the people field.
+    static let directory: [(String, String)] = [
+        ("Ali Tavakoli", "ali.tavakoli@example.com"), ("Amir Karimi", "amir.karimi@example.com"),
+        ("Amirhossein Nadiri", "amirhossein.nadiri@example.com"), ("Narges Ahmadi", "narges@example.com"),
+        ("Omid Karimi", "omid@example.org"), ("Sara Rahimi", "sara.rahimi@example.com"),
+    ]
+
+    static func resolveResponse(_ query: String) -> String {
+        let matches = directory.filter { $0.0.lowercased().contains(query) || $0.1.lowercased().contains(query) }
+        guard !matches.isEmpty else {
+            return wrapError("ResolveNames", code: "ErrorNameResolutionNoResults")
+        }
+        let resolutions = matches.map { name, address in
+            "<t:Resolution><t:Mailbox><t:Name>\(name)</t:Name><t:EmailAddress>\(address)</t:EmailAddress></t:Mailbox></t:Resolution>"
+        }.joined()
+        return wrap("ResolveNames", "<m:ResolutionSet TotalItemsInView=\"\(matches.count)\">\(resolutions)</m:ResolutionSet>")
+    }
+
+    static let roomListsResponse = wrap("GetRoomLists", """
+              <m:RoomLists><t:Address><t:Name>Building A</t:Name><t:EmailAddress>rooms.a@example.com</t:EmailAddress></t:Address></m:RoomLists>
+    """)
+
+    static let roomsResponse = wrap("GetRooms", """
+              <m:Rooms>
+                <t:Room><t:Id><t:Name>Room Blue</t:Name><t:EmailAddress>room.blue@example.com</t:EmailAddress></t:Id></t:Room>
+                <t:Room><t:Id><t:Name>Room Green</t:Name><t:EmailAddress>room.green@example.com</t:EmailAddress></t:Id></t:Room>
+              </m:Rooms>
+    """)
+
+    private static func wrapError(_ operation: String, code: String) -> String {
+        """
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>\
+        <m:\(operation)Response xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><m:ResponseMessages>\
+        <m:\(operation)ResponseMessage ResponseClass="Error"><m:MessageText>No results.</m:MessageText>\
+        <m:ResponseCode>\(code)</m:ResponseCode></m:\(operation)ResponseMessage></m:ResponseMessages>\
+        </m:\(operation)Response></s:Body></s:Envelope>
+        """
+    }
+
     static func findResponse(start: Date, end: Date, events: [Event]) -> String {
         let formatter = ISO8601DateFormatter()
         let items = events.filter { $0.start < end && $0.end > start }.map { event in
@@ -176,7 +216,7 @@ enum MockCalendar {
         """)
     }
 
-    private static func wrap(_ operation: String, _ inner: String) -> String {
+    static func wrap(_ operation: String, _ inner: String) -> String {
         """
         <?xml version="1.0" encoding="utf-8"?>
         <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">

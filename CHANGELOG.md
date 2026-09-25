@@ -30,6 +30,8 @@ section when a release is cut.
 - Swipe left or right with two fingers in the calendar to go to the next or previous day, week or month.
 - Calendar events show their Outlook category colours.
 - The calendar switches to Day view when its window is made narrower than about 580 points, and back to Week when it is widened again.
+- Create, edit and delete calendar events: the + button (Command N) or a double-click on an empty slot opens a form with location and room booking, start and end, all day, private, repeat, reminder, show as, notes and people, with names suggested from your company directory. Deleting a meeting you organized sends the cancellation.
+- Answer invitations with Accept, Tentative or Decline and an optional note, from the calendar or from the invitation email.
 
 ### Changed
 - The new menu bar and app icons.

@@ -16,13 +16,16 @@ enum SOAP {
         case exchange2013 = "Exchange2013"
     }
 
-    static func envelope(_ version: Version, body: String) -> Data {
+    /// `timeZone` is a Windows zone id: calendar writes send it so all-day and repeating events
+    /// land on the user's days (`WindowsTimeZone`).
+    static func envelope(_ version: Version, body: String, timeZone: String? = nil) -> Data {
+        let zone = timeZone.map { #"<t:TimeZoneContext><t:TimeZoneDefinition Id="\#(escape($0))"/></t:TimeZoneContext>"# } ?? ""
         let xml = """
         <?xml version="1.0" encoding="utf-8"?>
         <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" \
         xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" \
         xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-          <soap:Header><t:RequestServerVersion Version="\(version.rawValue)"/></soap:Header>
+          <soap:Header><t:RequestServerVersion Version="\(version.rawValue)"/>\(zone)</soap:Header>
           <soap:Body>
         \(body)
           </soap:Body>
@@ -288,6 +291,8 @@ enum SOAP {
                   <t:FieldURI FieldURI="calendar:RequiredAttendees"/>
                   <t:FieldURI FieldURI="calendar:OptionalAttendees"/>
                   <t:FieldURI FieldURI="calendar:Resources"/>
+                  <t:FieldURI FieldURI="item:ReminderIsSet"/>
+                  <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart"/>
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>

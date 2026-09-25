@@ -315,6 +315,123 @@ final class CalendarStore {
         }
     }
 
+    // MARK: - Creating, editing, deleting (M16)
+
+    /// The event form, when open. In memory only.
+    var editor: EventDraft?
+    /// A short confirmation under the toolbar ("Invitations sent.").
+    var notice: String?
+    /// Rooms the organization publishes, loaded the first time the room menu opens.
+    private(set) var rooms: [Room]?
+
+    func startNewEvent(at slot: Date? = nil) {
+        guard let account else { return }
+        editor = EventDraft.new(accountID: account.id, at: slot)
+    }
+
+    /// Opens the form on the selected event, once its details have loaded.
+    func startEditing() {
+        guard let account, case .loaded(let detail) = detail else { return }
+        editor = EventDraft.editing(detail, accountID: account.id)
+    }
+
+    /// Whether the selected event is this user's to change: their own appointment or a meeting
+    /// they organized. An invitation is answered instead (M17), not edited.
+    var canEditSelected: Bool {
+        guard let event = selectedEvent else { return false }
+        return !event.isCancelled && (!event.isMeeting || event.isOrganizer)
+    }
+
+    func saveEditor() async {
+        guard var draft = editor, draft.problem == nil, !draft.isSaving,
+              let (url, credential) = mail.connection(for: draft.accountID) else { return }
+        draft.isSaving = true
+        draft.error = nil
+        editor = draft
+        do {
+            if let id = draft.id {
+                try await mail.client.updateEvent(draft, id: id, at: url, credential: credential)
+            } else {
+                try await mail.client.createEvent(draft, at: url, credential: credential)
+            }
+            editor = nil
+            show(notice: draft.sendsInvitations ? (draft.isNew ? "Invitations sent." : "Updates sent.") : "Saved.")
+            await refresh()
+            if let id = draft.id, let event = events.first(where: { $0.id == id }) { await select(event) }
+        } catch {
+            editor?.isSaving = false
+            editor?.error = describe(error)
+        }
+    }
+
+    /// Deletes the selected event. A meeting the user organized sends the cancellation.
+    func deleteSelected() async {
+        guard let event = selectedEvent, canEditSelected, let account,
+              let (url, credential) = mail.connection(for: account.id) else { return }
+        do {
+            try await mail.client.deleteEvent(id: event.id, cancelMeeting: event.isMeeting && event.isOrganizer,
+                                              at: url, credential: credential)
+            events.removeAll { $0.id == event.id }
+            await select(nil)
+            show(notice: event.isMeeting && event.isOrganizer ? "Cancelled; everyone invited was told." : "Deleted.")
+            await refresh()
+        } catch {
+            show(notice: describe(error))
+        }
+    }
+
+    // MARK: - Answering invitations (M17)
+
+    /// Whether the selected event is an invitation this user can answer.
+    var canAnswerSelected: Bool {
+        guard let event = selectedEvent else { return false }
+        return event.isMeeting && !event.isOrganizer && !event.isCancelled
+    }
+
+    func answerSelected(_ answer: CalendarSOAP.Answer, note: String) async {
+        guard let event = selectedEvent, let account,
+              let (url, credential) = mail.connection(for: account.id) else { return }
+        do {
+            try await mail.client.answer(answer, to: event.id, note: note, at: url, credential: credential)
+            show(notice: "\(answer.done). \(event.organizer.isEmpty ? "The organizer" : event.organizer) was told.")
+            await refresh()
+            if let fresh = events.first(where: { $0.id == event.id }) { await select(fresh) } else { await select(nil) }
+        } catch {
+            show(notice: describe(error))
+        }
+    }
+
+    // MARK: - People and rooms
+
+    /// Directory matches for the name being typed (the server searches it), plus inbox senders.
+    func peopleSuggestions(for token: String, excluding typed: String) async -> [(name: String, address: String)] {
+        let local = mail.recipientSuggestions(for: token, excluding: typed)
+        guard token.count >= 2, let account, let (url, credential) = mail.connection(for: account.id) else { return local }
+        let already = Set(Recipients.parse(typed).map { $0.lowercased() })
+        let directory = ((try? await mail.client.resolveNames(token, at: url, credential: credential)) ?? [])
+            .filter { !already.contains($0.address.lowercased()) }
+        var seen = Set<String>()
+        return (directory + local).filter { seen.insert($0.address.lowercased()).inserted }.prefix(6).map { $0 }
+    }
+
+    func loadRooms() async {
+        guard rooms == nil, let account, let (url, credential) = mail.connection(for: account.id) else { return }
+        rooms = (try? await mail.client.rooms(at: url, credential: credential)) ?? []
+    }
+
+    private func show(notice text: String) {
+        notice = text
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            if self?.notice == text { self?.notice = nil }
+        }
+    }
+
+    private func describe(_ error: Error) -> String {
+        if let error = error as? EWSError { return error.message(host: account?.host ?? "The server") }
+        return error.localizedDescription
+    }
+
     func select(_ event: CalendarEvent?) async {
         selectedEventID = event?.id
         guard let event, let account, let (url, credential) = mail.connection(for: account.id) else {

@@ -58,25 +58,33 @@ defaults (9 to 17), not yet read from the server. **Not yet seen with the real c
 Found and fixed on the way: switching from Month to another view crashed (the month grid indexed
 six weeks of a seven-day list).
 
-## M16. Create, edit, delete
-- [ ] New event: title, location or room, start and end, all day, private, repeat (never, daily,
+## M16. Create, edit, delete (done 2026-09-25)
+- [x] New event: title, location or room, start and end, all day, private, repeat (never, daily,
       weekly, monthly, yearly), reminder, show as (busy, free, tentative, away), plain notes, people
-- [ ] Double-click an empty slot to start one at that time
-- [ ] EWS `CreateItem` `CalendarItem`: `SendToNone` with no attendees, `SendToAllAndSaveCopy`
+- [x] Double-click an empty slot to start one at that time
+- [x] EWS `CreateItem` `CalendarItem`: `SendToNone` with no attendees, `SendToAllAndSaveCopy`
       with attendees (that is the invitation)
-- [ ] Edit with `UpdateItem` (`SendToChangedAndSaveCopy` for meetings); delete with `DeleteItem`,
+- [x] Edit with `UpdateItem` (`SendToChangedAndSaveCopy` for meetings); delete with `DeleteItem`,
       which for a meeting the user organized sends the cancellation
-- [ ] People: typed addresses plus suggestions per decision 2; rooms per decision 3
+- [x] People: typed addresses plus suggestions per decision 2; rooms per decision 3
 
-Proof: mock server receives the right `CreateItem`, `UpdateItem` and `DeleteItem`; a real event
-only when the user names it.
+Proof (2026-09-25): the form photographed with a room and a person ("Send" instead of "Save");
+tests create, rename and delete (cancel) an event through the mock server and check the request
+shapes: schema order, `SendToNone` for an appointment, `SendToAllAndSaveCopy` with people,
+midnight-to-midnight all-day, weekly recurrence, time zone header. Directory suggestions use EWS
+`ResolveNames` (decision 2), rooms `GetRoomLists`/`GetRooms` (decision 3). Edits apply to one
+occurrence of a series. **Nothing written to the real calendar.**
 
-## M17. Answer invitations
-- [ ] Accept, Tentative, Decline on an event the user was invited to, with or without a note
-- [ ] The same three buttons on a meeting request email in the reader
-- [ ] EWS `CreateItem` with `AcceptItem`, `TentativelyAcceptItem`, `DeclineItem`
 
-Proof: mock server receives each response; a real one only when the user names the invitation.
+## M17. Answer invitations (done 2026-09-25)
+- [x] Accept, Tentative, Decline on an event the user was invited to, with or without a note
+- [x] The same three buttons on a meeting request email in the reader
+- [x] EWS `CreateItem` with `AcceptItem`, `TentativelyAcceptItem`, `DeclineItem`
+
+Proof (2026-09-25): the answer bar photographed on an invitation in the detail panel and on the
+invitation email; tests answer both ways through the mock server and see the event's response
+change. **No real invitation answered.**
+
 
 ## M18. Reminders
 - [ ] A macOS notification at each event's reminder time, from events fetched for the next day

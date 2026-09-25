@@ -43,6 +43,9 @@ enum QCFlags {
         #endif
     }
 
+    /// `--calendar-new`: the calendar with the new event form open.
+    static var calendarNew: Bool { has("--calendar-new") }
+
     /// `--calendar-select=Design Weekly`: the calendar with that event's detail panel open.
     static var calendarSelect: String? {
         #if DEBUG
