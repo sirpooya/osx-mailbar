@@ -24,7 +24,12 @@ struct EventEditorView: View {
     @State private var endCalendarOpenForSeries = false
     @State private var endCalendarOpen = false
 
-    private static let labelWidth: CGFloat = 86
+    private static let labelWidth: CGFloat = 78
+    /// The form's size, cut to the user's marks (2026-09-25): 440 pt of fields, a 250 pt People
+    /// sidebar, 556 pt tall. Description takes whatever height is left.
+    private static let mainWidth: CGFloat = 440
+    private static let sidebarWidth: CGFloat = 250
+    private static let formSize = CGSize(width: mainWidth + sidebarWidth, height: 556)
     /// Repeat, Reminder and Show as share one width (the user's call), wide enough for the
     /// longest choice, "Working elsewhere" with its swatch.
     private static let menuWidth: CGFloat = 190
@@ -34,6 +39,8 @@ struct EventEditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // No field focused or selected when the form opens, not even for a frame.
+            FocusSink().frame(width: 0, height: 0)
             header
             Divider().opacity(0.6)
             HStack(spacing: 0) {
@@ -87,7 +94,8 @@ struct EventEditorView: View {
                                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
                         }
                     }
-                    .padding(18)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 18)
                     .background(EndEditingArea())
                 }
                 .background(GeometryReader { box in
@@ -95,7 +103,7 @@ struct EventEditorView: View {
                         .onAppear { formHeight = box.size.height }
                         .onChange(of: box.size.height) { _, height in formHeight = height }
                 })
-                .frame(width: 540)
+                .frame(width: Self.mainWidth)
                 Divider().opacity(0.6)
                 PeopleSidebar(store: store, draft: draft)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -103,7 +111,7 @@ struct EventEditorView: View {
             Divider().opacity(0.6)
             bottomBar
         }
-        .frame(width: 860, height: 660)
+        .frame(width: Self.formSize.width, height: Self.formSize.height)
         .background(CalendarSurface.background)
         .task {
             // A turn after the sheet is up, or the focus has nowhere to go yet.
@@ -111,11 +119,6 @@ struct EventEditorView: View {
             if let rooms = QCFlags.calendarRooms {
                 store.editor?.location = rooms
                 locationFocused = true
-            } else if QCFlags.calendarPeople == nil {
-                // No field takes the focus when the form opens (the user's call, reversing the
-                // cursor-in-Title rule): AppKit would otherwise put the window's first text field
-                // in edit mode, selected, on its own.
-                NSApp.keyWindow?.makeFirstResponder(nil)
             }
         }
         // Files dropped anywhere on the form are attached.
@@ -640,6 +643,9 @@ struct EventEditorView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) { content() }
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Every row at least a field's height, so a row that swaps a popup for a box (Until) or
+        // loses one keeps its place.
+        .frame(minHeight: 28)
     }
 
     private func chip(_ text: String, systemImage: String, onRemove: @escaping () -> Void) -> some View {
@@ -793,7 +799,7 @@ private struct RoomDropdown: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
         }
-        .frame(width: 420)
+        .frame(width: 330)
         .background(RoundedRectangle(cornerRadius: 8).fill(CalendarSurface.background)
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))

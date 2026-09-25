@@ -111,6 +111,16 @@ enum QCFlags {
     /// `--calendar-repeat`: with `--calendar-new`, Repeat's Other editor open, on Monthly.
     static var calendarRepeat: Bool { has("--calendar-repeat") }
 
+    /// `--calendar-series=on` (or `after`, `never`): with `--calendar-new`, a daily series with
+    /// that end, for screenshots of the Until row.
+    static var calendarSeries: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--calendar-series=") }.map { String($0.dropFirst("--calendar-series=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--calendar-drag`: the calendar with a new event being dragged out today, 10:00 to 11:30.
     static var calendarDrag: Bool { has("--calendar-drag") }
 

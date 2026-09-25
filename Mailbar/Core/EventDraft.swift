@@ -25,9 +25,10 @@ struct EventDraft: Equatable, Identifiable {
         switch minutes {
         case nil: return "None"
         case 0?: return "At start time"
-        case 1440?: return "1 day before"
-        case let m? where m >= 60: return "\(m / 60) hour\(m == 60 ? "" : "s") before"
-        case let m?: return "\(m) minutes before"
+        // Short units, m, h, d (the user's call).
+        case let m? where m % 1440 == 0: return "\(m / 1440)d before"
+        case let m? where m >= 60: return "\(durationLabel(minutes: m)) before"
+        case let m?: return "\(m)m before"
         }
     }
 
@@ -152,13 +153,13 @@ struct EventDraft: Equatable, Identifiable {
     /// Lengths the form offers, in minutes; the draft's own is added when it is not one of them.
     static let durationChoices = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 480]
 
+    /// "30m", "1h", "1h 30m": short units (the user's call).
     static func durationLabel(minutes: Int) -> String {
         let hours = minutes / 60, rest = minutes % 60
-        if hours == 0 { return "\(rest) minutes" }
-        if rest == 0 { return hours == 1 ? "1 hour" : "\(hours) hours" }
-        if rest == 30 { return "\(hours).5 hours" }
-        return "\(hours) h \(rest) min"
+        if hours == 0 { return "\(rest)m" }
+        return rest == 0 ? "\(hours)h" : "\(hours)h \(rest)m"
     }
+
 
     // MARK: - Starting points
 

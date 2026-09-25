@@ -47,7 +47,7 @@ section when a release is cut.
 - Distribution groups show as groups in the event form's People and in a message's To and Cc, with Expand to put their members in their place.
 - Settings, People directory: set the address of a JSON list of people to add a whole team or department at once when inviting people or writing mail, with their photos.
 - Command-comma opens Settings while the popover is open.
-- The team picker filters by team and role; the department filter is gone.
+- The team picker filters by department, team and role, each list holding only what the one before leaves.
 
 ### Changed
 - The new menu bar and app icons.
@@ -95,6 +95,9 @@ section when a release is cut.
 - Settings rows drop their subtitles, account rows open their editor on a click, and the account editor opens without a heading or a focused field.
 - The people directory shows a status dot, keeps its saved address locked behind Edit with Connect to change it, and remembers how many people it last read.
 - Settings descriptions are one short line each.
+- The privacy note moved to the Accounts tab, under the account list.
+- The Response options gear beside People matches the team button's size and colour.
+- The privacy note in Settings sits right under the account list.
 
 ### Removed
 - A two-finger sideways swipe in the menu bar popover no longer switches accounts; use the account menu in the header.
@@ -103,6 +106,7 @@ section when a release is cut.
 - The Today tab switch in Settings; the Today tab is always there.
 - The plus button in the event form's People field; Return or a click on a suggestion adds a person.
 - The "Show sender and subject" switch; notifications and reminders always show them.
+- The note under Notifications in Settings.
 
 ### Fixed
 - Signing in to an on-prem Exchange server that offers Negotiate before NTLM works: the password now reaches NTLM, and a wrong password shows as rejected instead of "The server did not answer".
@@ -123,4 +127,6 @@ section when a release is cut.
 - A new message or a forward opens with the cursor in To, not Cc.
 - Command-comma opens Settings from every Mailbar window, including the calendar, on any keyboard layout.
 - The account editor no longer flashes the e-mail field selected as it opens.
+- The event form no longer flashes its Title field focused as it opens.
+- Wide Persian emails fit the reader instead of being cut off on the left.
 

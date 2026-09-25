@@ -68,9 +68,10 @@ in mock mode. The Milestones section below is the record; none is open.
   list of people. Parsed generically (`DirectoryJSON`): `items`, `users`, `people`, `data` or a
   bare array; name; the work address from `workEmail`, `email`, or any field ending in "email";
   team; department; role; avatar (relative paths resolve against the endpoint). Departed people
-  are dropped. It adds an "Add a team" picker (team and role popups, roles narrowed to the team;
-  no department filter, removed 2026-09-25 at the user's request; each person ticked,
-  `DirectoryPicker`) beside People and on To and Cc, and puts its people with their team and
+  are dropped. It adds an "Add a team or department" picker (department, team and role popups,
+  each narrowed by the ones before it; each person ticked, `DirectoryPicker`; the department
+  popup was removed once and brought back the same day, because a team named like a department
+  held only 3 of its 38 people and hid its engineers) beside People and on To and Cc, and puts its people with their team and
   department in the type-ahead. Roles appear ONLY in that
   filter and the picker's rows, never in an invitee's or a suggestion's subtitle (the user's
   call, 2026-09-25). Its photo wins over `GetUserPhoto` for any address it lists.
@@ -366,8 +367,9 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   A click on the form's empty space ends editing (`EndEditingArea`); labels let clicks through.
   Layout after OWA (the user's sketch): a title bar with the form's name alone, a toolbar under
   it with Attach, Charm and Categorize (each showing what is chosen), white like the form with no
-  line between them; the form opens with no field focused (the user's call,
-  after first asking for the cursor in Title); the body is "Description" (OWA's
+  line between them; the form opens with no field focused or selected, not even for a frame
+  (`FocusSink`, as in the account editor; the user's call, after first asking for the cursor in
+  Title); the body is "Description" (OWA's
   word), never "Notes"; a bottom bar with the status line on the
   left and Cancel and Send on the right. The Files row shows only when there are files.
   Repeat follows OWA's list, worded from the start date: Never, Every day, Every Wednesday,
@@ -384,8 +386,9 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `FieldBox` look, 28 pt tall; dates and times are
   bezel-less `NSDatePicker`s inside it, the calendar button inside the date box; popups are
   `NSPopUpButton`s at a set width (`PopUpMenu`), since a SwiftUI menu Picker ignores its frame.
-  OWA's Response options sit behind a light gear beside People (a plain button opening a popover
-  of two checkboxes; a menu button would not take the lighter colour): Request responses
+  OWA's Response options sit behind a gear beside People, drawn like the team button in the
+  field under it (same size and colour, the user's call; a plain button opening a popover of two
+  checkboxes): Request responses
   (`calendar:IsResponseRequested`) and Allow forwarding (named Boolean `DoNotForward` in
   PublicStrings, true when forwarding is off), both on by default, sent on create and every
   update, read back for editing. `DoNotForward` is not in the EWS docs: unproven on the server.
@@ -444,8 +447,9 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `Resources/AppIcon.icon` (needs Xcode 26). Both follow osx-jirabar.
 - 2026-09-24 Settings is an `NSWindow` this app owns, built from `SettingsComponents.swift`
   (mac-pro skill), not a SwiftUI `Settings` scene.
-- 2026-09-25 Settings tabs, the user's split: General (refresh, notifications, startup, the
-  privacy note), Accounts (the account list), Calendar (event reminders, people directory).
+- 2026-09-25 Settings tabs, the user's split: General (refresh, notifications, startup),
+  Accounts (the account list with the privacy note right under its card, above Add Account), Calendar
+  (event reminders, people directory).
   The top copies osx-launchpad's: no title strip, only the close button, the tab bar (glyph over
   label, 72 pt items, accent when selected on a 0.04 grey pill) straight under it, movable by its
   background. It opens on Accounts while there is none. Pickers hug their size so they end where
@@ -505,6 +509,13 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   `NSAllowsArbitraryLoadsInWebContent` is on so that "Load images" also works for plain-http
   images, which ATS would otherwise refuse silently; it affects web content only, and EWS itself
   stays HTTPS-only.
+- 2026-09-25 A wide message fits the reader by `pageZoom` (`MessageWebView.fitToWidth`), sized
+  from the content's real extent, left edge to right edge, never `scrollWidth` alone: Outlook
+  wraps Persian mail in `<div dir="rtl">` inside a left-to-right page, whose overflow runs off
+  the LEFT edge, where `scrollWidth` does not count it and nothing can scroll to it (the user's
+  report: the message was cut off on the left). It measures again after each zoom, up to three
+  times, since the page lays out anew wider. The Persian IT mock message carries the wide table
+  to check it.
 - 2026-09-24 The reader closes when the popover closes, so a body and its images are never kept
   in a hidden view. The one question the app asks about the mailbox (create an Archive folder?)
   is an inline banner, not an alert, which an `NSPopover` presents badly.

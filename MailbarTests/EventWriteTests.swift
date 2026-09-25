@@ -132,8 +132,12 @@ import Testing
         d.isAllDay = true
         d.days = 3
         #expect(d.days == 3)
-        #expect(EventDraft.durationLabel(minutes: 90) == "1.5 hours")
-        #expect(EventDraft.durationLabel(minutes: 75) == "1 h 15 min")
+        #expect(EventDraft.durationLabel(minutes: 90) == "1h 30m")
+        #expect(EventDraft.durationLabel(minutes: 60) == "1h")
+        #expect(EventDraft.durationLabel(minutes: 45) == "45m")
+        #expect(EventDraft.reminderLabel(15) == "15m before")
+        #expect(EventDraft.reminderLabel(120) == "2h before")
+        #expect(EventDraft.reminderLabel(1440) == "1d before")
     }
 
     @Test func availabilityTakesTheBusiestBlockInTheEvent() throws {

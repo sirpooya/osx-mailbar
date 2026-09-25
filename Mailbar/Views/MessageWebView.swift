@@ -78,13 +78,21 @@ struct MessageWebView: NSViewRepresentable {
         /// message's code stays off (`allowsContentJavaScript = false`).
         private func fitToWidth(_ webView: WKWebView) async {
             let available = webView.bounds.width
-            guard available > 0,
-                  let measured = try? await webView.evaluateJavaScript(
-                      Self.fitImagesScript, in: nil, contentWorld: .defaultClient),
-                  let contentWidth = (measured as? NSNumber)?.doubleValue,
-                  contentWidth > available + 1 else { return }
-            // Floor, so a very wide layout scrolls rather than turning unreadably small.
-            webView.pageZoom = max(0.45, available / contentWidth)
+            guard available > 0 else { return }
+            // Measured again after each zoom: the page lays out anew at the wider CSS width, and a
+            // right-to-left block can still spill past the left edge by its own margins. Three
+            // rounds settle any real message.
+            for _ in 0..<3 {
+                guard let measured = try? await webView.evaluateJavaScript(
+                          Self.fitImagesScript, in: nil, contentWorld: .defaultClient),
+                      let contentWidth = (measured as? NSNumber)?.doubleValue else { return }
+                let cssWidth = available / webView.pageZoom
+                guard contentWidth > cssWidth + 1 else { return }
+                // Floor, so a very wide layout scrolls rather than turning unreadably small.
+                let zoom = max(0.45, webView.pageZoom * cssWidth / contentWidth)
+                guard zoom < webView.pageZoom - 0.001 else { return }
+                webView.pageZoom = zoom
+            }
         }
 
         /// Shrinks every image wider than the message's own layout to that layout's width,
@@ -93,16 +101,32 @@ struct MessageWebView: NSViewRepresentable {
         /// The layout width is measured with the oversized images taken out, so a 600px table
         /// keeps its 600px banner untouched, while a lone photo in a plain email is fitted to the
         /// text column.
+        ///
+        /// Widths are the content's real extent, left edge to right edge, not `scrollWidth`: in a
+        /// right-to-left message the overflow runs off the LEFT side, which `scrollWidth` does not
+        /// count, so a wide Persian newsletter measured as fitting and was cut off (the user's
+        /// report, 2026-09-25).
         static let fitImagesScript = """
         (() => {
           const root = document.documentElement, body = document.body;
           if (!body) { return root.scrollWidth; }
+          const extent = () => {
+            let left = 0, right = root.clientWidth;
+            const all = body.getElementsByTagName('*');
+            for (let k = 0; k < all.length && k < 20000; k++) {
+              const r = all[k].getBoundingClientRect();
+              if (r.width === 0) { continue; }
+              if (r.left < left) { left = r.left; }
+              if (r.right > right) { right = r.right; }
+            }
+            return Math.max(root.scrollWidth, right - left);
+          };
           const viewport = root.clientWidth, column = body.clientWidth;
           const big = Array.from(document.images).filter(i => i.getBoundingClientRect().width > column + 0.5);
-          if (big.length === 0) { return root.scrollWidth; }
+          if (big.length === 0) { return extent(); }
           const sizes = big.map(i => { const r = i.getBoundingClientRect(); return [r.width, r.height]; });
           big.forEach(i => i.style.setProperty('display', 'none', 'important'));
-          const layout = root.scrollWidth;
+          const layout = extent();
           const cap = layout <= viewport + 1 ? column : layout - body.offsetLeft;
           big.forEach((img, k) => {
             img.style.removeProperty('display');
@@ -113,7 +137,7 @@ struct MessageWebView: NSViewRepresentable {
               img.style.setProperty('max-width', 'none', 'important');
             }
           });
-          return root.scrollWidth;
+          return extent();
         })()
         """
 

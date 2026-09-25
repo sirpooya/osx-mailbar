@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Add a team: people from the directory in Settings, narrowed by team and role (no department
-/// filter, the user's call), each with a tick, added together. Shared by the event form's People and the mail
+/// Add a team or department: people from the directory in Settings, narrowed by department,
+/// team and role (each list holding only what the one before leaves), each with a tick, added together. Shared by the event form's People and the mail
 /// composer's To and Cc. Photos are fetched as rows appear and held by this view alone.
 struct DirectoryPicker: View {
     let directory: PeopleDirectory
@@ -10,6 +10,7 @@ struct DirectoryPicker: View {
     let already: Set<String>
     let onAdd: ([DirectoryPerson]) -> Void
 
+    @State private var department: String?
     @State private var team: String?
     @State private var role: String?
     @State private var chosen: Set<String> = []
@@ -17,29 +18,38 @@ struct DirectoryPicker: View {
 
     private var shown: [DirectoryPerson] {
         directory.people.filter {
-            (team == nil || $0.team == team) && (role == nil || $0.role == role)
+            (department == nil || $0.department == department) && (team == nil || $0.team == team)
+                && (role == nil || $0.role == role)
         }
     }
 
-    private var roles: [String] { directory.roles(in: nil, team: team) }
+    private var roles: [String] { directory.roles(in: department, team: team) }
 
     private var addable: [DirectoryPerson] { shown.filter { !already.contains($0.id) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Add a team").font(.system(size: 13, weight: .semibold))
+            Text("Add a team or department").font(.system(size: 13, weight: .semibold))
             HStack(spacing: 8) {
+                PopUpMenu(items: [.init(id: "", title: "All departments")]
+                            + directory.departments.map { .init(id: $0, title: $0, separatorBefore: $0 == directory.departments.first) },
+                          selected: department ?? "", width: 136) { id in
+                    department = id.isEmpty ? nil : id
+                    if let team, !directory.teams(in: department).contains(team) { self.team = nil }
+                    dropStaleRole()
+                    chooseShown()
+                }
                 PopUpMenu(items: [.init(id: "", title: "All teams")]
-                            + directory.teams(in: nil).map { .init(id: $0, title: $0, separatorBefore: $0 == directory.teams(in: nil).first) },
-                          selected: team ?? "", width: 150) { id in
+                            + directory.teams(in: department).map { .init(id: $0, title: $0, separatorBefore: $0 == directory.teams(in: department).first) },
+                          selected: team ?? "", width: 136) { id in
                     team = id.isEmpty ? nil : id
                     dropStaleRole()
                     chooseShown()
                 }
-                // Roles within the team chosen, so every choice finds someone.
+                // Roles within the department and team chosen, so every choice finds someone.
                 PopUpMenu(items: [.init(id: "", title: "All roles")]
                             + roles.map { .init(id: $0, title: $0, separatorBefore: $0 == roles.first) },
-                          selected: role ?? "", width: 150) { id in
+                          selected: role ?? "", width: 136) { id in
                     role = id.isEmpty ? nil : id
                     chooseShown()
                 }
@@ -59,7 +69,7 @@ struct DirectoryPicker: View {
             }
         }
         .padding(14)
-        .frame(width: 340)
+        .frame(width: 452)
         .task { await directory.loadIfNeeded() }
     }
 
@@ -158,10 +168,10 @@ struct DirectoryPicker: View {
         return count == 1 ? "1 person" : "\(count) people"
     }
 
-    /// Narrowing to a team or role ticks everyone in it; back to everyone ticks nobody,
+    /// Narrowing to a department, team or role ticks everyone in it; back to everyone ticks nobody,
     /// so the whole company is never one click away.
     private func chooseShown() {
-        chosen = team == nil && role == nil ? [] : Set(addable.map(\.id))
+        chosen = department == nil && team == nil && role == nil ? [] : Set(addable.map(\.id))
     }
 
     private func dropStaleRole() {

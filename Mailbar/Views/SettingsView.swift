@@ -27,7 +27,8 @@ struct SettingsView: View {
     }
 
     /// Three tabs (the user's split, 2026-09-25): refresh, notifications and startup on General,
-    /// the account list on Accounts, event reminders and the people directory on Calendar. Kept while the window lives.
+    /// the account list and the privacy note on Accounts, event reminders and the people
+    /// directory on Calendar. Kept while the window lives.
     @State private var tab: SettingsTab = QCFlags.settingsTab ?? .general
 
     var body: some View {
@@ -40,7 +41,6 @@ struct SettingsView: View {
                     refreshSection
                     notificationsSection
                     generalSection
-                    privacySection
                 }
             case .accounts:
                 SettingsTabBody { accountsSection }
@@ -105,6 +105,8 @@ struct SettingsView: View {
                     }
                 }
             }
+            // Right under the card it is about (the user's call).
+            privacySection
             SettingsCardActions {
                 Button("Add Account...") {
                     editing = EditorTarget(account: Account(), isNew: true)
@@ -155,8 +157,7 @@ struct SettingsView: View {
     }
 
     private var notificationsSection: some View {
-        SettingsSection("Notifications",
-                        footnote: "Withdrawn once the message is read, archived or deleted.") {
+        SettingsSection("Notifications") {
             SettingsRow("Notify me about new mail") {
                 SettingsSwitch(isOn: $notifyNewMail)
             }

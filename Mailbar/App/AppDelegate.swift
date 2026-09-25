@@ -187,6 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 CalendarWindow.shared.store?.startNewEvent()
                 CalendarWindow.shared.store?.editor?.subject = "Design review"
+                if let series = QCFlags.calendarSeries {
+                    CalendarWindow.shared.store?.editor?.repeatPattern = RepeatPattern(kind: .daily)
+                    CalendarWindow.shared.store?.editor?.repeatEnd = series == "on" ? .on(Date().addingTimeInterval(90 * 86_400))
+                        : series == "after" ? .after(10) : .never
+                }
                 CalendarWindow.shared.store?.editor?.people = [.init(name: "Sara Rahimi", address: "sara.rahimi@example.com"),
                                                                .init(name: "Omid Karimi", address: "omid@example.org")]
                     + (QCFlags.withGroup ? [.init(name: "Design Team", address: "designteam@example.com")] : [])

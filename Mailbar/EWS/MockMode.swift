@@ -500,7 +500,7 @@ enum MockFixtures {
         let html = """
         <html><head><style>p { margin: 0 0 10px; }</style></head>
         <body dir="\(rtl ? "rtl" : "ltr")">
-        \(message.sender == "Newsletter" ? MockFixtures.wideNewsletter : "")
+        \(message.sender == "Newsletter" || message.address == "it@example.com" ? MockFixtures.wideNewsletter : "")
         \(message.hasAttachments ? #"<p><img src="cid:photo@mock" alt="photo"></p>"# : "")
         <p>\(message.preview)</p>
         <p>\(rtl ? "با سپاس،" : "Thanks,")<br>\(message.sender)</p>
@@ -553,7 +553,8 @@ enum MockFixtures {
     }
 
     /// A fixed 600px table with a 600x150 image slot, the shape real newsletters have, to check the
-    /// reader zooms it to fit without changing any proportions.
+    /// reader zooms it to fit without changing any proportions. Also in the Persian IT message, a
+    /// right-to-left body, where the overflow runs off the LEFT edge (the user's report).
     static let wideNewsletter = """
     <table width="600" cellpadding="0" cellspacing="0" style="background:#b8dcea"><tr><td align="center">
     <img src="cid:logo@mock" width="600" height="120" alt="banner">

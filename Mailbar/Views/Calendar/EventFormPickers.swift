@@ -197,13 +197,11 @@ struct PeopleSidebar: View {
         }
     }
 
-    /// OWA's gear beside People, in secondary grey (the user's call: lighter than the text): a
-    /// plain button, because a menu button ignores the colour of its icon. It opens Response options, Request
-    /// responses and Allow forwarding.
+    /// OWA's gear beside People, drawn exactly like the team button in the field below it (the
+    /// user's call: same size and colour, a plain borderless button). It opens Response options,
+    /// Request responses and Allow forwarding.
     private var responseOptions: some View {
-        Button { optionsOpen.toggle() } label: {
-            Image(systemName: "gearshape").font(.system(size: 15)).foregroundStyle(.secondary)
-        }
+        Button { optionsOpen.toggle() } label: { Image(systemName: "gearshape") }
         .buttonStyle(.borderless)
         .help("Response options")
         .popover(isPresented: $optionsOpen, arrowEdge: .bottom) {
@@ -273,7 +271,7 @@ struct PeopleSidebar: View {
     private var directoryButton: some View {
         Button { directoryOpen.toggle() } label: { Image(systemName: "person.3") }
             .buttonStyle(.borderless)
-            .help("Add a team")
+            .help("Add a team or department")
             .popover(isPresented: $directoryOpen, arrowEdge: .bottom) {
                 DirectoryPicker(directory: store.mail.directory,
                                 already: Set(draft.attendeeList.map { $0.lowercased() } + [store.account?.email.lowercased() ?? ""])) { people in

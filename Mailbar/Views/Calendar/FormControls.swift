@@ -114,6 +114,10 @@ struct PopUpMenu: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSPopUpButton {
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        // Large, so a popup is as tall as the form's 28 pt text boxes beside it (the user's catch:
+        // the regular popup was shorter, and swapping one for a box shifted the row).
+        button.controlSize = .large
+        button.font = .systemFont(ofSize: NSFont.systemFontSize)
         button.target = context.coordinator
         button.action = #selector(Coordinator.picked(_:))
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
