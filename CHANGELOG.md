@@ -20,6 +20,9 @@ section when a release is cut.
 - Schedule's top row is just ‹ Next free time ›: the arrows jump to the free time before or after the meeting. The date line is gone, since each day is named over its hours.
 - Clicking an attachment now shows it in Quick Look instead of opening it in another app, and its temporary copy is deleted as soon as the preview closes.
 
+### Fixed
+- The calendar's Day, Week and Month switcher no longer changes size when you switch views.
+
 ## [1.1.0] - 2026-09-26
 
 ### Added

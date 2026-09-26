@@ -97,15 +97,19 @@ struct CalendarRootView: View {
     private var toolbar: some View {
         HStack(spacing: 12) {
             titleButton
-                .layoutPriority(1)
             if case .loading = store.phase {
                 ProgressView().controlSize(.small).scaleEffect(0.7)
             }
             Spacer(minLength: 8)
+            // The controls take their room before the title, so the title shortens first and the
+            // controls stay one size across Day, Week and Month: when the title went first, Week's
+            // long title squeezed them compact and Day's short one let them grow back, so the
+            // switcher jumped under the pointer on every change (the user's recording, 2026-09-26).
             ViewThatFits(in: .horizontal) {
                 controls(compact: false)
                 controls(compact: true)
             }
+            .layoutPriority(1)
             // No refresh button: the stream (M11) and coming back to the window keep the calendar
             // current (the user's call, 2026-09-25). Cmd+R still works, unseen.
             Button("") { Task { await store.refresh() } }

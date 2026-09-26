@@ -337,7 +337,9 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   default names ("Red category"): a substring guess once turned "Core Weekly" red. No category:
   the accent. Block text sits top left, as in Outlook.
 - 2026-09-25 The calendar window is responsive, after Apple's Calendar: minimum 520 x 420; the
-  title shortens in steps (`title`, `shortTitle`, `tinyTitle` via `ViewThatFits`); day names go
+  title shortens in steps (`title`, `shortTitle`, `tinyTitle` via `ViewThatFits`), and before the
+  toolbar controls do, so they keep one size across Day, Week and Month (2026-09-26: the title
+  claiming room first let Week's long title shrink the view switcher, which jumped on each change); day names go
   "19 Saturday", "Sat 19", "19"; below 900 pt the detail panel floats over the grid as a card;
   event titles wrap onto the lines a block has room for, but only between words (the longest
   word is measured; if it does not fit, one truncated line, never a word broken mid-way).
