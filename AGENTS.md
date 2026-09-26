@@ -47,7 +47,7 @@ in mock mode. The Milestones section below is the record; none is open.
 - **New-mail notifications** (M7): click one to open that message. Sender, subject and preview
   always (the "Show sender and subject" switch was removed 2026-09-25, the user's call).
 - **Search** (M8): a field under the header (Cmd+F), searching the server as you type.
-- **Attachments** (M9): chips under the reader's header; click to open, right-click to save.
+- **Attachments** (M9): chips under the reader's header; click for Quick Look, right-click to save.
 - **Launch at login** (M10): a switch in Settings, General.
 
 - **Instant new mail** (M11): EWS streaming notifications; polling drops to a 10-minute safety net.
@@ -128,7 +128,7 @@ New work gets a plan and moves here once it lands.
 | M6 | Sign-off: nothing on disk, idle memory 54 MB | one-hour memory |
 | M7 | New-mail notifications, withdrawn when handled | a real banner |
 | M8 | Server-side search, Cmd+F | |
-| M9 | Attachments: open (private temp copy) or save | opening a real one |
+| M9 | Attachments: Quick Look (private temp copy, deleted when the panel closes) or save | previewing a real one |
 | M10 | Launch at login | toggling it |
 | M11 | Instant mail over EWS streaming, 10-minute poll as backup | a real arrival |
 | M12 | Reply and reply all | a real send |
@@ -548,10 +548,13 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   archived or deleted anywhere. macOS stores delivered notifications on disk in Notification
   Center; that is outside this app's control. A switch once hid the details; the user had it
   removed (2026-09-25), so the only way to keep them out is turning notifications off.
-- 2026-09-24 Attachments (M9) are the one sanctioned exception to "nothing on disk": Open writes
-  the file to `<tmp>/Mailbar Attachments/<uuid>/` (0700 folder, 0600 file) because another app can
-  only open a file, and the folder is deleted at quit and again at launch. Save writes where the
-  user picks. Bytes are fetched only when one of the two is pressed.
+- 2026-09-24 Attachments (M9) are the one sanctioned exception to "nothing on disk": a click
+  shows the file in the Quick Look panel (`AttachmentPreview`, 2026-09-26, the user's call: it
+  used to open in the default app, and the copy then sat on disk until quit, which for an app
+  that never quits is for ever). Quick Look only shows a file, so it is written to
+  `<tmp>/Mailbar Attachments/<uuid>/` (0700 folder, 0600 file) and deleted the moment the panel
+  closes or shows another one; the folder is also cleared at quit and at launch. Save writes
+  where the user picks. Bytes are fetched only when one of the two is pressed.
 - 2026-09-24 Search (M8) is server-side: `QueryString` (the server index Outlook uses) on 2013+,
   a subject-or-body substring restriction on older servers. Results are in memory, the
   selected account only, dropped when the popover closes. Actions on a result update it.

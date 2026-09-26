@@ -328,9 +328,9 @@ struct AttachmentStrip: View {
         }
         .buttonStyle(.plain)
         .disabled(busy != nil)
-        .help("Open \(file.name)")
+        .help("Preview \(file.name)")
         .contextMenu {
-            Button("Open") { Task { await fetch(file, save: false) } }
+            Button("Quick Look") { Task { await fetch(file, save: false) } }
             Button("Save As...") { Task { await fetch(file, save: true) } }
         }
     }
@@ -348,12 +348,12 @@ struct AttachmentStrip: View {
             if save {
                 _ = try Attachments.save(data, named: file.name)
             } else {
-                try Attachments.open(data, named: file.name)
+                try Attachments.preview(data, named: file.name)
             }
         } catch let error as EWSError {
             problem = error.message(host: store.accounts.account(accountID)?.host ?? "The server")
         } catch {
-            problem = "Could not \(save ? "save" : "open") \(file.name): \(error.localizedDescription)"
+            problem = "Could not \(save ? "save" : "preview") \(file.name): \(error.localizedDescription)"
         }
     }
 }
