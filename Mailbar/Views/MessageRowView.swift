@@ -9,6 +9,14 @@ import SwiftUI
 /// Every text line takes its direction from its own first strong character, so a Persian subject
 /// starts at the right and truncates at its left end while the time stays on the right, which is
 /// what Outlook does with the same mail.
+extension VerticalAlignment {
+    /// The centre of a row's subject line, where its hover actions sit.
+    private enum SubjectLine: AlignmentID {
+        static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
+    }
+    static let subjectLine = VerticalAlignment(SubjectLine.self)
+}
+
 struct MessageRowView: View {
     let message: MailMessage
     let accountID: UUID
@@ -41,7 +49,9 @@ struct MessageRowView: View {
             .onHover { isHovering = $0 }
             // The four actions at the row's trailing edge while the pointer is on it, the way
             // Outlook shows them: over the subject line, so the time on the sender line never hides.
-            .overlay(alignment: .trailing) {
+            // Pinned to that line, not centred: a row with no preview line put its centre between
+            // sender and subject, over the time (the user's recording).
+            .overlay(alignment: Alignment(horizontal: .trailing, vertical: .subjectLine)) {
                 if isHovering {
                     MessageActionButtons(message: message, accountID: accountID, store: store, size: 11)
                         .foregroundStyle(.secondary)
@@ -109,6 +119,7 @@ struct MessageRowView: View {
                         .foregroundStyle(.primary)
                     trailingMarks
                 }
+                .alignmentGuide(.subjectLine) { $0[VerticalAlignment.center] }
 
                 if !message.preview.isEmpty {
                     DirectionalText(message.preview, font: .system(size: 12))

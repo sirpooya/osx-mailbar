@@ -412,6 +412,10 @@ enum MockFixtures {
                 subject: "Nightly build 2417 passed",
                 preview: "All 312 tests passed in 14 minutes. No new warnings. Artifacts are attached to the run.",
                 hoursAgo: 5, isRead: true),
+        // An answer to the user's meeting, which Exchange sends with no preview: a two-line row.
+        Message(sender: "Omid Karimi", address: "omid@example.org",
+                subject: "Accepted: Quarterly planning", preview: "",
+                hoursAgo: 6, isRead: true, meetingClass: "IPM.Schedule.Meeting.Resp.Pos", event: "ev-next-planning"),
         Message(sender: "Narges Ahmadi", address: "narges@example.com",
                 subject: "Canceled: BW | Design system update",
                 preview: "Moving this to next month, when the audit is in.",
