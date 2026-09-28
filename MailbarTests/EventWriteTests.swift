@@ -112,6 +112,25 @@ import Testing
         #expect(cleared.contains("<t:DeleteItemField>\(EventCharm.fieldURI)</t:DeleteItemField>"))
     }
 
+    @Test func changingWhoIsInvitedAsksWhoToSendTo() {
+        let edited = draft {
+            $0.id = "ev-1"
+            $0.people = [.init(name: "Ada", address: "ada@example.com")]
+            $0.originalInvitees = $0.invitees
+        }
+        #expect(!edited.asksWhoToSend)
+        var added = edited
+        added.people.append(.init(name: "Bo", address: "bo@example.com"))
+        #expect(added.asksWhoToSend)
+        #expect(CalendarSOAP.updateEvent(added, id: "ev-1").contains(#"SendMeetingInvitationsOrCancellations="SendToChangedAndSaveCopy""#))
+        #expect(CalendarSOAP.updateEvent(added, id: "ev-1", sendToAll: true).contains(#"="SendToAllAndSaveCopy""#))
+        // Removing the last person tells them, and there is nobody else to ask about.
+        var emptied = edited
+        emptied.people = []
+        #expect(!emptied.asksWhoToSend)
+        #expect(CalendarSOAP.updateEvent(emptied, id: "ev-1").contains(#"="SendToChangedAndSaveCopy""#))
+    }
+
     @Test func responseOptionsAreSentOnCreateAndUpdate() throws {
         let off = draft { $0.requestResponses = false; $0.allowForwarding = false }
         let root = try XMLTree.parse(SOAP.envelope(.exchange2010SP2, body: CalendarSOAP.createEvent(off)))

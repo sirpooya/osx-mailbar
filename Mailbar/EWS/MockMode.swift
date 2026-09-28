@@ -209,8 +209,14 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 where request.contains("<t:\(element)>") {
                     if let reference = Self.firstMatch(#"ReferenceItemId Id="([^"]+)""#, in: request) {
                         // Answering the invitation email answers the event it is for.
-                        answers[reference == "work-new-invite" || reference.hasPrefix("work-") ? "ev-next-planning" : reference] = response
+                        let event = inbox(prefix).first { $0.id == reference }?.event
+                        answers[event ?? (reference.hasPrefix("ev-") ? reference : "ev-next-planning")] = response
                     }
+                }
+                if request.contains("<t:RemoveItem>"),
+                   let reference = Self.firstMatch(#"ReferenceItemId Id="([^"]+)""#, in: request),
+                   let event = inbox(prefix).first(where: { $0.id == reference })?.event {
+                    removed.insert(event)
                 }
                 return ok(MockFixtures.success("CreateItem"))
             }
@@ -295,6 +301,14 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             }
             if request.contains("<m:GetItem>"), let itemID,
                let message = inbox(prefix).first(where: { $0.id == itemID }) {
+                if request.contains("meeting:AssociatedCalendarItemId") {
+                    let event = message.event.flatMap { id in calendarEvents().first { $0.id == id } }
+                    return ok(MockFixtures.meetingLink(message, event: event?.id))
+                }
+                if request.contains("meetingResponse:ProposedStart") {
+                    let event = message.event.flatMap { id in calendarEvents().first { $0.id == id } }
+                    return ok(MockFixtures.proposedTime(message, event: event))
+                }
                 return ok(MockFixtures.getItem(message))
             }
             if request.contains("<m:GetAttachment>") {
@@ -371,7 +385,18 @@ enum MockFixtures {
         var isRead = false
         var isFlagged = false
         var hasAttachments = false
-        var isMeetingRequest = false
+        /// A meeting email's `ItemClass`, and the mock calendar event it is about.
+        var meetingClass: String? = nil
+        var event: String? = nil
+
+        var element: String {
+            switch meetingClass {
+            case let itemClass? where itemClass.contains("Request"): return "MeetingRequest"
+            case let itemClass? where itemClass.contains("Canceled"): return "MeetingCancellation"
+            case .some: return "MeetingResponse"
+            case nil: return "Message"
+            }
+        }
     }
 
     static let workInbox: [Message] = [
@@ -382,15 +407,23 @@ enum MockFixtures {
         Message(sender: "Omid Karimi", address: "omid@example.org",
                 subject: "Invitation: Quarterly planning",
                 preview: "Sunday 10:00 to 12:00, Room Blue. Planning for next quarter; bring your team's list.",
-                hoursAgo: 0.8, isMeetingRequest: true),
+                hoursAgo: 0.8, meetingClass: "IPM.Schedule.Meeting.Request", event: "ev-next-planning"),
         Message(sender: "Build Server", address: "ci@example.com",
                 subject: "Nightly build 2417 passed",
                 preview: "All 312 tests passed in 14 minutes. No new warnings. Artifacts are attached to the run.",
                 hoursAgo: 5, isRead: true),
+        Message(sender: "Narges Ahmadi", address: "narges@example.com",
+                subject: "Canceled: BW | Design system update",
+                preview: "Moving this to next month, when the audit is in.",
+                hoursAgo: 8, meetingClass: "IPM.Schedule.Meeting.Canceled", event: "ev-sat-update"),
         Message(sender: "Sara Rahimi", address: "sara.rahimi@example.com",
                 subject: "Design review notes and the updated spacing tokens",
                 preview: "Hi, attached are the notes from Tuesday. Two open points: the chip height on compact density, and whether the divider stays.",
                 hoursAgo: 26, isFlagged: true, hasAttachments: true),
+        Message(sender: "Sara Rahimi", address: "sara.rahimi@example.com",
+                subject: "Tentative: ds demo alignment",
+                preview: "I have a clash at six; would seven work?",
+                hoursAgo: 30, isRead: true, meetingClass: "IPM.Schedule.Meeting.Resp.Tent", event: "ev-sun-demo"),
         Message(sender: "واحد فناوری اطلاعات", address: "it@example.com",
                 subject: "قطعی برنامه‌ریزی‌شده سرویس ایمیل، پنجشنبه ساعت ۲۲",
                 preview: "سرویس ایمیل برای به‌روزرسانی از ساعت ۲۲ تا ۲۳ در دسترس نخواهد بود. Outlook و موبایل هر دو متأثر می‌شوند.",
@@ -455,7 +488,7 @@ enum MockFixtures {
         let formatter = ISO8601DateFormatter()
         let items = messages.enumerated().map { index, message in
             """
-                      <t:\(message.isMeetingRequest ? "MeetingRequest" : "Message")>
+                      <t:\(message.element)>
                         <t:ItemId Id="\(message.id.isEmpty ? "item-\(index)" : message.id)" ChangeKey="ck-\(index)"/>
                         <t:Subject>\(SOAP.escape(message.subject))</t:Subject>
                         <t:HasAttachments>\(message.hasAttachments)</t:HasAttachments>
@@ -465,7 +498,8 @@ enum MockFixtures {
             <t:EmailAddress>\(message.address)</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:From>
                         <t:IsRead>\(message.isRead)</t:IsRead>
                         <t:Flag><t:FlagStatus>\(message.isFlagged ? "Flagged" : "NotFlagged")</t:FlagStatus></t:Flag>
-                      </t:\(message.isMeetingRequest ? "MeetingRequest" : "Message")>
+                        \(message.meetingClass.map { "<t:ItemClass>\($0)</t:ItemClass>" } ?? "")
+                      </t:\(message.element)>
             """
         }.joined(separator: "\n")
         return """
@@ -494,13 +528,43 @@ enum MockFixtures {
         """
     }
 
+    /// A meeting email's link to its event, absent once the event is gone.
+    static func meetingLink(_ message: Message, event: String?) -> String {
+        MockCalendar.wrap("GetItem", """
+                  <m:Items>
+                    <t:\(message.element)>
+                      <t:ItemId Id="\(message.id)" ChangeKey="ck"/>
+                      \(event.map { #"<t:AssociatedCalendarItemId Id="\#($0)" ChangeKey="ck"/>"# } ?? "")
+                    </t:\(message.element)>
+                  </m:Items>
+        """)
+    }
+
+    /// An answer's proposed time: an hour after the event, as long as it.
+    static func proposedTime(_ message: Message, event: MockCalendar.Event?) -> String {
+        let formatter = ISO8601DateFormatter()
+        let times = event.map { event in
+            "<t:ProposedStart>\(formatter.string(from: event.start.addingTimeInterval(3600)))</t:ProposedStart>"
+                + "<t:ProposedEnd>\(formatter.string(from: event.end.addingTimeInterval(3600)))</t:ProposedEnd>"
+        } ?? ""
+        return MockCalendar.wrap("GetItem", """
+                  <m:Items>
+                    <t:MeetingResponse>
+                      <t:ItemId Id="\(message.id)" ChangeKey="ck"/>
+                      \(times)
+                    </t:MeetingResponse>
+                  </m:Items>
+        """)
+    }
+
     /// The body a mock message opens to: its preview as the first paragraph, a second paragraph,
     /// an inline image by `cid:` and a remote 1x1 tracking pixel, so the reader shows both the
     /// inlined image and the "remote images are blocked" line.
     static func getItem(_ message: Message, now: Date = Date()) -> String {
         let received = ISO8601DateFormatter().string(from: now.addingTimeInterval(-message.hoursAgo * 3600))
         let rtl = TextDirection.firstStrong(in: message.preview) == .rightToLeft
-        let html = """
+        // An invitation sent with no description, as most are: the day preview takes the body.
+        let html = message.meetingClass?.contains("Request") == true ? "<html><body></body></html>" : """
         <html><head><style>p { margin: 0 0 10px; }</style></head>
         <body dir="\(rtl ? "rtl" : "ltr")">
         \(message.sender == "Newsletter" || message.address == "it@example.com" ? MockFixtures.wideNewsletter : "")
@@ -526,6 +590,7 @@ enum MockFixtures {
                       <t:Subject>\(SOAP.escape(message.subject))</t:Subject>
                       <t:Body BodyType="HTML">\(SOAP.escape(html))</t:Body>
                       <t:Attachments>
+                        \(html.contains("cid:logo") ? "" : "<!--")
                         <t:FileAttachment>
                           <t:AttachmentId Id="att-logo"/>
                           <t:Name>logo.png</t:Name>
@@ -533,6 +598,7 @@ enum MockFixtures {
                           <t:ContentId>logo@mock</t:ContentId>
                           <t:IsInline>true</t:IsInline>
                         </t:FileAttachment>
+                        \(html.contains("cid:logo") ? "" : "-->")
                         \(message.hasAttachments ? fileAttachments : "")
                       </t:Attachments>
                       <t:DateTimeReceived>\(received)</t:DateTimeReceived>

@@ -40,8 +40,36 @@ struct MailMessage: Identifiable, Equatable, Sendable {
     var isRead: Bool
     var isFlagged: Bool
     let hasAttachments: Bool
-    /// An invitation (`t:MeetingRequest`): the reader offers Accept, Tentative, Decline (M17).
-    var isMeetingRequest = false
+    /// A meeting email: an invitation, a cancellation or someone's answer. Nil for plain mail.
+    var meeting: MeetingMail? = nil
+
+    /// An invitation: the reader offers Accept, Tentative, Decline (M17).
+    var isMeetingRequest: Bool { meeting == .request }
+}
+
+/// What a meeting email is about, from its `ItemClass` (or, when the server leaves that out,
+/// its element name). The row marks it and the reader shows the meeting.
+enum MeetingMail: Equatable, Sendable {
+    case request
+    case cancellation
+    /// Someone's answer to a meeting the user organized: `Accept`, `Tentative`, `Decline`, or
+    /// nil when the class does not say which.
+    case response(String?)
+
+    init?(element: String, itemClass: String?) {
+        let itemClass = itemClass?.lowercased() ?? ""
+        if itemClass.hasPrefix("ipm.schedule.meeting.request") { self = .request; return }
+        if itemClass.hasPrefix("ipm.schedule.meeting.canceled") { self = .cancellation; return }
+        if itemClass.hasPrefix("ipm.schedule.meeting.resp.pos") { self = .response("Accept"); return }
+        if itemClass.hasPrefix("ipm.schedule.meeting.resp.tent") { self = .response("Tentative"); return }
+        if itemClass.hasPrefix("ipm.schedule.meeting.resp.neg") { self = .response("Decline"); return }
+        switch element {
+        case "MeetingRequest": self = .request
+        case "MeetingCancellation": self = .cancellation
+        case "MeetingResponse": self = .response(nil)
+        default: return nil
+        }
+    }
 }
 
 /// One opened message. Lives in the reader's state while it is open and nowhere else: when the
@@ -303,7 +331,7 @@ enum EWSResponse {
             isRead: item.child("IsRead")?.trimmedText == "true",
             isFlagged: isFlagged(item),
             hasAttachments: item.child("HasAttachments")?.trimmedText == "true",
-            isMeetingRequest: item.name == "MeetingRequest")
+            meeting: MeetingMail(element: item.name, itemClass: item.child("ItemClass")?.trimmedText))
     }
 
     /// `item:Flag` on 2013 and later, the MAPI flag status (2 is flagged) on older servers.

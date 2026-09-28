@@ -308,8 +308,16 @@ final class CalendarStore {
 
     /// The event form, when open. In memory only.
     var editor: EventDraft? {
-        didSet { if editor == nil { formPhotos = [:]; formStatuses = [:]; formPhotoAsked = []; formStatusesKey = "" } }
+        didSet {
+            if editor == nil {
+                formPhotos = [:]; formStatuses = [:]; formPhotoAsked = []; formStatusesKey = ""
+                askingWhoToSend = false
+            }
+        }
     }
+    /// The form is asking whether an edit that added or removed people goes only to them or to
+    /// everyone (Outlook's "Send to Changed" or "Send to All").
+    var askingWhoToSend = false
     /// The open form's people photos and free/busy, held for as long as the form is open so its
     /// Event and Schedule tabs can come and go without fetching them again (the user's catch:
     /// photos reloaded on every switch). Dropped with the form, never kept beyond it.
@@ -344,9 +352,16 @@ final class CalendarStore {
         return !event.isCancelled && (!event.isMeeting || event.isOrganizer)
     }
 
-    func saveEditor() async {
+    /// `sendToAll` answers the form's question; nil asks it first when the edit calls for it.
+    func saveEditor(sendToAll: Bool? = nil) async {
         guard var draft = editor, draft.problem == nil, !draft.isSaving,
               let (url, credential) = mail.connection(for: draft.accountID) else { return }
+        if let sendToAll {
+            draft.sendToAll = sendToAll
+        } else if draft.asksWhoToSend {
+            askingWhoToSend = true
+            return
+        }
         draft.isSaving = true
         draft.error = nil
         editor = draft
@@ -425,19 +440,8 @@ final class CalendarStore {
     /// is open and it goes when the form closes (no image is cached, the user's rule). The
     /// server has none to give before Exchange 2013.
     func photo(for address: String) async -> NSImage? {
-        if let avatar = await mail.directory.avatar(for: address) { return avatar }
-        guard let account, let (url, credential) = mail.connection(for: account.id) else { return nil }
-        guard mail.isModern(account.id) else {
-            EWSClient.photoLog.info("No photos: the server is older than Exchange 2013")
-            return nil
-        }
-        do {
-            guard let data = try await mail.client.userPhoto(address, at: url, credential: credential) else { return nil }
-            return NSImage(data: data)
-        } catch {
-            EWSClient.photoLog.error("Photo request failed: \(String(describing: error), privacy: .public)")
-            return nil
-        }
+        guard let account else { return nil }
+        return await mail.photo(for: address, accountID: account.id)
     }
 
     /// Free or busy over the event's time for each address (lowercased keys). Empty when the

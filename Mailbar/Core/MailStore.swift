@@ -568,14 +568,45 @@ final class MailStore {
 
     // MARK: - Invitations (M17)
 
-    /// Answers an invitation email. The organizer is told; the event in the calendar follows.
-    func answerInvitation(_ answer: CalendarSOAP.Answer, message id: String, in accountID: UUID,
-                          note: String) async throws {
+    /// Answers an invitation email. The organizer is told (unless `send` is false); the event in
+    /// the calendar follows. `reference` answers the calendar's event instead of the email: a
+    /// changed answer does, since Exchange may have moved the email once it was first answered.
+    func answerInvitation(_ answer: CalendarSOAP.Answer, message id: String, reference: String? = nil,
+                          in accountID: UUID, note: String, send: Bool = true,
+                          proposal: DateInterval? = nil) async throws {
         guard let (url, credential) = connection(for: accountID) else {
             throw EWSError.server("The password for this account is missing. Enter it in Settings.")
         }
-        try await client.answer(answer, to: id, note: note, at: url, credential: credential)
+        try await client.answer(answer, to: reference ?? id, note: note, send: send, proposal: proposal,
+                                at: url, credential: credential)
         await setRead(true, message: id, in: accountID)
+    }
+
+    /// A person's photo: the people directory's when it has one for this address, else the
+    /// Exchange server's. Never kept here: the view that shows it holds it, and it goes with that
+    /// view (no image is cached, the user's rule). The server has none before Exchange 2013.
+    func photo(for address: String, accountID: UUID) async -> NSImage? {
+        if let avatar = await directory.avatar(for: address) { return avatar }
+        guard let (url, credential) = connection(for: accountID) else { return nil }
+        guard isModern(accountID) else {
+            EWSClient.photoLog.info("No photos: the server is older than Exchange 2013")
+            return nil
+        }
+        do {
+            guard let data = try await client.userPhoto(address, at: url, credential: credential) else { return nil }
+            return NSImage(data: data)
+        } catch {
+            EWSClient.photoLog.error("Photo request failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    /// "Remove from calendar" on a cancellation email.
+    func removeCancelledMeeting(message id: String, in accountID: UUID) async throws {
+        guard let (url, credential) = connection(for: accountID) else {
+            throw EWSError.server("The password for this account is missing. Enter it in Settings.")
+        }
+        try await client.removeCancelledMeeting(id, at: url, credential: credential)
     }
 
     // MARK: - Searching

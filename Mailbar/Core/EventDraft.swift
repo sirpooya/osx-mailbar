@@ -84,6 +84,12 @@ struct EventDraft: Equatable, Identifiable {
     var allowForwarding = true
     /// Editing one occurrence of a series: the repeat rule is the series', not changeable here.
     var isOccurrence = false
+    /// The people and rooms the event had when the form opened, lower-cased, so an edit can
+    /// tell whether it adds or removes anyone.
+    var originalInvitees: Set<String> = []
+    /// An update goes to everyone, not only to the people added or removed (the user's pick
+    /// when asked, after Outlook's "Send to Changed" or "Send to All").
+    var sendToAll = false
     var isSaving = false
     var error: String?
 
@@ -127,6 +133,16 @@ struct EventDraft: Equatable, Identifiable {
 
     /// Sending invitations: shown on the Save button so the user knows it will mail people.
     var sendsInvitations: Bool { !attendeeList.isEmpty || !rooms.isEmpty }
+
+    var invitees: Set<String> { Set((attendeeList + rooms.map(\.address)).map { $0.lowercased() }) }
+    /// Whether an edit added or removed people or rooms.
+    var changesInvitees: Bool { !isNew && invitees != originalInvitees }
+    /// Outlook asks whether the update goes only to the people added or removed, or to all of
+    /// them, when a meeting that had people still has some and the list changed. Changed files
+    /// go to everyone anyway, so there is nothing to ask then.
+    var asksWhoToSend: Bool {
+        changesInvitees && !originalInvitees.isEmpty && !invitees.isEmpty && !changesFiles
+    }
 
     // MARK: - Start and length
 
@@ -200,6 +216,7 @@ struct EventDraft: Equatable, Identifiable {
         draft.people = detail.attendees.filter { !$0.isOptional && !$0.address.isEmpty }
             .map { Invitee(name: $0.name, address: $0.address) }
         draft.rooms = detail.roomBoxes
+        draft.originalInvitees = draft.invitees
         draft.categories = event.categories
         draft.charm = event.charm
         draft.existingFiles = detail.files

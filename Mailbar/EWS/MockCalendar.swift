@@ -181,7 +181,8 @@ enum MockCalendar {
                   end: at(0, saturday, 14), location: "CTO's Office", organizer: "Narges Ahmadi",
                   organizerAddress: "narges@example.com", isCancelled: true),
             Event(id: "ev-sun-demo", subject: "ds demo alignment", start: at(0, sunday, 18),
-                  end: at(0, sunday, 19), location: room, response: "Organizer",
+                  end: at(0, sunday, 19), location: room, organizer: "Sample User",
+                  organizerAddress: "sample.user@example.com", response: "Organizer",
                   attendees: [("Omid Karimi", "omid@example.org", "Accept"), ("Sara Rahimi", "sara.rahimi@example.com", "Tentative")],
                   categories: ["Storybook"]),
             Event(id: "ev-mon-concerns", subject: "دغدغه‌های شما در مورد دیزاین‌سیستم", start: at(0, monday, 12),
@@ -217,6 +218,10 @@ enum MockCalendar {
             Event(id: "ev-next-planning", subject: "Quarterly planning", start: at(1, sunday, 10),
                   end: at(1, sunday, 12), location: room, organizer: "Omid Karimi",
                   organizerAddress: "omid@example.org", response: "NoResponseReceived", showAs: "Tentative",
+                  attendees: [("Sample User", "sample.user@example.com", "Unknown"),
+                              ("Sara Rahimi", "sara.rahimi@example.com", "Accept"),
+                              ("Ali Tavakoli", "ali.tavakoli@example.com", "Unknown")],
+                  notes: #"<p>Join: <a href="https://teams.microsoft.com/l/meetup-join/19%3ameeting_planning%40thread.v2/0">Click here to join the meeting</a></p>"#,
                   categories: ["Purple category"]),
         ]
         return list

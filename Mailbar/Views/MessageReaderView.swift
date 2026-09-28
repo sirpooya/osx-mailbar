@@ -14,6 +14,8 @@ struct MessageReaderView: View {
 
     @State private var phase: Phase = .loading
     @State private var allowRemoteImages = QCFlags.loadImages
+    /// The meeting a meeting email is for, with its answer; nil for plain mail.
+    @State private var meetingCard: MeetingCard?
 
     private enum Phase: Equatable {
         case loading
@@ -27,6 +29,8 @@ struct MessageReaderView: View {
     }
 
     static let bodyHeight: CGFloat = 400
+    /// The meeting's day above an invitation's description: about five hours of it.
+    static let previewHeight: CGFloat = 180
 
     private var current: MailMessage {
         store.message(summary.id, in: accountID) ?? summary
@@ -41,7 +45,13 @@ struct MessageReaderView: View {
             content
                 .frame(height: Self.bodyHeight)
         }
-        .task(id: summary.id) { await load() }
+        .task(id: summary.id) {
+            let card = summary.meeting.map { MeetingCard(kind: $0, mailID: summary.id, accountID: accountID, store: store) }
+            meetingCard = card
+            async let meeting: Void? = card?.load(senderAddress: summary.senderAddress)
+            await load()
+            _ = await meeting
+        }
     }
 
     // MARK: - Toolbar
@@ -78,22 +88,26 @@ struct MessageReaderView: View {
                 .foregroundStyle(.primary)
                 .help(loadedBody?.subject ?? current.subject)
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                DirectionalText(fromLine, font: .system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .help(fromAddress)
-                Text(current.received.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-            }
-
-            if let recipients = recipientLine {
-                Text(recipients)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            if let card = meetingCard {
+                // A meeting email leads with the sender's photo, as Outlook's does, and lists
+                // the invited with their answers in place of the To line.
+                HStack(alignment: .top, spacing: 10) {
+                    Avatar(name: fromLine, size: 34, photo: card.organizerPhoto)
+                    VStack(alignment: .leading, spacing: 4) {
+                        fromAndTime
+                        if card.details.map({ !$0.attendees.isEmpty }) == true {
+                            MeetingAttendeeLines(card: card)
+                        } else {
+                            recipients
+                        }
+                    }
+                }
+                .padding(.top, 2)
+                MeetingInfoLines(card: card, senderName: fromLine, bodyHTML: loadedBody?.html ?? "")
+                    .padding(.top, 6)
+            } else {
+                fromAndTime
+                recipients
             }
 
             if case .loaded(let body, _) = phase, !allowRemoteImages,
@@ -110,9 +124,9 @@ struct MessageReaderView: View {
                 .padding(.top, 2)
             }
 
-            if current.isMeetingRequest {
-                InvitationBar(store: store, accountID: accountID, messageID: current.id)
-                    .padding(.top, 4)
+            if let card = meetingCard, card.kind == .request {
+                MeetingAnswerBar(card: card)
+                    .padding(.top, 8)
             }
 
             if let files = loadedBody?.files, !files.isEmpty {
@@ -153,6 +167,29 @@ struct MessageReaderView: View {
         .accessibilityLabel(help)
     }
 
+    private var fromAndTime: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            DirectionalText(fromLine, font: .system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .help(fromAddress)
+            Text(current.received.formatted(date: .abbreviated, time: .shortened))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var recipients: some View {
+        if let recipients = recipientLine {
+            Text(recipients)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
     private var loadedBody: MessageBody? {
         if case .loaded(let body, _) = phase { return body }
         return nil
@@ -186,10 +223,25 @@ struct MessageReaderView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded(let body, let images):
-            MessageWebView(html: ReaderHTML.document(
+            let web = MessageWebView(html: ReaderHTML.document(
                 body: body.html,
                 images: images.mapValues { (type: $0.type, data: $0.data) },
                 allowRemoteImages: allowRemoteImages))
+            if let card = meetingCard, card.kind == .request, card.phase != .unavailable {
+                // The meeting's day above the description; the whole body when there is none.
+                VStack(spacing: 0) {
+                    if MeetingCard.isBlank(body.html) {
+                        MeetingDayPreview(card: card, store: store)
+                    } else {
+                        MeetingDayPreview(card: card, store: store)
+                            .frame(height: Self.previewHeight)
+                        Divider().opacity(0.5)
+                        web
+                    }
+                }
+            } else {
+                web
+            }
         case .failed(let message):
             GenericFailureView(message: message) { Task { await load() } }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -354,69 +406,6 @@ struct AttachmentStrip: View {
             problem = error.message(host: store.accounts.account(accountID)?.host ?? "The server")
         } catch {
             problem = "Could not \(save ? "save" : "preview") \(file.name): \(error.localizedDescription)"
-        }
-    }
-}
-
-/// Accept, Tentative, Decline on an invitation email (M17), with an optional note. Once answered
-/// it says so; the calendar, when open, picks the change up from the stream.
-struct InvitationBar: View {
-    @Bindable var store: MailStore
-    let accountID: UUID
-    let messageID: String
-
-    @State private var note = ""
-    @State private var sending: CalendarSOAP.Answer?
-    @State private var answered: CalendarSOAP.Answer?
-    @State private var problem: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "calendar.badge.clock").foregroundStyle(.secondary)
-                if let answered {
-                    Text("\(answered.done). The organizer was told.").font(.system(size: 12))
-                } else {
-                    ForEach(CalendarSOAP.Answer.allCases, id: \.self) { answer in
-                        Button {
-                            sending = answer
-                            problem = nil
-                            Task {
-                                do {
-                                    try await store.answerInvitation(answer, message: messageID, in: accountID, note: note)
-                                    answered = answer
-                                    CalendarWindow.shared.refreshIfOpen()
-                                } catch let error as EWSError {
-                                    problem = error.message(host: store.accounts.account(accountID)?.host ?? "The server")
-                                } catch {
-                                    problem = error.localizedDescription
-                                }
-                                sending = nil
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                if sending == answer { ProgressView().controlSize(.mini) }
-                                Text(answer.label).font(.system(size: 12))
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(height: 24)
-                            .background(Capsule().fill(CalendarControl.fill))
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(sending != nil)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            if answered == nil {
-                TextField("Add a note for the organizer (optional)", text: $note)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-            }
-            if let problem {
-                Text(problem).font(.system(size: 11)).foregroundStyle(.orange)
-            }
         }
     }
 }

@@ -92,6 +92,13 @@ struct MessageRowView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
+                    if let meeting = message.meeting {
+                        // Outlook marks meeting mail with a calendar, where the clip goes.
+                        Image(systemName: Self.symbol(for: meeting))
+                            .font(.system(size: 10))
+                            .foregroundStyle(meeting == .cancellation ? Color.red : Color.secondary)
+                            .help(Self.meetingLabel(meeting))
+                    }
                     receivedTime
                 }
 
@@ -156,7 +163,25 @@ struct MessageRowView: View {
         parts.append(message.subject)
         parts.append(RelativeTime.label(for: message.received))
         if message.hasAttachments { parts.append("has attachments") }
+        if let meeting = message.meeting { parts.append(Self.meetingLabel(meeting)) }
         return parts.joined(separator: ", ")
+    }
+
+    static func symbol(for meeting: MeetingMail) -> String {
+        switch meeting {
+        case .request: return "calendar"
+        case .cancellation: return "calendar.badge.minus"
+        case .response("Accept"): return "calendar.badge.checkmark"
+        case .response: return "calendar"
+        }
+    }
+
+    static func meetingLabel(_ meeting: MeetingMail) -> String {
+        switch meeting {
+        case .request: return "Meeting invitation"
+        case .cancellation: return "Meeting cancelled"
+        case .response(let response): return "Meeting answer: \(MeetingText.answerName(response ?? ""))"
+        }
     }
 }
 

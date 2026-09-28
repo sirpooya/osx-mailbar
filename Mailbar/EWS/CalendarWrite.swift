@@ -25,10 +25,11 @@ enum CalendarSOAP {
     }
 
     /// Every field the form edits, set at once. Meetings send updates to the people whose part
-    /// changed; a plain appointment sends nothing.
+    /// changed, or to everyone when asked; a plain appointment sends nothing. Removing the last
+    /// person still tells them, with a cancellation.
     /// Changed files go to everyone (`sendToAll`), not only to the people whose part changed.
     static func updateEvent(_ draft: EventDraft, id: String, sendToAll: Bool = false) -> String {
-        let sends = draft.attendeeList.isEmpty && draft.rooms.isEmpty ? "SendToNone"
+        let sends = draft.invitees.isEmpty && draft.originalInvitees.isEmpty ? "SendToNone"
             : sendToAll ? "SendToAllAndSaveCopy" : "SendToChangedAndSaveCopy"
         func set(_ field: String, _ element: String) -> String {
             """
@@ -202,17 +203,50 @@ enum CalendarSOAP {
 
     /// Answers an invitation, from the calendar event or from the invitation email; either id
     /// works as the reference. The organizer receives the answer, with the note if there is one.
-    static func answer(_ answer: Answer, to id: String, changeKey: String, note: String) -> String {
+    ///
+    /// `send` false is Outlook's "Don't send a response": the calendar takes the answer and the
+    /// organizer hears nothing. Exchange still makes the unsent response message, so it is filed
+    /// straight in Deleted Items, never left in Drafts (unproven on the real server).
+    ///
+    /// `proposal` is a new time put to the organizer with a Tentative or Decline (Exchange 2013
+    /// and later, so the request goes out with that version). It follows the reference, as the
+    /// schema's MeetingRegistrationResponseObjectType orders it.
+    static func answer(_ answer: Answer, to id: String, changeKey: String, note: String,
+                       send: Bool = true, proposal: DateInterval? = nil) -> String {
         let body = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ""
             : #"<t:Body BodyType="HTML">\#(SOAP.escape(ComposeHTML.html(from: note)))</t:Body>"#
+        let proposed = proposal.flatMap { interval in
+            answer == .accept ? nil : """
+                  <t:ProposedStart>\(SOAP.isoDate(interval.start))</t:ProposedStart>
+                  <t:ProposedEnd>\(SOAP.isoDate(interval.end))</t:ProposedEnd>
+            """
+        } ?? ""
+        let disposition = send ? "SendAndSaveCopy" : "SaveOnly"
+        let folder = send ? "" : #"<m:SavedItemFolderId><t:DistinguishedFolderId Id="deleteditems"/></m:SavedItemFolderId>"#
         return """
-            <m:CreateItem MessageDisposition="SendAndSaveCopy">
+            <m:CreateItem MessageDisposition="\(disposition)">
+              \(folder)
               <m:Items>
                 <t:\(answer.rawValue)>
                   \(body)
                   <t:ReferenceItemId Id="\(SOAP.escape(id))" ChangeKey="\(SOAP.escape(changeKey))"/>
+            \(proposed)
                 </t:\(answer.rawValue)>
+              </m:Items>
+            </m:CreateItem>
+        """
+    }
+
+    /// "Remove from calendar" on a cancellation email: the cancelled event leaves the calendar.
+    /// `RemoveItem` names the cancellation, not the event; Exchange finds the event itself.
+    static func removeCancelled(_ id: String, changeKey: String) -> String {
+        """
+            <m:CreateItem MessageDisposition="SaveOnly">
+              <m:Items>
+                <t:RemoveItem>
+                  <t:ReferenceItemId Id="\(SOAP.escape(id))" ChangeKey="\(SOAP.escape(changeKey))"/>
+                </t:RemoveItem>
               </m:Items>
             </m:CreateItem>
         """
@@ -561,7 +595,7 @@ extension EWSClient {
         if !draft.newFiles.isEmpty {
             try await calendarWrite(CalendarSOAP.createAttachments(draft.newFiles, parent: id), url: url, credential: credential)
         }
-        try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id, sendToAll: draft.changesFiles),
+        try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id, sendToAll: draft.changesFiles || draft.sendToAll),
                                 url: url, credential: credential)
     }
 
@@ -603,15 +637,29 @@ extension EWSClient {
     }
 
     /// Reads the item's current change key first: an answer must name the exact version it answers.
-    func answer(_ answer: CalendarSOAP.Answer, to id: String, note: String, at url: URL, credential: EWSCredential) async throws {
+    func answer(_ answer: CalendarSOAP.Answer, to id: String, note: String, send: Bool = true,
+                proposal: DateInterval? = nil, at url: URL, credential: EWSCredential) async throws {
+        let changeKey = try await currentChangeKey(id, url: url, credential: credential)
+        let body = CalendarSOAP.answer(answer, to: id, changeKey: changeKey, note: note, send: send, proposal: proposal)
+        // A proposed time is a 2013 element; asked for as 2010 SP2 the server would refuse it.
+        let data = try await sendRaw(SOAP.envelope(proposal == nil ? .exchange2010SP2 : .exchange2013, body: body,
+                                                   timeZone: WindowsTimeZone.current), to: url, credential: credential)
+        try EWSResponse.checkSuccess(data)
+    }
+
+    func removeCancelledMeeting(_ id: String, at url: URL, credential: EWSCredential) async throws {
+        let changeKey = try await currentChangeKey(id, url: url, credential: credential)
+        try await calendarWrite(CalendarSOAP.removeCancelled(id, changeKey: changeKey), url: url, credential: credential)
+    }
+
+    private func currentChangeKey(_ id: String, url: URL, credential: EWSCredential) async throws -> String {
         let identity = try await raw(SOAP.getItemIdentity(id: id), url: url, credential: credential)
         let root = try EWSResponse.parse(identity)
         _ = try EWSResponse.responseMessages(in: root)
         guard let changeKey = root.first("ItemId")?.attributes["ChangeKey"] else {
             throw EWSError.invalidResponse("Exchange did not return the invitation.")
         }
-        try await calendarWrite(CalendarSOAP.answer(answer, to: id, changeKey: changeKey, note: note),
-                                url: url, credential: credential)
+        return changeKey
     }
 
     func resolveNames(_ text: String, at url: URL, credential: EWSCredential) async throws -> [PersonSuggestion] {

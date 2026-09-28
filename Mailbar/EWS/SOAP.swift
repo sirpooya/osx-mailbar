@@ -66,6 +66,7 @@ enum SOAP {
                   <t:FieldURI FieldURI="item:DateTimeReceived"/>
                   <t:FieldURI FieldURI="message:IsRead"/>
                   <t:FieldURI FieldURI="item:HasAttachments"/>
+                  <t:FieldURI FieldURI="item:ItemClass"/>
         \(versionFields)
                 </t:AdditionalProperties>
               </m:ItemShape>

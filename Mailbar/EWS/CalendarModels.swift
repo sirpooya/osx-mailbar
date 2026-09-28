@@ -15,9 +15,9 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     let isMeeting: Bool
     let isCancelled: Bool
     /// `Organizer`, `Accept`, `Tentative`, `Decline`, `NoResponseReceived`, `Unknown`.
-    let myResponse: String
+    var myResponse: String
     /// `Free`, `Tentative`, `Busy`, `OOF`, `WorkingElsewhere`, `NoData`.
-    let showAs: String
+    var showAs: String
     let isPrivate: Bool
     /// Category names, as the user set them in Outlook or OWA. Their colours come from
     /// `CategoryColors` and the mailbox's master list.

@@ -13,12 +13,18 @@ section when a release is cut.
 ### Added
 - Schedule shows who booked each room, and what people's busy times are, inside the blocks where the server allows it; hover a block for its subject, place and whether it repeats.
 - Work time in Settings, Calendar: pick your work week, when the day starts and ends, and the time zone.
+- Invitation emails show when and where the meeting is, with a Join button, who is invited and how each answered, and a view of that day with your other events beside it.
+- Answer an invitation with a note, without telling the organizer, or propose a new time by dragging it in the day view (Exchange 2013 or later).
+- An invitation you already answered says so, with Change to answer again.
+- Cancellation emails offer Remove from Calendar; replies to your meetings say who answered and any time they proposed; meeting mail has a calendar icon in the inbox.
+- Editing a meeting to add or remove people now asks, as Outlook does, whether to send the update only to those people or to everyone. Removing everyone from a meeting now tells them it was cancelled.
 
 ### Changed
 - Schedule's name column is narrower, leaving more room for the hours; hover a cut name to read it whole, and a block's tooltip now gives its length.
 - Schedule runs on across the days: only work days and work hours, side by side, so swiping goes straight into the next working day. The meeting can be dragged from one day to the next, and Next free time looks ahead into later days.
 - Schedule's top row is just ‹ Next free time ›: the arrows jump to the free time before or after the meeting. The date line is gone, since each day is named over its hours.
 - Clicking an attachment now shows it in Quick Look instead of opening it in another app, and its temporary copy is deleted as soon as the preview closes.
+- Invitees in an invitation carry a coloured dot: their answer when the server knows it, else whether they are free at that time, as Outlook shows them.
 
 ### Fixed
 - The calendar's Day, Week and Month switcher no longer changes size when you switch views.

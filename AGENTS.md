@@ -150,7 +150,7 @@ user names it; an event with people sends real invitations.
 2026-09-26: **v1.0.0 released** on GitHub Releases (sirpooya/osx-mailbar), `Mailbar-1.0.0.zip`,
 signed with the Apple Development certificate, not notarized (users click Open Anyway).
 
-2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and its Schedule view (163 tests green); the popover has Inbox and
+2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and its Schedule view, and Outlook-style meeting emails (182 tests green, 2026-09-27); the popover has Inbox and
 Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
 Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
@@ -233,6 +233,9 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 | Delete | `DeleteItem` `DeleteType="MoveToDeletedItems"`. **Never** `HardDelete` or `SoftDelete` |
 | Expand a group | `ExpandDL` on the group's address; members listed one level down |
 | An attendee's contact card | `ResolveNames` `ReturnFullContactData="true"` on the address; the `Contact`'s JobTitle, Department, CompanyName, OfficeLocation, Manager, PhoneNumbers, PhysicalAddresses (Business) |
+| A meeting email's event | `GetItem` `meeting:AssociatedCalendarItemId`, then `GetItem` on that event; `meetingResponse:ProposedStart` on an answer (2013+) |
+| Answer without telling, propose a time | `CreateItem` `SaveOnly` into `deleteditems`; `ProposedStart`/`ProposedEnd` on `TentativelyAcceptItem` or `DeclineItem` (2013+) |
+| Remove a cancelled meeting | `CreateItem` `RemoveItem` referencing the cancellation email |
 | Archive | `FindFolder` for a top-level `Archive` under `msgfolderroot` (id kept in memory), then `MoveItem`. No folder: `CreateFolder` only after the user presses "Create and Archive" |
 
 Writes send the `ItemId` without its `ChangeKey` and `AlwaysOverwrite`. Setting one boolean is
@@ -427,6 +430,30 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   (`calendar:IsResponseRequested`) and Allow forwarding (named Boolean `DoNotForward` in
   PublicStrings, true when forwarding is off), both on by default, sent on create and every
   update, read back for editing. `DoNotForward` is not in the EWS docs: unproven on the server.
+- 2026-09-27 Meeting emails, after Outlook's invitation view (the user's request): the row
+  carries a calendar icon (`MessageRowView.symbol`, from `item:ItemClass`, now in `FindItem`);
+  the reader leads with the sender's photo, lists Required and Optional with each answer
+  (`MeetingAttendeeLines`) and says when and where with Join (`MeetingInfoLines`), all from the
+  calendar's copy (`meeting:AssociatedCalendarItemId`, then `GetItem` on the event), else the
+  email's own fields (`MeetingCard`, one per open reader, in memory). An invitation adds three
+  answer capsules, Accept, Tentative, Decline, each with a chevron menu: Send now, Add a
+  Note..., Don't Send a Response, and on Tentative and Decline "... and Propose New Time...".
+  Four capsules (a separate Propose) did not fit and read dense (the user: "so dense"). The
+  capsules are the accent's tone (`TonalCapsule`: accent text on a light accent fill), as is
+  Remove from Calendar; the user tried native neutral pull-downs and wanted them rounded.
+  Each invitee has a dot, never an icon: their answer when the server knows it (the
+  organizer's copy does), else free/busy at the meeting's time from `GetUserAvailability`
+  with the meeting's own hold left out (`MeetingCard.states`), since an invitee's copy
+  reports everyone as Unknown; Outlook's green checks are that free/busy. The location
+  starts at the left edge even when Persian. Once
+  answered it says "You accepted." with Change. Under the header a day view
+  (`MeetingDayPreview`) of the meeting's day, the whole body when the invitation has no
+  description; proposing draws a dashed block to drag or click in 15-minute steps, with day
+  arrows. A cancellation offers Remove from Calendar (`RemoveItem`); an answer to the user's
+  meeting says who answered and any proposed time (`meetingResponse:ProposedStart`, 2013+).
+  **Unproven on the real server**: Don't Send is `SaveOnly` with `SavedItemFolderId`
+  deleteditems so the unsent response never sits in Drafts; a proposal is `ProposedStart` and
+  `ProposedEnd` after `ReferenceItemId` on a 2013 request; `RemoveItem`.
 - 2026-09-25 The Today tab swipes through days (the user's request): the calendar window's
   paging (`CalendarPager`, `PagerStrip`, axis lock in `PagerSwipe`) on a strip of three days,
   the days within two of the one shown fetched ahead in one request (`MailStore.loadNearbyDays`),
@@ -441,7 +468,7 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   Center once the event is over. Do not add snooze or actions without asking.
 - 2026-09-25 Events (M16): one form for new and edit, in memory only. Saving an event with
   people or rooms says "Send" and sends invitations or updates; a plain appointment sends
-  nothing. Deleting a meeting the user organized sends the cancellation. Invitations are
+  nothing. An edit that adds or removes people asks, as Outlook does, "Send to Changed" (`SendToChangedAndSaveCopy`) or "Send to All" (`EventDraft.asksWhoToSend`); removing everyone still tells them. Deleting a meeting the user organized sends the cancellation. Invitations are
   answered (M17), never edited or deleted from here. Edits to a recurring event apply to that
   occurrence only; the repeat rule is set only when creating. Every calendar write carries the
   user's Windows time zone (`WindowsTimeZone`) so all-day and repeating events keep their days.

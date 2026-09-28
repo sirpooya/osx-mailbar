@@ -75,6 +75,15 @@ struct EventEditorView: View {
                 locationFocused = true
             }
         }
+        // Outlook's question when an edit adds or removes people.
+        .alert("You have added or removed attendees.", isPresented: $store.askingWhoToSend) {
+            Button("Send to Changed") { Task { await store.saveEditor(sendToAll: false) } }
+                .keyboardShortcut(.defaultAction)
+            Button("Send to All") { Task { await store.saveEditor(sendToAll: true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Send the update only to the attendees you added or removed, or to everyone?")
+        }
         // Files dropped anywhere on the form are attached.
         .dropDestination(for: URL.self) { urls, _ in
             addFiles(urls)
