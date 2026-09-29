@@ -287,20 +287,21 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 return ok(MockFixtures.getFolder(unread: mode == .empty ? 0 : inbox(prefix).filter { !$0.isRead }.count))
             }
             if request.contains("<m:FindItem") {
-                var messages = mode == .empty ? [] : inbox(prefix)
+                let inSent = request.contains(#"DistinguishedFolderId Id="sentitems""#)
+                var messages = mode == .empty ? [] : (inSent ? sentItems(prefix) : inbox(prefix))
                 // Search: the query string (2013+) or the restriction constant (older servers),
                 // matched against sender, subject and preview the way Exchange's index would.
                 if let query = Self.firstMatch("<m:QueryString>([^<]*)</m:QueryString>", in: request)
                     ?? Self.firstMatch(#"<t:Constant Value="([^"]*)"/>"#, in: request) {
                     let needle = query.lowercased()
                     messages = messages.filter {
-                        "\($0.sender) \($0.subject) \($0.preview)".lowercased().contains(needle)
+                        "\($0.sender) \($0.to ?? "") \($0.subject) \($0.preview)".lowercased().contains(needle)
                     }
                 }
                 return ok(MockFixtures.findItem(messages))
             }
             if request.contains("<m:GetItem>"), let itemID,
-               let message = inbox(prefix).first(where: { $0.id == itemID }) {
+               let message = (inbox(prefix) + sentItems(prefix)).first(where: { $0.id == itemID }) {
                 if request.contains("meeting:AssociatedCalendarItemId") {
                     let event = message.event.flatMap { id in calendarEvents().first { $0.id == id } }
                     return ok(MockFixtures.meetingLink(message, event: event?.id))
@@ -364,6 +365,18 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         }
     }
 
+    /// The fixture Sent Items, with the same changes applied. Call with the lock held.
+    private func sentItems(_ prefix: String) -> [MockFixtures.Message] {
+        let base = prefix == "team" ? [] : MockFixtures.workSent
+        return base.enumerated().compactMap { index, message in
+            var message = message
+            message.id = "\(prefix)-sent-\(index)"
+            guard !removed.contains(message.id) else { return nil }
+            if let flag = flagOverrides[message.id] { message.isFlagged = flag }
+            return message
+        }
+    }
+
     private func ok(_ xml: String) -> (Data, Int) { (Data(xml.utf8), 200) }
 
     private static func firstMatch(_ pattern: String, in text: String) -> String? {
@@ -388,6 +401,8 @@ enum MockFixtures {
         /// A meeting email's `ItemClass`, and the mock calendar event it is about.
         var meetingClass: String? = nil
         var event: String? = nil
+        /// Sent Items only: the recipients' names, as `item:DisplayTo` lists them.
+        var to: String? = nil
 
         var element: String {
             switch meetingClass {
@@ -444,6 +459,26 @@ enum MockFixtures {
                 subject: "Year-end expense deadline",
                 preview: "Please submit remaining receipts before the books close.",
                 hoursAgo: 24 * 380, isRead: true),
+    ]
+
+    /// What the sample user sent: plain replies, a Persian one, and a forward with a file.
+    static let workSent: [Message] = [
+        Message(sender: "Sample User", address: "sample.user@example.com",
+                subject: "Re: Design review notes and the updated spacing tokens",
+                preview: "Thanks Sara. The chip height works for me; let us keep the divider for now.",
+                hoursAgo: 2, isRead: true, to: "Sara Rahimi"),
+        Message(sender: "Sample User", address: "sample.user@example.com",
+                subject: "گزارش ماهانهٔ تیم طراحی | شهریور",
+                preview: "سلام، گزارش شهریور پیوست است. خلاصه: سه مؤلفهٔ تازه و بازبینی رنگ‌ها.",
+                hoursAgo: 26, isRead: true, hasAttachments: true, to: "Omid Karimi; Narges Ahmadi"),
+        Message(sender: "Sample User", address: "sample.user@example.com",
+                subject: "FW: Year-end expense deadline",
+                preview: "Forwarding in case this did not reach the team list.",
+                hoursAgo: 24 * 3, isRead: true, to: "Design Team"),
+        Message(sender: "Sample User", address: "sample.user@example.com",
+                subject: "Quarterly planning agenda",
+                preview: "Here is the draft agenda for Sunday. Add anything by Thursday.",
+                hoursAgo: 24 * 9, isRead: true, to: "Omid Karimi; Sara Rahimi; Narges Ahmadi"),
     ]
 
     static let teamInbox: [Message] = [
@@ -503,6 +538,7 @@ enum MockFixtures {
                         <t:IsRead>\(message.isRead)</t:IsRead>
                         <t:Flag><t:FlagStatus>\(message.isFlagged ? "Flagged" : "NotFlagged")</t:FlagStatus></t:Flag>
                         \(message.meetingClass.map { "<t:ItemClass>\($0)</t:ItemClass>" } ?? "")
+                        \(message.to.map { "<t:DisplayTo>\(SOAP.escape($0))</t:DisplayTo>" } ?? "")
                       </t:\(message.element)>
             """
         }.joined(separator: "\n")

@@ -11,7 +11,9 @@ import Foundation
 ///     Mailbar.app/Contents/MacOS/Mailbar --load-images      (remote images allowed from the start)
 enum QCFlags {
     static var openSettings: Bool { has("--open-settings") || openEditor }
-    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil || openToday }
+    static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil || openToday || openSent }
+    /// `--open-sent`: the popover on its Sent tab. With `--search=`, searches Sent Items.
+    static var openSent: Bool { has("--open-sent") }
     /// `--open-today`: the popover on its Today tab.
     static var openToday: Bool { has("--open-today") }
     /// `--today-swipe`: with `--open-today`, a scripted sideways swipe to the next day, through the
@@ -154,7 +156,8 @@ enum QCFlags {
         return nil
         #endif
     }
-    /// `--open-message` opens the first message, `--open-message=5` the sixth.
+    /// `--open-message` opens the first message, `--open-message=5` the sixth; with `--search=`,
+    /// of the results, and with `--open-sent`, of Sent Items.
     static var openMessageIndex: Int? {
         #if DEBUG
         if has("--open-message") { return 0 }

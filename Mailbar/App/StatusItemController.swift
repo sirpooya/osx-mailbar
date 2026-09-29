@@ -88,6 +88,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         store.popoverWindow = popover.contentViewController?.view.window
         // Opening is a check: the list should be current the moment it is looked at.
         onRefresh()
+        if store.showsSent { Task { await store.loadSent() } }
     }
 
     func close() {

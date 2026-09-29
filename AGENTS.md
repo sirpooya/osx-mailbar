@@ -23,7 +23,8 @@ in mock mode. The Milestones section below is the record; none is open.
   password (Autodiscover finds the rest); every field stays editable. Nothing prefilled from
   anywhere but the user's own server.
 - **Menu bar**: the user's icon plus the total inbox unread count.
-- **One view, the Inbox.** No other folders. One view per account when there are several.
+- **One view, the Inbox**, plus **Sent Items** (2026-09-28, the user's request), picked in the
+  header's menu, never a third tab. No other folders. One view per account when there are several.
 - **Outlook-style rows**: sender (bold while unread), subject with the relative time on the right
   (`14:32`, `Yesterday`, `2 days ago`, then a short date), one line of preview.
 - **Read a message** in the popover: HTML rendered safely, no JavaScript, remote images off until
@@ -46,7 +47,8 @@ in mock mode. The Milestones section below is the record; none is open.
 ### Wanted (v1.1, built 2026-09-24, milestones M7 to M11)
 - **New-mail notifications** (M7): click one to open that message. Sender, subject and preview
   always (the "Show sender and subject" switch was removed 2026-09-25, the user's call).
-- **Search** (M8): a field under the header (Cmd+F), searching the server as you type.
+- **Search** (M8): a field under the header (Cmd+F), searching the server as you type, in the
+  folder showing (Inbox or Sent Items); the words are marked yellow in rows, subject and body.
 - **Attachments** (M9): chips under the reader's header; click for Quick Look, right-click to save.
 - **Launch at login** (M10): a switch in Settings, General.
 
@@ -150,7 +152,7 @@ user names it; an event with people sends real invitations.
 2026-09-26: **v1.0.0 released** on GitHub Releases (sirpooya/osx-mailbar), `Mailbar-1.0.0.zip`,
 signed with the Apple Development certificate, not notarized (users click Open Anyway).
 
-2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and its Schedule view, and Outlook-style meeting emails (182 tests green, 2026-09-27); the popover has Inbox and
+2026-09-25 (latest): **everything built, M0 to M19**, plus groups, the people directory, the rebuilt event form and its Schedule view, and Outlook-style meeting emails (183 tests green, 2026-09-27); the popover has Inbox and
 Today tabs (Today a one-day calendar). Mail (reading, actions,
 search, attachments, notifications, instant arrival, simple sending) and the calendar (Day, Week,
 Month; swipe paging; category colours; create, edit, delete; invitations; reminders; Today in the
@@ -225,7 +227,7 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 |---|---|
 | Verify an account in Settings | `GetFolder` on distinguished `inbox` |
 | Unread count | `GetFolder` on `inbox`, read `UnreadCount` |
-| Inbox list | `FindItem` Shallow on `inbox`, `IndexedPageItemView` of 50, sorted `DateTimeReceived` descending, properties `item:Subject`, `message:From`, `item:DateTimeReceived`, `message:IsRead`, `item:Flag`, `item:Preview`, `item:HasAttachments` |
+| Inbox and Sent Items lists | `FindItem` Shallow on `inbox` or `sentitems`, `IndexedPageItemView` of 50, sorted `DateTimeReceived` descending, properties `item:Subject`, `message:From`, `item:DateTimeReceived`, `message:IsRead`, `item:Flag`, `item:Preview`, `item:HasAttachments`, `item:ItemClass`, `item:DisplayTo` (Sent rows show the recipients) |
 | Open a message | `GetItem`, `BodyType` HTML, with `item:Attachments` for the inline images |
 | Inline images | `GetAttachment` for the `cid:` images only, at most 20 |
 | Mark read or unread | `UpdateItem` `SetItemField message:IsRead`, `ConflictResolution="AlwaysOverwrite"`, no `ChangeKey`, `SuppressReadReceipts="true"` on 2013+ |
@@ -436,8 +438,10 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   (`MeetingAttendeeLines`) and says when and where with Join (`MeetingInfoLines`), all from the
   calendar's copy (`meeting:AssociatedCalendarItemId`, then `GetItem` on the event), else the
   email's own fields (`MeetingCard`, one per open reader, in memory). An invitation adds three
-  answer capsules, Accept, Tentative, Decline, each with a chevron menu: Send now, Add a
-  Note..., Don't Send a Response, and on Tentative and Decline "... and Propose New Time...".
+  answer capsules, Accept, Tentative, Decline, each with a chevron menu: Send the Response Now,
+  Add a Note..., Don't Send a Response, and on Tentative and Decline "... and Propose New
+  Time...". The calendar's detail panel has the same capsules and menus (`AnswerMenuButton`,
+  compact: no glyph, to fit its 330 pt), proposing there with date and time fields.
   Four capsules (a separate Propose) did not fit and read dense (the user: "so dense"). The
   capsules are the accent's tone (`TonalCapsule`: accent text on a light accent fill), as is
   Remove from Calendar; the user tried native neutral pull-downs and wanted them rounded.
@@ -487,6 +491,11 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
   says so when nothing fits. A room is its address, compared without case (`Room` ==), so one
   room never lists twice; long room names truncate at the head (`DirectionalText` truncation),
   keeping the room and losing the building; Schedule's name column is 270 pt.
+- 2026-09-28 The calendar's detail panel, the user's catch ("paddings not good enough, the
+  close button not in the best place"): one 16 pt inset for every edge (`EventDetailPanel.inset`),
+  every detail and person row on one 16 pt icon column (`detailRow`), dividers between the
+  summary, the people and the notes, and Close as a round grey button on the title's line, with
+  Edit and Delete as round pencil and trash buttons before it on the user's own events.
 - 2026-09-25 Tooltips name the action then its shortcut in symbols, "New Event  ⌘N", never
   "(Command N)" (the user's call). The calendar window opens at 870 x 620 (autosave name
   `MailbarCalendarWindow.v2`, so the new default applied once); event titles are medium weight
@@ -587,6 +596,15 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 Search (M8) is server-side: `QueryString` (the server index Outlook uses) on 2013+,
   a subject-or-body substring restriction on older servers. Results are in memory, the
   selected account only, dropped when the popover closes. Actions on a result update it.
+- 2026-09-28 Sent Items and search marks (the user's request, after Outlook's "Searching Sent
+  Items"). The header's left menu (always shown now) lists Inbox and Sent Items, under the
+  accounts when there are several; Sent was a third tab for an hour and the user moved it into
+  the menu. The mail tab names the folder ("Inbox 4", "Sent"); Sent rows show `item:DisplayTo`
+  where the sender goes. Sent is read when shown, on popover open and on refresh, in memory like
+  the inbox rows. Search looks in the folder showing and runs again when it changes. Matches
+  (`SearchHighlight`: case, diacritics, Arabic ye and kaf folded) are marked in rows and the
+  reader's subject, and in the body by the app's own script in the `.defaultClient` world
+  (`bodyScript`), the message's script still off. `--open-sent` (DEBUG) opens Sent.
 - 2026-09-24 Remote images: blocked by a Content-Security-Policy written before the message's own
   markup (`ReaderHTML`), plus JS off and a non-persistent data store in the web view.
   `NSAllowsArbitraryLoadsInWebContent` is on so that "Load images" also works for plain-http

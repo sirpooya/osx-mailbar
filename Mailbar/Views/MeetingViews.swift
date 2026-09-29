@@ -332,10 +332,12 @@ struct MeetingAnswerBar: View {
 
 /// A rounded split button in the accent's tone (the user's call, 2026-09-27): the click
 /// answers, the chevron after a thin divider offers the choices.
-private struct AnswerMenuButton<MenuItems: View>: View {
+struct AnswerMenuButton<MenuItems: View>: View {
     let symbol: String
     let title: String
     let help: String
+    /// No glyph and tighter padding, so three fit the calendar's 330 pt detail panel.
+    var compact = false
     let action: () -> Void
     @ViewBuilder let menu: () -> MenuItems
 
@@ -345,11 +347,11 @@ private struct AnswerMenuButton<MenuItems: View>: View {
         HStack(spacing: 0) {
             Button(action: action) {
                 HStack(spacing: 5) {
-                    Image(systemName: symbol).font(.system(size: 10, weight: .bold))
+                    if !compact { Image(systemName: symbol).font(.system(size: 10, weight: .bold)) }
                     Text(title).font(.system(size: 12, weight: .medium))
                 }
-                .padding(.leading, 12)
-                .padding(.trailing, 7)
+                .padding(.leading, compact ? 10 : 12)
+                .padding(.trailing, compact ? 6 : 7)
                 .frame(height: 26)
                 .contentShape(Rectangle())
             }
@@ -362,8 +364,8 @@ private struct AnswerMenuButton<MenuItems: View>: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .padding(.leading, 7)
-            .padding(.trailing, 10)
+            .padding(.leading, compact ? 6 : 7)
+            .padding(.trailing, compact ? 8 : 10)
             .frame(height: 26)
             .help("More choices")
         }

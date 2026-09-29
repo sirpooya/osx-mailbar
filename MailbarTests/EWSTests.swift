@@ -56,7 +56,7 @@ private let credential = EWSCredential(username: "someone", password: "not-a-rea
     }
 
     @Test func modernFindAsksForPreviewAndFlag() {
-        let body = SOAP.findInbox(limit: 50, modern: true)
+        let body = SOAP.findMessages(limit: 50, modern: true)
         #expect(body.contains("item:Preview"))
         #expect(body.contains("item:Flag"))
         #expect(!body.contains("0x1090"))
@@ -64,14 +64,14 @@ private let credential = EWSCredential(username: "someone", password: "not-a-rea
     }
 
     @Test func legacyFindUsesTheMAPIFlagInstead() {
-        let body = SOAP.findInbox(limit: 50, modern: false)
+        let body = SOAP.findMessages(limit: 50, modern: false)
         #expect(!body.contains("item:Preview"))
         #expect(!body.contains("item:Flag"))
         #expect(body.contains("0x1090"))
     }
 
     @Test func envelopeIsWellFormedXML() throws {
-        let data = SOAP.envelope(.exchange2013, body: SOAP.findInbox(limit: 10, modern: true))
+        let data = SOAP.envelope(.exchange2013, body: SOAP.findMessages(limit: 10, modern: true))
         let root = try XMLTree.parse(data)
         #expect(root.name == "Envelope")
         #expect(root.first("RequestServerVersion")?.attributes["Version"] == "Exchange2013")

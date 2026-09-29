@@ -42,12 +42,13 @@ enum SOAP {
         </m:GetFolder>
     """
 
-    /// The newest `limit` inbox items with exactly the fields a row shows.
+    /// The newest `limit` items of the Inbox or Sent Items, with exactly the fields a row shows.
+    /// `item:DisplayTo` is the recipients' names, which a Sent Items row shows where the sender goes.
     ///
     /// `modern` is Exchange 2013 or later. Older servers have neither `item:Preview` nor
     /// `item:Flag`, so the flag is read from its MAPI property instead (PidTagFlagStatus, 0x1090)
     /// and the preview is filled in separately by `textBodies`.
-    static func findInbox(limit: Int, modern: Bool) -> String {
+    static func findMessages(in folder: MailFolder = .inbox, limit: Int, modern: Bool) -> String {
         let versionFields = modern
             ? """
                   <t:FieldURI FieldURI="item:Preview"/>
@@ -67,6 +68,7 @@ enum SOAP {
                   <t:FieldURI FieldURI="message:IsRead"/>
                   <t:FieldURI FieldURI="item:HasAttachments"/>
                   <t:FieldURI FieldURI="item:ItemClass"/>
+                  <t:FieldURI FieldURI="item:DisplayTo"/>
         \(versionFields)
                 </t:AdditionalProperties>
               </m:ItemShape>
@@ -74,7 +76,7 @@ enum SOAP {
               <m:SortOrder>
                 <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
               </m:SortOrder>
-              <m:ParentFolderIds><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderIds>
+              <m:ParentFolderIds><t:DistinguishedFolderId Id="\(folder.rawValue)"/></m:ParentFolderIds>
             </m:FindItem>
         """
     }
@@ -82,8 +84,8 @@ enum SOAP {
     /// Search (M8). Exchange 2013 and later: `QueryString`, the server's own search index, the
     /// same one Outlook's search box uses, matching sender, subject and body. Older servers have
     /// no query string, so a restriction matches the subject or the body as a substring.
-    static func searchInbox(_ text: String, limit: Int, modern: Bool) -> String {
-        let find = findInbox(limit: limit, modern: modern)
+    static func search(_ text: String, in folder: MailFolder = .inbox, limit: Int, modern: Bool) -> String {
+        let find = findMessages(in: folder, limit: limit, modern: modern)
         let query = escape(text)
         if modern {
             return find.replacingOccurrences(of: "</m:ParentFolderIds>",

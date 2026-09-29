@@ -61,7 +61,7 @@ struct MessageReaderView: View {
             Button(action: onBack) {
                 HStack(spacing: 3) {
                     Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
-                    Text("Inbox").font(.system(size: 12))
+                    Text(store.isSearchOpen ? "Results" : store.mailFolder == .sent ? "Sent" : "Inbox").font(.system(size: 12))
                 }
             }
             .buttonStyle(.plain)
@@ -84,7 +84,8 @@ struct MessageReaderView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             DirectionalText(loadedBody?.subject ?? current.subject,
-                            font: .system(size: 14, weight: .semibold))
+                            font: .system(size: 14, weight: .semibold),
+                            highlight: store.highlightTerms)
                 .foregroundStyle(.primary)
                 .help(loadedBody?.subject ?? current.subject)
 
@@ -226,7 +227,8 @@ struct MessageReaderView: View {
             let web = MessageWebView(html: ReaderHTML.document(
                 body: body.html,
                 images: images.mapValues { (type: $0.type, data: $0.data) },
-                allowRemoteImages: allowRemoteImages))
+                allowRemoteImages: allowRemoteImages),
+                highlight: store.highlightTerms)
             if let card = meetingCard, card.kind == .request, card.phase != .unavailable {
                 // The meeting's day above the description; the whole body when there is none.
                 VStack(spacing: 0) {

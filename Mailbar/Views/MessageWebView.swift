@@ -12,6 +12,8 @@ import WebKit
 ///   default browser, which is the user's own act; everything else is refused.
 struct MessageWebView: NSViewRepresentable {
     let html: String
+    /// A search's words, marked in the body once it has loaded (`SearchHighlight`).
+    var highlight: [String] = []
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -26,11 +28,13 @@ struct MessageWebView: NSViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = false
         view.allowsMagnification = true
+        context.coordinator.highlight = highlight
         context.coordinator.load(html, into: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.highlight = highlight
         context.coordinator.load(html, into: view)
     }
 
@@ -44,6 +48,7 @@ struct MessageWebView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         private var loaded: String?
+        var highlight: [String] = []
 
         func load(_ html: String, into view: WKWebView) {
             guard html != loaded else { return }
@@ -57,7 +62,17 @@ struct MessageWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            Task { await fitToWidth(webView) }
+            Task {
+                await fitToWidth(webView)
+                await mark(highlight, in: webView)
+            }
+        }
+
+        /// The search's words, marked after the fit so the marks cannot change what was measured.
+        private func mark(_ terms: [String], in webView: WKWebView) async {
+            guard !terms.isEmpty else { return }
+            _ = try? await webView.callAsyncJavaScript(SearchHighlight.bodyScript, arguments: ["terms": terms],
+                                                       in: nil, contentWorld: .defaultClient)
         }
 
         /// Makes the message fit the reader's width with no sideways scroll, the way Mail does.

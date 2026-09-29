@@ -19,25 +19,27 @@ struct EWSClient: Sendable {
         return try EWSResponse.inboxStatus(from: data)
     }
 
-    /// The newest inbox items, newest first. On a pre-2013 server the previews come back empty
-    /// and are filled by `previews(for:)`.
-    func inboxMessages(at url: URL,
+    /// The newest items of a folder, newest first. On a pre-2013 server the previews come back
+    /// empty and are filled by `previews(for:)`.
+    func messages(in folder: MailFolder = .inbox,
+                  at url: URL,
                        credential: EWSCredential,
                        modern: Bool,
                        limit: Int = EWSClient.pageSize) async throws -> [MailMessage] {
-        let body = SOAP.findInbox(limit: limit, modern: modern)
+        let body = SOAP.findMessages(in: folder, limit: limit, modern: modern)
         let data = try await send(SOAP.envelope(modern ? .exchange2013 : .exchange2010SP2, body: body),
                                   to: url, credential: credential)
         return try EWSResponse.messages(from: data)
     }
 
-    /// Inbox search, newest first. See `SOAP.searchInbox` for how each server generation matches.
-    func searchInbox(_ text: String,
-                     at url: URL,
+    /// Search in one folder, newest first. See `SOAP.search` for how each server generation matches.
+    func search(_ text: String,
+                in folder: MailFolder = .inbox,
+                at url: URL,
                      credential: EWSCredential,
                      modern: Bool,
                      limit: Int = EWSClient.pageSize) async throws -> [MailMessage] {
-        let body = SOAP.searchInbox(text, limit: limit, modern: modern)
+        let body = SOAP.search(text, in: folder, limit: limit, modern: modern)
         let data = try await send(SOAP.envelope(modern ? .exchange2013 : .exchange2010SP2, body: body),
                                   to: url, credential: credential)
         return try EWSResponse.messages(from: data)

@@ -21,15 +21,21 @@ struct MessageRowView: View {
     let message: MailMessage
     let accountID: UUID
     @Bindable var store: MailStore
+    /// Sent Items rows name the recipients where Inbox rows name the sender, as Outlook's do.
+    var folder: MailFolder = .inbox
+    /// A search's words, marked in the sender, subject and preview.
+    var highlight: [String] = []
     let onOpen: () -> Void
 
     @State private var isHovering: Bool
 
-    init(message: MailMessage, accountID: UUID, store: MailStore,
-         startsHovered: Bool = false, onOpen: @escaping () -> Void) {
+    init(message: MailMessage, accountID: UUID, store: MailStore, folder: MailFolder = .inbox,
+         highlight: [String] = [], startsHovered: Bool = false, onOpen: @escaping () -> Void) {
         self.message = message
         self.accountID = accountID
         self.store = store
+        self.folder = folder
+        self.highlight = highlight
         self.onOpen = onOpen
         _isHovering = State(initialValue: startsHovered)
     }
@@ -87,6 +93,12 @@ struct MessageRowView: View {
         }
     }
 
+    /// The sender, or in Sent Items whom it went to.
+    private var firstLine: String {
+        guard folder == .sent else { return message.senderName }
+        return message.displayTo.isEmpty ? "No recipients" : message.displayTo
+    }
+
     private var rowContent: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             unreadDot
@@ -94,8 +106,9 @@ struct MessageRowView: View {
             VStack(alignment: .leading, spacing: Metrics.lineSpacing) {
                 // The time sits in front of the sender, on line 1 (the user's call, 2026-09-25).
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    DirectionalText(message.senderName,
-                                    font: .system(size: 13, weight: message.isRead ? .regular : .semibold))
+                    DirectionalText(firstLine,
+                                    font: .system(size: 13, weight: message.isRead ? .regular : .semibold),
+                                    highlight: highlight)
                         .foregroundStyle(.primary)
                     if message.hasAttachments {
                         Image(systemName: "paperclip")
@@ -115,14 +128,14 @@ struct MessageRowView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     DirectionalText(message.subject,
                                     font: .system(size: 12, weight: message.isRead ? .regular : .medium),
-                                    pinnedLeading: true)
+                                    pinnedLeading: true, highlight: highlight)
                         .foregroundStyle(.primary)
                     trailingMarks
                 }
                 .alignmentGuide(.subjectLine) { $0[VerticalAlignment.center] }
 
                 if !message.preview.isEmpty {
-                    DirectionalText(message.preview, font: .system(size: 12))
+                    DirectionalText(message.preview, font: .system(size: 12), highlight: highlight)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -170,7 +183,7 @@ struct MessageRowView: View {
         var parts: [String] = []
         if !message.isRead { parts.append("Unread") }
         if message.isFlagged { parts.append("Flagged") }
-        parts.append("from \(message.senderName)")
+        parts.append(folder == .sent ? "to \(firstLine)" : "from \(message.senderName)")
         parts.append(message.subject)
         parts.append(RelativeTime.label(for: message.received))
         if message.hasAttachments { parts.append("has attachments") }
@@ -217,14 +230,17 @@ struct DirectionalText: View {
     /// Where a line too long for its room is cut. Room names cut at the head, so "building |
     /// floor | room" keeps the room and loses the building (the user's call).
     var truncation: Text.TruncationMode = .tail
+    /// A search's words, marked where they appear (`SearchHighlight`).
+    var highlight: [String] = []
 
     init(_ text: String, font: Font, lines: Int = 1, pinnedLeading: Bool = false,
-         truncation: Text.TruncationMode = .tail) {
+         truncation: Text.TruncationMode = .tail, highlight: [String] = []) {
         self.text = text
         self.font = font
         self.lines = lines
         self.pinnedLeading = pinnedLeading
         self.truncation = truncation
+        self.highlight = highlight
     }
 
     private var isRightToLeft: Bool {
@@ -232,7 +248,7 @@ struct DirectionalText: View {
     }
 
     var body: some View {
-        Text(text)
+        (highlight.isEmpty ? Text(text) : Text(SearchHighlight.attributed(text, terms: highlight)))
             .font(font)
             .lineLimit(lines)
             .truncationMode(truncation)

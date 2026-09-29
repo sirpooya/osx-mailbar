@@ -51,15 +51,26 @@ final class MailStore {
 
     // MARK: Search (M8)
 
-    /// Whether the search field is showing, over the selected account's inbox.
+    /// Whether the search field is showing, over the selected account's Inbox or Sent Items,
+    /// whichever tab is showing (Outlook's "Searching Sent Items").
     var isSearchOpen = false
     /// What is typed. Searching starts from two characters.
     var searchQuery = ""
-    private(set) var searchPhase: SearchPhase = .idle
-    /// The account the current results belong to.
+    private(set) var searchPhase: ListPhase = .idle
+    /// The account and folder the current results belong to.
     private(set) var searchAccountID: UUID?
+    private(set) var searchFolder: MailFolder = .inbox
 
-    enum SearchPhase: Equatable {
+    /// The words of the query, for marking where they match in rows and in the open message,
+    /// as Outlook does. Empty when no search is running.
+    var highlightTerms: [String] {
+        guard isSearchOpen else { return [] }
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.count >= 2 ? SearchHighlight.terms(in: query) : []
+    }
+
+    /// A list read from the server on demand: search results, and Sent Items.
+    enum ListPhase: Equatable {
         case idle
         case searching
         case results([MailMessage])
@@ -86,6 +97,18 @@ final class MailStore {
     /// Which of the popover's two tabs is showing.
     enum PopoverTab: String { case inbox, today }
     var popoverTab: PopoverTab = .inbox
+
+    /// The folder the mail tab lists, Inbox or Sent Items, picked in the header's menu (the
+    /// user's call, 2026-09-28: a menu, not a third tab), and so the one a search looks in.
+    var mailFolder: MailFolder = .inbox
+    /// Sent Items is on screen.
+    var showsSent: Bool { popoverTab == .inbox && mailFolder == .sent }
+
+    // MARK: Sent Items (the user's request, 2026-09-28)
+
+    /// Each account's newest sent mail, read when the Sent tab shows and on each refresh while it
+    /// does. In memory only, like the inbox rows.
+    private(set) var sent: [UUID: ListPhase] = [:]
 
     /// The rest of today's events per account. In memory only.
     private(set) var today: [UUID: [CalendarEvent]] = [:]
@@ -372,10 +395,11 @@ final class MailStore {
 
     // MARK: - Opening and acting
 
-    /// A row from the inbox, or from the search results when it is only there (a search reaches
-    /// further back than the 50 newest).
+    /// A row from the inbox, Sent Items, or the search results when it is only there (a search
+    /// reaches further back than the 50 newest).
     func message(_ id: String, in account: UUID) -> MailMessage? {
         state(for: account).messages.first { $0.id == id }
+            ?? sent[account]?.messages.first { $0.id == id }
             ?? (searchAccountID == account ? searchPhase.messages.first { $0.id == id } : nil)
     }
 
@@ -446,6 +470,8 @@ final class MailStore {
             draft = nil
             isComposing = false
             sentNotice = count == 1 ? "Sent." : "Sent to \(count) people."
+            // The copy Exchange just kept, in the Sent tab if it has been read.
+            if sent[sending.accountID] != nil { Task { await loadSent(sending.accountID) } }
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 self?.sentNotice = nil
@@ -609,12 +635,37 @@ final class MailStore {
         try await client.removeCancelledMeeting(id, at: url, credential: credential)
     }
 
+    // MARK: - Sent Items
+
+    /// Reads the newest sent mail for an account (the selected one by default). The rows already
+    /// shown stay while it runs, and stay if it fails: a failure only shows when there is nothing.
+    func loadSent(_ accountID: UUID? = nil) async {
+        guard let id = accountID ?? selectedAccount?.id else { return }
+        guard let (url, credential) = connection(for: id) else {
+            sent[id] = .failed("The password for this account is missing. Enter it in Settings.")
+            return
+        }
+        if case .results = sent[id] {} else { sent[id] = .searching }
+        do {
+            var found = try await client.messages(in: .sent, at: url, credential: credential, modern: isModern(id))
+            found = found.filter { edits[$0.id]?.removed != true }
+            sent[id] = .results(found)
+        } catch is CancellationError {
+            return
+        } catch {
+            if case .results = sent[id] { return }
+            sent[id] = .failed(describe(error, accountID: id))
+        }
+    }
+
     // MARK: - Searching
 
-    /// Runs the typed query against the server, for the selected account. A result that comes
-    /// back after the query changed is dropped, so fast typing never shows stale matches.
+    /// Runs the typed query against the server, for the selected account, in the folder its tab
+    /// shows. A result that comes back after the query or the tab changed is dropped, so fast
+    /// typing never shows stale matches.
     func runSearch() async {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = mailFolder
         guard query.count >= 2, let account = selectedAccount else {
             searchPhase = .idle
             return
@@ -625,15 +676,19 @@ final class MailStore {
         }
         searchPhase = .searching
         searchAccountID = account.id
+        searchFolder = folder
+        let current = { [weak self] in
+            self?.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query && self?.mailFolder == folder
+        }
         do {
-            let found = try await client.searchInbox(query, at: url, credential: credential,
-                                                     modern: isModern(account.id))
-            guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            let found = try await client.search(query, in: folder, at: url, credential: credential,
+                                                modern: isModern(account.id))
+            guard current() else { return }
             searchPhase = .results(found)
         } catch is CancellationError {
             return
         } catch {
-            guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            guard current() else { return }
             searchPhase = .failed(describe(error, accountID: account.id))
         }
     }
@@ -765,6 +820,10 @@ final class MailStore {
         let messages = state(for: accountID).messages
         let index = messages.firstIndex(where: { $0.id == id })
         let searchBefore = searchPhase
+        let sentBefore = sent[accountID]
+        if case .results(let list) = sentBefore {
+            sent[accountID] = .results(list.filter { $0.id != id })
+        }
         if let index {
             var remaining = messages
             remaining.remove(at: index)
@@ -791,6 +850,7 @@ final class MailStore {
                 if !removed.isRead { unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + 1 }
             }
             if searchAccountID == accountID, case .results = searchBefore { searchPhase = searchBefore }
+            if case .results = sentBefore { sent[accountID] = sentBefore }
             actionError = describe(error, accountID: accountID)
         }
     }
@@ -800,6 +860,10 @@ final class MailStore {
            let index = list.firstIndex(where: { $0.id == message.id }) {
             list[index] = message
             searchPhase = .results(list)
+        }
+        if case .results(var list) = sent[accountID], let index = list.firstIndex(where: { $0.id == message.id }) {
+            list[index] = message
+            sent[accountID] = .results(list)
         }
         var messages = state(for: accountID).messages
         if let index = messages.firstIndex(where: { $0.id == message.id }) {
@@ -833,7 +897,7 @@ final class MailStore {
             // No version header at all is treated as modern; every server this app is likely to
             // meet is 2013 or later.
             let modern = status.version?.isModern ?? true
-            var messages = try await client.inboxMessages(at: url, credential: credential, modern: modern)
+            var messages = try await client.messages(in: .inbox, at: url, credential: credential, modern: modern)
             var previews: [String: String] = [:]
 
             if !modern {

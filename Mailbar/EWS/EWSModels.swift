@@ -42,9 +42,21 @@ struct MailMessage: Identifiable, Equatable, Sendable {
     let hasAttachments: Bool
     /// A meeting email: an invitation, a cancellation or someone's answer. Nil for plain mail.
     var meeting: MeetingMail? = nil
+    /// The recipients' names, "Ada Lovelace; Bo Chen", as Exchange lists them (`item:DisplayTo`).
+    /// A Sent Items row shows them where an Inbox row shows the sender.
+    var displayTo: String = ""
 
     /// An invitation: the reader offers Accept, Tentative, Decline (M17).
     var isMeetingRequest: Bool { meeting == .request }
+}
+
+/// The mail folders the popover lists, by their distinguished ids: the Inbox, and Sent Items
+/// (the user's request, 2026-09-28). No other folder is ever read.
+enum MailFolder: String, Sendable {
+    case inbox
+    case sent = "sentitems"
+
+    var title: String { self == .inbox ? "Inbox" : "Sent Items" }
 }
 
 /// What a meeting email is about, from its `ItemClass` (or, when the server leaves that out,
@@ -331,7 +343,8 @@ enum EWSResponse {
             isRead: item.child("IsRead")?.trimmedText == "true",
             isFlagged: isFlagged(item),
             hasAttachments: item.child("HasAttachments")?.trimmedText == "true",
-            meeting: MeetingMail(element: item.name, itemClass: item.child("ItemClass")?.trimmedText))
+            meeting: MeetingMail(element: item.name, itemClass: item.child("ItemClass")?.trimmedText),
+            displayTo: item.child("DisplayTo")?.trimmedText ?? "")
     }
 
     /// `item:Flag` on 2013 and later, the MAPI flag status (2 is flagged) on older servers.

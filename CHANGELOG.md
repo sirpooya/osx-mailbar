@@ -18,6 +18,9 @@ section when a release is cut.
 - An invitation you already answered says so, with Change to answer again.
 - Cancellation emails offer Remove from Calendar; replies to your meetings say who answered and any time they proposed; meeting mail has a calendar icon in the inbox.
 - Editing a meeting to add or remove people now asks, as Outlook does, whether to send the update only to those people or to everyone. Removing everyone from a meeting now tells them it was cancelled.
+- The calendar's event panel answers invitations like the invitation email does: each of Accept, Tentative and Decline has a menu with Send the Response Now, Add a Note..., Don't Send a Response, and on Tentative and Decline, Propose New Time.
+- Sent Items: pick it from the menu at the top left of the popover. Rows show who each message went to, as Outlook does.
+- Search looks in the folder you are viewing, Inbox or Sent Items, and marks the words it found in yellow in the list, the subject and the message itself.
 
 ### Changed
 - Schedule's name column is narrower, leaving more room for the hours; hover a cut name to read it whole, and a block's tooltip now gives its length.
@@ -25,6 +28,7 @@ section when a release is cut.
 - Schedule's top row is just ‹ Next free time ›: the arrows jump to the free time before or after the meeting. The date line is gone, since each day is named over its hours.
 - Clicking an attachment now shows it in Quick Look instead of opening it in another app, and its temporary copy is deleted as soon as the preview closes.
 - Invitees in an invitation carry a coloured dot: their answer when the server knows it, else whether they are free at that time, as Outlook shows them.
+- The calendar's event details are tidier: even margins, every line on one icon column, and Close (with Edit and Delete on your own events) as round buttons beside the title.
 
 ### Fixed
 - The calendar's Day, Week and Month switcher no longer changes size when you switch views.

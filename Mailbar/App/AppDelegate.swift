@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = MailStore(accounts: accounts, client: client, directory: directory)
         reminders = EventReminders(mail: store)
         if QCFlags.openToday { store.popoverTab = .today }
+        if QCFlags.openSent { store.mailFolder = .sent }
         if let offset = QCFlags.todayOffset { store.dayOffset = offset }
         if QCFlags.todaySwipe {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
@@ -118,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notifications.onOpenMessage = { [weak self] account, message in
             guard let self else { return }
             self.store.closeSearch()
+            self.store.popoverTab = .inbox
+            self.store.mailFolder = .inbox
             self.store.selectedAccountID = account
             self.store.openMessage = .init(accountID: account, messageID: message)
             self.statusItemController.show()
@@ -168,10 +171,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             if QCFlags.openMessage {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + (QCFlags.searchText == nil ? 1.5 : 4)) { [weak self] in
                     guard let self, let account = self.store.selectedAccount,
                           let index = QCFlags.openMessageIndex else { return }
-                    let messages = self.store.state(for: account.id).messages
+                    let messages = QCFlags.searchText != nil ? self.store.searchPhase.messages
+                        : QCFlags.openSent ? (self.store.sent[account.id]?.messages ?? [])
+                        : self.store.state(for: account.id).messages
                     guard messages.indices.contains(index) else { return }
                     self.store.openMessage = .init(accountID: account.id, messageID: messages[index].id)
                 }

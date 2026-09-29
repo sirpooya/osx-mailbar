@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The popover: the Inbox and Today tabs, for one account at a time.
+/// The popover: the mail and Today tabs, for one account at a time.
 ///
-/// With several accounts a menu at the header's left picks one; there is no swipe between
+/// A menu at the header's left picks the folder, Inbox or Sent Items, and with several accounts
+/// the account too; there is no swipe between
 /// accounts (the user took it out, 2026-09-25). On the Today tab a sideways swipe goes through
 /// the days.
 struct PopoverRootView: View {
@@ -66,6 +67,10 @@ struct PopoverRootView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { installSwipe() }
         .onDisappear { removeSwipe() }
+        // A search stays open across Inbox and Sent and looks again in the folder now showing.
+        .onChange(of: store.mailFolder) { _, _ in
+            if store.isSearchOpen { Task { await store.runSearch() } }
+        }
     }
 
     private func back() {
@@ -166,7 +171,7 @@ struct PopoverRootView: View {
             tabSwitch
 
             // Compose sits at the left edge on both tabs (the user's call, 2026-09-25), then the
-            // account menu when there are several accounts.
+            // folder and account menu.
             HStack(spacing: 10) {
                 Button {
                     store.startNewMessage()
@@ -180,14 +185,15 @@ struct PopoverRootView: View {
                 .help(store.draft?.hasContent == true ? "Back to the message you are writing" : "New Message  ⌘N")
                 .accessibilityLabel("New message")
                 .disabled(store.selectedAccount == nil)
-                if accounts.count > 1 { accountMenu }
+                if store.selectedAccount != nil { accountMenu }
                 Spacer(minLength: 0)
             }
             .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
-                // Search belongs to the Inbox; on the Today tab it leaves the row entirely rather
+                // Search belongs to Inbox and Sent, looking in whichever shows; on the Today tab it
+                // leaves the row entirely rather
                 // than leaving a hole. It goes and comes without a transition: animated, it slid
                 // the icons beside it and the bar looked as if it changed height.
                 if !showsTodayTab {
@@ -198,8 +204,8 @@ struct PopoverRootView: View {
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut("f", modifiers: .command)
-                    .help("Search the Inbox  ⌘F")
-                    .accessibilityLabel("Search the Inbox")
+                    .help("Search \(store.mailFolder.title)  ⌘F")
+                    .accessibilityLabel("Search \(store.mailFolder.title)")
                     .disabled(store.selectedAccount == nil)
                     .transition(.identity)
                 }
@@ -221,14 +227,15 @@ struct PopoverRootView: View {
         .padding(.vertical, 8)
     }
 
-    /// Inbox | Today, in the calendar's capsule style, the unread count on Inbox (M19).
+    /// Inbox | Today, in the calendar's capsule style, the unread count on Inbox (M19). The mail
+    /// tab names the folder the menu picked, "Sent" for Sent Items.
     private var tabSwitch: some View {
         HStack(spacing: 2) {
             tabButton(.inbox, key: "1") {
                 HStack(spacing: 4) {
-                    Text("Inbox")
+                    Text(store.mailFolder == .sent ? "Sent" : "Inbox")
                     let count = store.selectedAccount.map { store.unreadCount(for: $0.id) } ?? 0
-                    if count > 0 {
+                    if count > 0, store.mailFolder == .inbox {
                         Text("\(count)")
                             .font(.system(size: 10, weight: .semibold))
                             .monospacedDigit()
@@ -271,21 +278,34 @@ struct PopoverRootView: View {
         .keyboardShortcut(key, modifiers: .command)
     }
 
-    /// With several accounts and the tabs in the middle, the account moves to a menu on the left.
+    /// The menu on the left: the folder, Inbox or Sent Items (the user's call, 2026-09-28: here,
+    /// not a third tab), and with several accounts the account above it. It is named after the
+    /// account when there are several, else after the folder.
     private var accountMenu: some View {
         Menu {
-            ForEach(accounts) { account in
+            if accounts.count > 1 {
+                ForEach(accounts) { account in
+                    Button {
+                        select(account)
+                    } label: {
+                        let count = store.unreadCount(for: account.id)
+                        Label(count > 0 ? "\(account.displayName)  (\(count))" : account.displayName,
+                              systemImage: store.selectedAccount?.id == account.id ? "checkmark" : "")
+                    }
+                }
+                Divider()
+            }
+            ForEach([MailFolder.inbox, .sent], id: \.self) { folder in
                 Button {
-                    select(account)
+                    pick(folder)
                 } label: {
-                    let count = store.unreadCount(for: account.id)
-                    Label(count > 0 ? "\(account.displayName)  (\(count))" : account.displayName,
-                          systemImage: store.selectedAccount?.id == account.id ? "checkmark" : "")
+                    Label(folder.title, systemImage: store.mailFolder == folder ? "checkmark" : "")
                 }
             }
         } label: {
             HStack(spacing: 3) {
-                Text(store.selectedAccount?.displayName ?? "").font(.system(size: 11)).lineLimit(1)
+                Text(accounts.count > 1 ? (store.selectedAccount?.displayName ?? "") : store.mailFolder.title)
+                    .font(.system(size: 11)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .foregroundStyle(.secondary)
@@ -310,6 +330,8 @@ struct PopoverRootView: View {
         } else if let account = store.selectedAccount {
             if store.isSearchOpen, store.searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 {
                 searchContent(account)
+            } else if store.mailFolder == .sent {
+                sentContent(account)
             } else {
                 inboxContent(account)
             }
@@ -328,7 +350,7 @@ struct PopoverRootView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-            TextField("Search Inbox", text: $store.searchQuery)
+            TextField("Search \(store.mailFolder.title)", text: $store.searchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($searchFocused)
@@ -370,14 +392,43 @@ struct PopoverRootView: View {
         case .results(let messages) where messages.isEmpty:
             StatePlaceholder(symbol: "magnifyingglass", tint: .secondary,
                              title: "No messages match",
-                             message: "Nothing in the Inbox of \(account.displayName) matches \u{201C}\(store.searchQuery)\u{201D}.") {
+                             message: "Nothing in \(store.searchFolder.title) of \(account.displayName) matches \u{201C}\(store.searchQuery)\u{201D}.") {
                 EmptyView()
             }
         case .results(let messages):
-            InboxListView(messages: messages, accountID: account.id, store: store)
+            InboxListView(messages: messages, accountID: account.id, store: store,
+                          folder: store.searchFolder, highlight: store.highlightTerms)
         case .failed(let message):
             GenericFailureView(message: message) { Task { await store.runSearch() } }
         }
+    }
+
+    /// Sent Items. While the account itself is failing (unreachable, password rejected) the
+    /// Inbox's own screen for that says so, rather than a second, vaguer one.
+    @ViewBuilder
+    private func sentContent(_ account: Account) -> some View {
+        Group {
+            switch store.state(for: account.id) {
+            case .needsPassword, .passwordRejected, .unreachable, .failed:
+                inboxContent(account)
+            case .loading, .messages, .empty:
+                switch store.sent[account.id] ?? .idle {
+                case .idle, .searching:
+                    SkeletonListView()
+                case .results(let messages) where messages.isEmpty:
+                    StatePlaceholder(symbol: "paperplane", tint: .secondary,
+                                     title: "Nothing sent yet",
+                                     message: "Sent Items of \(account.displayName) is empty.") {
+                        EmptyView()
+                    }
+                case .results(let messages):
+                    InboxListView(messages: messages, accountID: account.id, store: store, folder: .sent)
+                case .failed(let message):
+                    GenericFailureView(message: message) { Task { await store.loadSent(account.id) } }
+                }
+            }
+        }
+        .task(id: account.id) { await store.loadSent(account.id) }
     }
 
     @ViewBuilder
@@ -421,7 +472,10 @@ struct PopoverRootView: View {
                 } else {
                     Text("Not updated yet")
                 }
-                Button(action: onRefresh) {
+                Button {
+                    onRefresh()
+                    if store.showsSent { Task { await store.loadSent() } }
+                } label: {
                     Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
                 }
                 .buttonStyle(.plain)
@@ -457,6 +511,14 @@ struct PopoverRootView: View {
     }
 
     // MARK: - Switching accounts
+
+    /// A folder from the menu, which also brings the mail tab forward from Today.
+    private func pick(_ folder: MailFolder) {
+        store.mailFolder = folder
+        if store.popoverTab == .today {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { store.popoverTab = .inbox }
+        }
+    }
 
     /// The account menu: the inbox leaves the way the chosen account lies in the list.
     private func select(_ account: Account) {
@@ -509,6 +571,8 @@ struct InboxListView: View {
     let messages: [MailMessage]
     let accountID: UUID
     @Bindable var store: MailStore
+    var folder: MailFolder = .inbox
+    var highlight: [String] = []
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -525,6 +589,7 @@ struct InboxListView: View {
                             .padding(.horizontal, MessageRowView.Metrics.horizontalPadding)
                     }
                     MessageRowView(message: message, accountID: accountID, store: store,
+                                   folder: folder, highlight: highlight,
                                    startsHovered: index == 0 && QCFlags.hoverFirstRow) {
                         store.actionError = nil
                         store.openMessage = .init(accountID: accountID, messageID: message.id)

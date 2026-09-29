@@ -405,12 +405,24 @@ final class CalendarStore {
         return event.isMeeting && !event.isOrganizer && !event.isCancelled
     }
 
-    func answerSelected(_ answer: CalendarSOAP.Answer, note: String) async {
+    /// Whether the server can carry a proposed time on an answer (Exchange 2013 or later).
+    var canProposeSelected: Bool {
+        guard let account else { return false }
+        return mail.isModern(account.id)
+    }
+
+    /// Answers the selected invitation: told or not (`send`), with an optional note and, for
+    /// Tentative or Decline, an optional proposed time.
+    func answerSelected(_ answer: CalendarSOAP.Answer, note: String, send: Bool = true,
+                        proposal: DateInterval? = nil) async {
         guard let event = selectedEvent, let account,
               let (url, credential) = mail.connection(for: account.id) else { return }
         do {
-            try await mail.client.answer(answer, to: event.id, note: note, at: url, credential: credential)
-            show(notice: "\(answer.done). \(event.organizer.isEmpty ? "The organizer" : event.organizer) was told.")
+            try await mail.client.answer(answer, to: event.id, note: note, send: send, proposal: proposal,
+                                         at: url, credential: credential)
+            let organizer = event.organizer.isEmpty ? "The organizer" : event.organizer
+            show(notice: send ? "\(answer.done)\(proposal == nil ? "" : ", with a new time"). \(organizer) was told."
+                              : "\(answer.done). \(organizer) was not told.")
             await refresh()
             if let fresh = events.first(where: { $0.id == event.id }) { await select(fresh) } else { await select(nil) }
         } catch {

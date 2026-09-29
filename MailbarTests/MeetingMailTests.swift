@@ -14,7 +14,7 @@ import Testing
     }
 
     @Test func theInboxAsksForTheItemClass() {
-        #expect(SOAP.findInbox(limit: 50, modern: true).contains("item:ItemClass"))
+        #expect(SOAP.findMessages(limit: 50, modern: true).contains("item:ItemClass"))
     }
 
     @Test func aSilentAnswerIsSavedInDeletedItemsNeverDrafts() throws {

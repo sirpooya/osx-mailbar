@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 import Testing
 @testable import Mailbar
 
@@ -41,7 +42,7 @@ private func message(_ id: String, read: Bool = false) -> MailMessage {
 /// M8: the search request.
 @Suite struct SearchRequestTests {
     @Test func modernSearchUsesTheServerIndex() throws {
-        let body = SOAP.searchInbox(#"review "notes""#, limit: 50, modern: true)
+        let body = SOAP.search(#"review "notes""#, limit: 50, modern: true)
         #expect(body.contains("<m:QueryString>review &quot;notes&quot;</m:QueryString>"))
         let root = try XMLTree.parse(SOAP.envelope(.exchange2013, body: body))
         let find = try #require(root.first("FindItem"))
@@ -49,8 +50,30 @@ private func message(_ id: String, read: Bool = false) -> MailMessage {
         #expect(find.children.map(\.name).suffix(2) == ["ParentFolderIds", "QueryString"])
     }
 
+    @Test func sentItemsIsListedAndSearchedWithItsRecipients() {
+        let list = SOAP.findMessages(in: .sent, limit: 50, modern: true)
+        #expect(list.contains(#"<t:DistinguishedFolderId Id="sentitems"/>"#))
+        #expect(list.contains("item:DisplayTo"))
+        #expect(SOAP.search("agenda", in: .sent, limit: 50, modern: true).contains(#"Id="sentitems""#))
+        #expect(SOAP.search("agenda", limit: 50, modern: true).contains(#"Id="inbox""#))
+    }
+
+    @Test func highlightTermsDropQuotesAndOperators() {
+        #expect(Set(SearchHighlight.terms(in: #"from:sara "review" AND notes"#)) == ["sara", "review", "notes"])
+    }
+
+    @Test func highlightMatchesIgnoreCaseAndTheArabicYeAndKaf() {
+        let text = "Design Review, then the review notes"
+        #expect(SearchHighlight.ranges(of: ["review"], in: text).map { String(text[$0]) } == ["Review", "review"])
+        // Typed on an Arabic keyboard (ي, ك), found in Persian text (ی, ک).
+        let persian = "تیکت فیگما ماه شهریور"
+        #expect(SearchHighlight.ranges(of: ["تيكت"], in: persian).map { String(persian[$0]) } == ["تیکت"])
+        // Overlapping terms mark one run.
+        #expect(SearchHighlight.ranges(of: ["desi", "sign"], in: "Design").count == 1)
+    }
+
     @Test func olderServersGetASubstringRestrictionBeforeTheSortOrder() throws {
-        let body = SOAP.searchInbox("budget", limit: 50, modern: false)
+        let body = SOAP.search("budget", limit: 50, modern: false)
         #expect(!body.contains("QueryString"))
         let root = try XMLTree.parse(SOAP.envelope(.exchange2010SP2, body: body))
         let find = try #require(root.first("FindItem"))
@@ -96,6 +119,35 @@ private func message(_ id: String, read: Bool = false) -> MailMessage {
         #expect(store.searchPhase.messages.isEmpty)
     }
 
+    @Test func theSentTabListsSentItemsByRecipient() async throws {
+        let store = await makeStore()
+        store.mailFolder = .sent
+        await store.loadSent()
+        let sent = try #require(store.sent[work.id]).messages
+        #expect(sent.count == MockFixtures.workSent.count)
+        #expect(sent.first?.displayTo == "Sara Rahimi")
+        // Rows act like Inbox rows: deleting one takes it out of the list.
+        let first = try #require(sent.first)
+        #expect(store.message(first.id, in: work.id) != nil)
+        await store.delete(message: first.id, in: work.id)
+        #expect(store.sent[work.id]?.messages.contains { $0.id == first.id } == false)
+    }
+
+    @Test func searchLooksInTheFolderTheTabShows() async {
+        let store = await makeStore()
+        store.isSearchOpen = true
+        store.searchQuery = "agenda"
+        store.mailFolder = .sent
+        await store.runSearch()
+        #expect(store.searchFolder == .sent)
+        #expect(store.searchPhase.messages.map(\.subject) == ["Quarterly planning agenda"])
+        #expect(store.highlightTerms == ["agenda"])
+        store.mailFolder = .inbox
+        await store.runSearch()
+        #expect(store.searchFolder == .inbox)
+        #expect(store.searchPhase.messages.isEmpty)
+    }
+
     @Test func realAttachmentsAreListedAndDrawnImagesAreNot() async throws {
         let store = await makeStore()
         let sara = try #require(store.state(for: work.id).messages.first { $0.hasAttachments })
@@ -113,5 +165,29 @@ private func message(_ id: String, read: Bool = false) -> MailMessage {
         #expect(Attachments.safeName(".hidden") == "hidden")
         #expect(Attachments.safeName("  ") == "Attachment")
         #expect(Attachments.safeName("Report: Q3/final.pdf") == "Report- Q3-final.pdf")
+    }
+}
+
+/// The reader's body marks, run in a real web view with the page's own script off, as the reader has it.
+@MainActor
+@Suite struct SearchHighlightBodyTests {
+    @Test func theBodyScriptMarksEveryMatchAndLeavesTheRestAlone() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 400, height: 400), configuration: configuration)
+        web.loadHTMLString("<html><body><p>گزارش شهریور</p><div>تیکت <b>شهریور</b> و Review</div></body></html>", baseURL: nil)
+        for _ in 0..<50 {
+            let loaded = try? await web.evaluateJavaScript("document.body ? document.body.innerText.length : 0",
+                                                           in: nil, contentWorld: .defaultClient)
+            if ((loaded as? NSNumber)?.intValue ?? 0) > 0 { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        // Typed with the Arabic ye, as on an Arabic keyboard.
+        let count = try await web.callAsyncJavaScript(SearchHighlight.bodyScript, arguments: ["terms": ["شهريور", "review"]],
+                                                      in: nil, contentWorld: .defaultClient)
+        #expect((count as? NSNumber)?.intValue == 3)
+        let text = try await web.evaluateJavaScript("document.body.innerText", in: nil, contentWorld: .defaultClient) as? String
+        #expect(text?.contains("تیکت شهریور و Review") == true)
     }
 }
