@@ -50,13 +50,80 @@ struct MailMessage: Identifiable, Equatable, Sendable {
     var isMeetingRequest: Bool { meeting == .request }
 }
 
-/// The mail folders the popover lists, by their distinguished ids: the Inbox, and Sent Items
-/// (the user's request, 2026-09-28). No other folder is ever read.
-enum MailFolder: String, Sendable {
+/// The mail folders the popover lists: the Inbox, Sent Items (the user's request, 2026-09-28),
+/// and Flagged, Archive, Deleted Items and Junk Email (2026-09-29). No other folder is ever read.
+enum MailFolder: String, Sendable, CaseIterable {
     case inbox
-    case sent = "sentitems"
+    case sent
+    case flagged
+    case archive
+    case deleted
+    case junk
 
-    var title: String { self == .inbox ? "Inbox" : "Sent Items" }
+    var title: String {
+        switch self {
+        case .inbox: "Inbox"
+        case .sent: "Sent Items"
+        case .flagged: "Flagged"
+        case .archive: "Archive"
+        case .deleted: "Deleted Items"
+        case .junk: "Junk Email"
+        }
+    }
+
+    /// The mail tab's word for it, "Inbox | Today".
+    var tabTitle: String {
+        switch self {
+        case .sent: "Sent"
+        case .deleted: "Deleted"
+        case .junk: "Junk"
+        default: title
+        }
+    }
+
+    /// The distinguished id `FindItem` looks in. Flagged is the Inbox's flagged mail (a
+    /// restriction on it, `SOAP.findMessages`); Archive has none, it is the top-level folder of
+    /// that name the archive action uses, found with `FindFolder`.
+    var distinguishedID: String? {
+        switch self {
+        case .inbox, .flagged: "inbox"
+        case .sent: "sentitems"
+        case .archive: nil
+        case .deleted: "deleteditems"
+        case .junk: "junkemail"
+        }
+    }
+
+    /// What an empty list of it says, with its glyph.
+    var emptyTitle: String {
+        switch self {
+        case .inbox: "Inbox zero"
+        case .sent: "Nothing sent yet"
+        case .flagged: "Nothing flagged"
+        case .archive: "Nothing archived yet"
+        case .deleted: "Nothing deleted"
+        case .junk: "No junk"
+        }
+    }
+
+    var emptySymbol: String {
+        switch self {
+        case .inbox: "tray"
+        case .sent: "paperplane"
+        case .flagged: "flag"
+        case .archive: "archivebox"
+        case .deleted: "trash"
+        case .junk: "xmark.bin"
+        }
+    }
+
+    /// Rows name the recipients where the sender goes, as Outlook's Sent Items does.
+    var showsRecipients: Bool { self == .sent }
+    /// Archive is offered everywhere but in Archive itself.
+    var canArchive: Bool { self != .archive }
+    /// Not in Deleted Items: deleting there again would remove it from the mailbox for good,
+    /// and this app never does that.
+    var canDelete: Bool { self != .deleted }
 }
 
 /// What a meeting email is about, from its `ItemClass` (or, when the server leaves that out,

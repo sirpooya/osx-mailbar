@@ -175,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self, let account = self.store.selectedAccount,
                           let index = QCFlags.openMessageIndex else { return }
                     let messages = QCFlags.searchText != nil ? self.store.searchPhase.messages
-                        : QCFlags.openSent ? (self.store.sent[account.id]?.messages ?? [])
+                        : QCFlags.openSent ? (self.store.list(.sent, for: account.id)?.messages ?? [])
                         : self.store.state(for: account.id).messages
                     guard messages.indices.contains(index) else { return }
                     self.store.openMessage = .init(accountID: account.id, messageID: messages[index].id)

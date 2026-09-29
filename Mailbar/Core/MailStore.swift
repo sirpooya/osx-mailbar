@@ -69,7 +69,7 @@ final class MailStore {
         return query.count >= 2 ? SearchHighlight.terms(in: query) : []
     }
 
-    /// A list read from the server on demand: search results, and Sent Items.
+    /// A list read from the server on demand: search results, and every folder but the Inbox.
     enum ListPhase: Equatable {
         case idle
         case searching
@@ -98,17 +98,21 @@ final class MailStore {
     enum PopoverTab: String { case inbox, today }
     var popoverTab: PopoverTab = .inbox
 
-    /// The folder the mail tab lists, Inbox or Sent Items, picked in the header's menu (the
-    /// user's call, 2026-09-28: a menu, not a third tab), and so the one a search looks in.
+    /// The folder the mail tab lists, picked in the header's menu (the user's call, 2026-09-28:
+    /// a menu, not a third tab), and so the one a search looks in.
     var mailFolder: MailFolder = .inbox
-    /// Sent Items is on screen.
-    var showsSent: Bool { popoverTab == .inbox && mailFolder == .sent }
+    /// A folder other than the Inbox is on screen.
+    var showsFolderList: Bool { popoverTab == .inbox && mailFolder != .inbox }
 
-    // MARK: Sent Items (the user's request, 2026-09-28)
+    // MARK: Other folders (Sent Items 2026-09-28; Flagged, Archive, Deleted, Junk 2026-09-29)
 
-    /// Each account's newest sent mail, read when the Sent tab shows and on each refresh while it
-    /// does. In memory only, like the inbox rows.
-    private(set) var sent: [UUID: ListPhase] = [:]
+    /// Each account's newest mail in each folder but the Inbox, read when the folder shows and
+    /// on each refresh while it does. In memory only, like the inbox rows.
+    private(set) var folderLists: [MailFolder: [UUID: ListPhase]] = [:]
+
+    func list(_ folder: MailFolder, for accountID: UUID) -> ListPhase? {
+        folderLists[folder]?[accountID]
+    }
 
     /// The rest of today's events per account. In memory only.
     private(set) var today: [UUID: [CalendarEvent]] = [:]
@@ -395,11 +399,11 @@ final class MailStore {
 
     // MARK: - Opening and acting
 
-    /// A row from the inbox, Sent Items, or the search results when it is only there (a search
+    /// A row from the inbox, another folder's list, or the search results when it is only there (a search
     /// reaches further back than the 50 newest).
     func message(_ id: String, in account: UUID) -> MailMessage? {
         state(for: account).messages.first { $0.id == id }
-            ?? sent[account]?.messages.first { $0.id == id }
+            ?? folderLists.values.lazy.compactMap { $0[account]?.messages.first { $0.id == id } }.first
             ?? (searchAccountID == account ? searchPhase.messages.first { $0.id == id } : nil)
     }
 
@@ -470,8 +474,8 @@ final class MailStore {
             draft = nil
             isComposing = false
             sentNotice = count == 1 ? "Sent." : "Sent to \(count) people."
-            // The copy Exchange just kept, in the Sent tab if it has been read.
-            if sent[sending.accountID] != nil { Task { await loadSent(sending.accountID) } }
+            // The copy Exchange just kept, in Sent Items if it has been read.
+            if list(.sent, for: sending.accountID) != nil { Task { await loadFolder(.sent, sending.accountID) } }
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 self?.sentNotice = nil
@@ -635,27 +639,49 @@ final class MailStore {
         try await client.removeCancelledMeeting(id, at: url, credential: credential)
     }
 
-    // MARK: - Sent Items
+    // MARK: - Other folders
 
-    /// Reads the newest sent mail for an account (the selected one by default). The rows already
-    /// shown stay while it runs, and stay if it fails: a failure only shows when there is nothing.
-    func loadSent(_ accountID: UUID? = nil) async {
-        guard let id = accountID ?? selectedAccount?.id else { return }
+    /// Reads the newest mail of a folder (the one showing by default) for an account (the
+    /// selected one by default). The rows already shown stay while it runs, and stay if it
+    /// fails: a failure only shows when there is nothing. A mailbox with no Archive folder has
+    /// an empty Archive; nothing is created for looking.
+    func loadFolder(_ folder: MailFolder? = nil, _ accountID: UUID? = nil) async {
+        let folder = folder ?? mailFolder
+        guard folder != .inbox, let id = accountID ?? selectedAccount?.id else { return }
         guard let (url, credential) = connection(for: id) else {
-            sent[id] = .failed("The password for this account is missing. Enter it in Settings.")
+            folderLists[folder, default: [:]][id] = .failed("The password for this account is missing. Enter it in Settings.")
             return
         }
-        if case .results = sent[id] {} else { sent[id] = .searching }
+        if case .results = list(folder, for: id) {} else { folderLists[folder, default: [:]][id] = .searching }
         do {
-            var found = try await client.messages(in: .sent, at: url, credential: credential, modern: isModern(id))
-            found = found.filter { edits[$0.id]?.removed != true }
-            sent[id] = .results(found)
+            var found: [MailMessage] = []
+            if folder != .archive {
+                found = try await client.messages(in: folder, at: url, credential: credential, modern: isModern(id))
+            } else if let archiveID = try await archiveFolderID(for: id, url: url, credential: credential) {
+                found = try await client.messages(in: .archive, archiveID: archiveID, at: url,
+                                                  credential: credential, modern: isModern(id))
+            }
+            // Mail removed from here stays out while the server catches up. Archive and Deleted
+            // Items are where removed mail goes, so there it is expected (Exchange gives a moved
+            // item a new id anyway).
+            if folder != .archive, folder != .deleted {
+                found = found.filter { edits[$0.id]?.removed != true }
+            }
+            folderLists[folder, default: [:]][id] = .results(found)
         } catch is CancellationError {
             return
         } catch {
-            if case .results = sent[id] { return }
-            sent[id] = .failed(describe(error, accountID: id))
+            if case .results = list(folder, for: id) { return }
+            folderLists[folder, default: [:]][id] = .failed(describe(error, accountID: id))
         }
+    }
+
+    /// The Archive folder's id, from memory or `FindFolder`. Nil when the mailbox has none.
+    private func archiveFolderID(for accountID: UUID, url: URL, credential: EWSCredential) async throws -> String? {
+        if let known = archiveFolders[accountID] { return known }
+        let found = try await client.archiveFolderID(at: url, credential: credential)
+        if let found { archiveFolders[accountID] = found }
+        return found
     }
 
     // MARK: - Searching
@@ -681,8 +707,15 @@ final class MailStore {
             self?.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query && self?.mailFolder == folder
         }
         do {
-            let found = try await client.search(query, in: folder, at: url, credential: credential,
+            var found: [MailMessage] = []
+            if folder != .archive {
+                found = try await client.search(query, in: folder, at: url, credential: credential,
                                                 modern: isModern(account.id))
+            } else if let archiveID = try await archiveFolderID(for: account.id, url: url, credential: credential) {
+                found = try await client.search(query, in: .archive, archiveID: archiveID, at: url,
+                                                credential: credential, modern: isModern(account.id))
+            }
+            if folder == .flagged { found = found.filter(\.isFlagged) }
             guard current() else { return }
             searchPhase = .results(found)
         } catch is CancellationError {
@@ -749,20 +782,15 @@ final class MailStore {
             return
         }
         let folder: String
-        if let known = archiveFolders[accountID] {
-            folder = known
-        } else {
-            do {
-                guard let found = try await client.archiveFolderID(at: url, credential: credential) else {
-                    pendingArchive = OpenMessage(accountID: accountID, messageID: id)
-                    return
-                }
-                archiveFolders[accountID] = found
-                folder = found
-            } catch {
-                actionError = describe(error, accountID: accountID)
+        do {
+            guard let found = try await archiveFolderID(for: accountID, url: url, credential: credential) else {
+                pendingArchive = OpenMessage(accountID: accountID, messageID: id)
                 return
             }
+            folder = found
+        } catch {
+            actionError = describe(error, accountID: accountID)
+            return
         }
         await remove(id, in: accountID) { client, url, credential, _ in
             try await client.move(id: id, toFolder: folder, at: url, credential: credential)
@@ -820,9 +848,11 @@ final class MailStore {
         let messages = state(for: accountID).messages
         let index = messages.firstIndex(where: { $0.id == id })
         let searchBefore = searchPhase
-        let sentBefore = sent[accountID]
-        if case .results(let list) = sentBefore {
-            sent[accountID] = .results(list.filter { $0.id != id })
+        let listsBefore = folderLists
+        for (folder, lists) in folderLists {
+            if case .results(let list) = lists[accountID] {
+                folderLists[folder]?[accountID] = .results(list.filter { $0.id != id })
+            }
         }
         if let index {
             var remaining = messages
@@ -850,7 +880,7 @@ final class MailStore {
                 if !removed.isRead { unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + 1 }
             }
             if searchAccountID == accountID, case .results = searchBefore { searchPhase = searchBefore }
-            if case .results = sentBefore { sent[accountID] = sentBefore }
+            for (folder, lists) in listsBefore { folderLists[folder]?[accountID] = lists[accountID] }
             actionError = describe(error, accountID: accountID)
         }
     }
@@ -861,9 +891,11 @@ final class MailStore {
             list[index] = message
             searchPhase = .results(list)
         }
-        if case .results(var list) = sent[accountID], let index = list.firstIndex(where: { $0.id == message.id }) {
-            list[index] = message
-            sent[accountID] = .results(list)
+        for (folder, lists) in folderLists {
+            if case .results(var list) = lists[accountID], let index = list.firstIndex(where: { $0.id == message.id }) {
+                list[index] = message
+                folderLists[folder]?[accountID] = .results(list)
+            }
         }
         var messages = state(for: accountID).messages
         if let index = messages.firstIndex(where: { $0.id == message.id }) {

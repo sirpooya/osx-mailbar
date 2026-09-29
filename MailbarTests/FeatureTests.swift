@@ -122,15 +122,44 @@ private func message(_ id: String, read: Bool = false) -> MailMessage {
     @Test func theSentTabListsSentItemsByRecipient() async throws {
         let store = await makeStore()
         store.mailFolder = .sent
-        await store.loadSent()
-        let sent = try #require(store.sent[work.id]).messages
+        await store.loadFolder()
+        let sent = try #require(store.list(.sent, for: work.id)).messages
         #expect(sent.count == MockFixtures.workSent.count)
         #expect(sent.first?.displayTo == "Sara Rahimi")
         // Rows act like Inbox rows: deleting one takes it out of the list.
         let first = try #require(sent.first)
         #expect(store.message(first.id, in: work.id) != nil)
         await store.delete(message: first.id, in: work.id)
-        #expect(store.sent[work.id]?.messages.contains { $0.id == first.id } == false)
+        #expect(store.list(.sent, for: work.id)?.messages.contains { $0.id == first.id } == false)
+    }
+
+    @Test func theOtherFoldersAskForTheirOwnMail() {
+        #expect(SOAP.findMessages(in: .deleted, limit: 50, modern: true).contains(#"<t:DistinguishedFolderId Id="deleteditems"/>"#))
+        #expect(SOAP.findMessages(in: .junk, limit: 50, modern: true).contains(#"<t:DistinguishedFolderId Id="junkemail"/>"#))
+        let archive = SOAP.findMessages(in: .archive, archiveID: "AAMk=", limit: 50, modern: true)
+        #expect(archive.contains(#"<t:FolderId Id="AAMk="/>"#))
+        let flagged = SOAP.findMessages(in: .flagged, limit: 50, modern: false)
+        #expect(flagged.contains(#"<t:DistinguishedFolderId Id="inbox"/>"#))
+        #expect(flagged.contains(#"<t:Constant Value="2"/>"#))
+        // One restriction per request: a flagged search searches the Inbox and filters.
+        #expect(SOAP.search("x", in: .flagged, limit: 50, modern: false).components(separatedBy: "<m:Restriction>").count == 2)
+        #expect(!MailFolder.archive.canArchive && !MailFolder.deleted.canDelete && MailFolder.junk.canDelete)
+    }
+
+    @Test func archivedAndDeletedMailShowsInItsFolder() async throws {
+        let store = await makeStore()
+        let messages = store.state(for: work.id).messages
+        let (first, second) = (try #require(messages.first), try #require(messages.dropFirst().first))
+        await store.archive(message: first.id, in: work.id)
+        await store.delete(message: second.id, in: work.id)
+        await store.loadFolder(.archive, work.id)
+        await store.loadFolder(.deleted, work.id)
+        #expect(store.list(.archive, for: work.id)?.messages.map(\.id) == [first.id])
+        #expect(store.list(.deleted, for: work.id)?.messages.map(\.id) == [second.id])
+        await store.setFlag(true, message: messages[2].id, in: work.id)
+        await store.loadFolder(.flagged, work.id)
+        #expect(store.list(.flagged, for: work.id)?.messages.allSatisfy(\.isFlagged) == true)
+        #expect(store.list(.flagged, for: work.id)?.messages.contains { $0.id == messages[2].id } == true)
     }
 
     @Test func searchLooksInTheFolderTheTabShows() async {

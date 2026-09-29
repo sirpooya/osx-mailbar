@@ -21,6 +21,7 @@ section when a release is cut.
 - The calendar's event panel answers invitations like the invitation email does: each of Accept, Tentative and Decline has a menu with Send the Response Now, Add a Note..., Don't Send a Response, and on Tentative and Decline, Propose New Time.
 - Sent Items: pick it from the menu at the top left of the popover. Rows show who each message went to, as Outlook does.
 - Search looks in the folder you are viewing, Inbox or Sent Items, and marks the words it found in yellow in the list, the subject and the message itself.
+- The folder menu now also lists Flagged, Archive, Deleted Items and Junk Email. Archive is not offered inside Archive, and Delete is not offered inside Deleted Items, so nothing is ever removed for good.
 
 ### Changed
 - Schedule's name column is narrower, leaving more room for the hours; hover a cut name to read it whole, and a block's tooltip now gives its length.
@@ -33,6 +34,7 @@ section when a release is cut.
 ### Fixed
 - The calendar's Day, Week and Month switcher no longer changes size when you switch views.
 - In the inbox, hovering a message without a preview line, such as a meeting answer, no longer covers its time with the action buttons: they sit on the subject line as on every other row.
+- Hovering an inbox row no longer makes its action buttons flicker when the pointer rests where they appear.
 
 ## [1.1.0] - 2026-09-26
 

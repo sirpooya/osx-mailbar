@@ -48,6 +48,9 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
 
     private let lock = NSLock()
     private var removed: Set<String> = []
+    /// Where the removed mail went, newest first, so Archive and Deleted Items list it.
+    private var archived: [String] = []
+    private var trashed: [String] = []
     private var readOverrides: [String: Bool] = [:]
     private var flagOverrides: [String: Bool] = [:]
     private var teamHasArchive = false
@@ -287,8 +290,22 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 return ok(MockFixtures.getFolder(unread: mode == .empty ? 0 : inbox(prefix).filter { !$0.isRead }.count))
             }
             if request.contains("<m:FindItem") {
-                let inSent = request.contains(#"DistinguishedFolderId Id="sentitems""#)
-                var messages = mode == .empty ? [] : (inSent ? sentItems(prefix) : inbox(prefix))
+                var messages: [MockFixtures.Message]
+                if request.contains(#"DistinguishedFolderId Id="sentitems""#) {
+                    messages = sentItems(prefix)
+                } else if request.contains(#"DistinguishedFolderId Id="deleteditems""#) {
+                    messages = moved(trashed, prefix)
+                } else if request.contains(#"DistinguishedFolderId Id="junkemail""#) {
+                    messages = junk(prefix)
+                } else if request.contains(#"<t:FolderId Id="\#(prefix)-archive"/>"#) {
+                    messages = moved(archived, prefix)
+                } else {
+                    messages = inbox(prefix)
+                    if request.contains("<t:IsEqualTo><t:ExtendedFieldURI PropertyTag=\"0x1090\"") {
+                        messages = messages.filter(\.isFlagged)
+                    }
+                }
+                if mode == .empty { messages = [] }
                 // Search: the query string (2013+) or the restriction constant (older servers),
                 // matched against sender, subject and preview the way Exchange's index would.
                 if let query = Self.firstMatch("<m:QueryString>([^<]*)</m:QueryString>", in: request)
@@ -301,7 +318,8 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 return ok(MockFixtures.findItem(messages))
             }
             if request.contains("<m:GetItem>"), let itemID,
-               let message = (inbox(prefix) + sentItems(prefix)).first(where: { $0.id == itemID }) {
+               let message = (inbox(prefix) + sentItems(prefix) + moved(archived + trashed, prefix) + junk(prefix))
+                .first(where: { $0.id == itemID }) {
                 if request.contains("meeting:AssociatedCalendarItemId") {
                     let event = message.event.flatMap { id in calendarEvents().first { $0.id == id } }
                     return ok(MockFixtures.meetingLink(message, event: event?.id))
@@ -326,6 +344,8 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             }
             if request.contains("<m:DeleteItem"), let itemID {
                 removed.insert(itemID)
+                archived.removeAll { $0 == itemID }
+                trashed.insert(itemID, at: 0)
                 return ok(MockFixtures.success("DeleteItem"))
             }
             if request.contains("<m:FindFolder") {
@@ -338,6 +358,8 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             }
             if request.contains("<m:MoveItem>"), let itemID {
                 removed.insert(itemID)
+                trashed.removeAll { $0 == itemID }
+                archived.insert(itemID, at: 0)
                 return ok(MockFixtures.success("MoveItem"))
             }
             return (Data(MockFixtures.fault.utf8), 500)
@@ -358,6 +380,29 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             return message
         }).compactMap { message in
             var message = message
+            guard !removed.contains(message.id) else { return nil }
+            if let read = readOverrides[message.id] { message.isRead = read }
+            if let flag = flagOverrides[message.id] { message.isFlagged = flag }
+            return message
+        }
+    }
+
+    /// Mail moved to Archive or Deleted Items in this run, newest move first,
+    /// with the reads and flags applied. Call with the lock held.
+    private func moved(_ ids: [String], _ prefix: String) -> [MockFixtures.Message] {
+        let saved = removed
+        removed = []
+        defer { removed = saved }
+        let all = inbox(prefix) + sentItems(prefix) + junk(prefix)
+        return ids.compactMap { id in all.first { $0.id == id } }
+    }
+
+    /// The fixture Junk Email. Call with the lock held.
+    private func junk(_ prefix: String) -> [MockFixtures.Message] {
+        let base = prefix == "team" ? [] : MockFixtures.workJunk
+        return base.enumerated().compactMap { index, message in
+            var message = message
+            message.id = "\(prefix)-junk-\(index)"
             guard !removed.contains(message.id) else { return nil }
             if let read = readOverrides[message.id] { message.isRead = read }
             if let flag = flagOverrides[message.id] { message.isFlagged = flag }
@@ -479,6 +524,13 @@ enum MockFixtures {
                 subject: "Quarterly planning agenda",
                 preview: "Here is the draft agenda for Sunday. Add anything by Thursday.",
                 hoursAgo: 24 * 9, isRead: true, to: "Omid Karimi; Sara Rahimi; Narges Ahmadi"),
+    ]
+
+    static let workJunk: [Message] = [
+        Message(sender: "Prize Desk", address: "winner@example.net",
+                subject: "You have been selected for an exclusive reward",
+                preview: "Confirm your details within 24 hours to claim it.",
+                hoursAgo: 5),
     ]
 
     static let teamInbox: [Message] = [

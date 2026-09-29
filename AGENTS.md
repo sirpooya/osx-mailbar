@@ -23,8 +23,10 @@ in mock mode. The Milestones section below is the record; none is open.
   password (Autodiscover finds the rest); every field stays editable. Nothing prefilled from
   anywhere but the user's own server.
 - **Menu bar**: the user's icon plus the total inbox unread count.
-- **One view, the Inbox**, plus **Sent Items** (2026-09-28, the user's request), picked in the
-  header's menu, never a third tab. No other folders. One view per account when there are several.
+- **One view, the Inbox**, plus **Sent Items** (2026-09-28) and **Flagged, Archive, Deleted
+  Items, Junk Email** (2026-09-29), the user's requests, picked in the header's menu, never a
+  tab. Flagged is the Inbox's flagged mail; Archive is the folder the archive action uses. No
+  other folders (Drafts, Blocked, custom ones). One view per account when there are several.
 - **Outlook-style rows**: sender (bold while unread), subject with the relative time on the right
   (`14:32`, `Yesterday`, `2 days ago`, then a short date), one line of preview.
 - **Read a message** in the popover: HTML rendered safely, no JavaScript, remote images off until
@@ -37,7 +39,7 @@ in mock mode. The Milestones section below is the record; none is open.
 ### Not wanted (do not build)
 - Anything beyond simple sending: rich-text editing, drafts, signatures, outgoing mail
   attachments. (Files on calendar EVENTS are in, since 2026-09-25, the user's request.)
-- Move to folder, folder list, folder picker.
+- Move to folder, a folder tree, custom folders.
 - Follow up, categories, rules, junk, snooze, pin.
 - Contacts, tasks, notes, an LDAP client. (People suggestions for events use the server's own
   directory search, EWS `ResolveNames`, since M16; that is not LDAP. The optional people
@@ -227,7 +229,7 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 |---|---|
 | Verify an account in Settings | `GetFolder` on distinguished `inbox` |
 | Unread count | `GetFolder` on `inbox`, read `UnreadCount` |
-| Inbox and Sent Items lists | `FindItem` Shallow on `inbox` or `sentitems`, `IndexedPageItemView` of 50, sorted `DateTimeReceived` descending, properties `item:Subject`, `message:From`, `item:DateTimeReceived`, `message:IsRead`, `item:Flag`, `item:Preview`, `item:HasAttachments`, `item:ItemClass`, `item:DisplayTo` (Sent rows show the recipients) |
+| Folder lists | `FindItem` Shallow on `inbox`, `sentitems`, `deleteditems`, `junkemail`, or the Archive's `FolderId`; Flagged is `inbox` with a `PidTagFlagStatus` (0x1090) = 2 restriction; `IndexedPageItemView` of 50, sorted `DateTimeReceived` descending, properties `item:Subject`, `message:From`, `item:DateTimeReceived`, `message:IsRead`, `item:Flag`, `item:Preview`, `item:HasAttachments`, `item:ItemClass`, `item:DisplayTo` (Sent rows show the recipients) |
 | Open a message | `GetItem`, `BodyType` HTML, with `item:Attachments` for the inline images |
 | Inline images | `GetAttachment` for the `cid:` images only, at most 20 |
 | Mark read or unread | `UpdateItem` `SetItemField message:IsRead`, `ConflictResolution="AlwaysOverwrite"`, no `ChangeKey`, `SuppressReadReceipts="true"` on 2013+ |
@@ -596,6 +598,12 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 Search (M8) is server-side: `QueryString` (the server index Outlook uses) on 2013+,
   a subject-or-body substring restriction on older servers. Results are in memory, the
   selected account only, dropped when the popover closes. Actions on a result update it.
+- 2026-09-29 Flagged, Archive, Deleted Items and Junk Email join the folder menu (the user's
+  pick, Drafts left out since no draft is ever saved). Archive hides the Archive action and
+  Deleted Items hides Delete: `MoveToDeletedItems` there would drop the mail from the mailbox.
+  A mailbox with no Archive folder shows an empty Archive; looking never creates one. A
+  Flagged search runs on the Inbox and keeps the flagged hits (one restriction per request).
+  **Unproven on the real server**: the flag restriction.
 - 2026-09-28 Sent Items and search marks (the user's request, after Outlook's "Searching Sent
   Items"). The header's left menu (always shown now) lists Inbox and Sent Items, under the
   accounts when there are several; Sent was a third tab for an hour and the user moved it into

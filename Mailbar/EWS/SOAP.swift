@@ -42,13 +42,17 @@ enum SOAP {
         </m:GetFolder>
     """
 
-    /// The newest `limit` items of the Inbox or Sent Items, with exactly the fields a row shows.
+    /// The newest `limit` items of one of the listed folders, with exactly the fields a row shows.
     /// `item:DisplayTo` is the recipients' names, which a Sent Items row shows where the sender goes.
     ///
     /// `modern` is Exchange 2013 or later. Older servers have neither `item:Preview` nor
     /// `item:Flag`, so the flag is read from its MAPI property instead (PidTagFlagStatus, 0x1090)
     /// and the preview is filled in separately by `textBodies`.
-    static func findMessages(in folder: MailFolder = .inbox, limit: Int, modern: Bool) -> String {
+    ///
+    /// Archive has no distinguished id, so `archiveID` is its `FolderId`, from `FindFolder`.
+    /// Flagged is the Inbox restricted to PidTagFlagStatus 2 (flagged), which every version has.
+    static func findMessages(in folder: MailFolder = .inbox, archiveID: String? = nil,
+                             limit: Int, modern: Bool) -> String {
         let versionFields = modern
             ? """
                   <t:FieldURI FieldURI="item:Preview"/>
@@ -57,6 +61,9 @@ enum SOAP {
             : """
                   <t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/>
               """
+        let parent = folder.distinguishedID.map { #"<t:DistinguishedFolderId Id="\#($0)"/>"# }
+            ?? #"<t:FolderId Id="\#(escape(archiveID ?? ""))"/>"#
+        let restriction = folder == .flagged ? flaggedRestriction : ""
         return """
             <m:FindItem Traversal="Shallow">
               <m:ItemShape>
@@ -73,19 +80,32 @@ enum SOAP {
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:IndexedPageItemView MaxEntriesReturned="\(max(1, limit))" Offset="0" BasePoint="Beginning"/>
+        \(restriction)
               <m:SortOrder>
                 <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
               </m:SortOrder>
-              <m:ParentFolderIds><t:DistinguishedFolderId Id="\(folder.rawValue)"/></m:ParentFolderIds>
+              <m:ParentFolderIds>\(parent)</m:ParentFolderIds>
             </m:FindItem>
         """
     }
 
+    /// Flagged mail only: PidTagFlagStatus (0x1090) is 2 when flagged, on every version.
+    static let flaggedRestriction = """
+    <m:Restriction><t:IsEqualTo>\
+    <t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/>\
+    <t:FieldURIOrConstant><t:Constant Value="2"/></t:FieldURIOrConstant>\
+    </t:IsEqualTo></m:Restriction>
+    """
+
     /// Search (M8). Exchange 2013 and later: `QueryString`, the server's own search index, the
     /// same one Outlook's search box uses, matching sender, subject and body. Older servers have
     /// no query string, so a restriction matches the subject or the body as a substring.
-    static func search(_ text: String, in folder: MailFolder = .inbox, limit: Int, modern: Bool) -> String {
-        let find = findMessages(in: folder, limit: limit, modern: modern)
+    /// Flagged searches the whole Inbox, since a request takes one restriction and a query string
+    /// is not combined with one; the caller keeps the flagged results.
+    static func search(_ text: String, in folder: MailFolder = .inbox, archiveID: String? = nil,
+                       limit: Int, modern: Bool) -> String {
+        let find = findMessages(in: folder == .flagged ? .inbox : folder, archiveID: archiveID,
+                                limit: limit, modern: modern)
         let query = escape(text)
         if modern {
             return find.replacingOccurrences(of: "</m:ParentFolderIds>",

@@ -52,14 +52,14 @@ struct MessageRowView: View {
     var body: some View {
         Button(action: onOpen) { rowContent }
             .buttonStyle(.plain)
-            .onHover { isHovering = $0 }
             // The four actions at the row's trailing edge while the pointer is on it, the way
             // Outlook shows them: over the subject line, so the time on the sender line never hides.
             // Pinned to that line, not centred: a row with no preview line put its centre between
             // sender and subject, over the time (the user's recording).
             .overlay(alignment: Alignment(horizontal: .trailing, vertical: .subjectLine)) {
                 if isHovering {
-                    MessageActionButtons(message: message, accountID: accountID, store: store, size: 11)
+                    MessageActionButtons(message: message, accountID: accountID, store: store,
+                                         folder: folder, size: 11)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -69,6 +69,10 @@ struct MessageRowView: View {
                         .padding(.trailing, Metrics.horizontalPadding - 4)
                 }
             }
+            // Hover is tracked on the row AND its actions: on the button alone, the pointer landing
+            // on an action left the row, which hid the actions, which put it back on the row, so
+            // they flickered (the user's recording).
+            .onHover { isHovering = $0 }
             .contextMenu { contextMenu }
             .help(message.received.formatted(date: .complete, time: .shortened))
             .accessibilityElement(children: .ignore)
@@ -85,17 +89,21 @@ struct MessageRowView: View {
             Task { await store.setFlag(!message.isFlagged, message: message.id, in: accountID) }
         }
         Divider()
-        Button("Archive") {
-            Task { await store.archive(message: message.id, in: accountID) }
+        if folder.canArchive {
+            Button("Archive") {
+                Task { await store.archive(message: message.id, in: accountID) }
+            }
         }
-        Button("Delete") {
-            Task { await store.delete(message: message.id, in: accountID) }
+        if folder.canDelete {
+            Button("Delete") {
+                Task { await store.delete(message: message.id, in: accountID) }
+            }
         }
     }
 
     /// The sender, or in Sent Items whom it went to.
     private var firstLine: String {
-        guard folder == .sent else { return message.senderName }
+        guard folder.showsRecipients else { return message.senderName }
         return message.displayTo.isEmpty ? "No recipients" : message.displayTo
     }
 
@@ -183,7 +191,7 @@ struct MessageRowView: View {
         var parts: [String] = []
         if !message.isRead { parts.append("Unread") }
         if message.isFlagged { parts.append("Flagged") }
-        parts.append(folder == .sent ? "to \(firstLine)" : "from \(message.senderName)")
+        parts.append(folder.showsRecipients ? "to \(firstLine)" : "from \(message.senderName)")
         parts.append(message.subject)
         parts.append(RelativeTime.label(for: message.received))
         if message.hasAttachments { parts.append("has attachments") }

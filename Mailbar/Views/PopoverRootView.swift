@@ -67,7 +67,7 @@ struct PopoverRootView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { installSwipe() }
         .onDisappear { removeSwipe() }
-        // A search stays open across Inbox and Sent and looks again in the folder now showing.
+        // A search stays open across folders and looks again in the one now showing.
         .onChange(of: store.mailFolder) { _, _ in
             if store.isSearchOpen { Task { await store.runSearch() } }
         }
@@ -233,7 +233,7 @@ struct PopoverRootView: View {
         HStack(spacing: 2) {
             tabButton(.inbox, key: "1") {
                 HStack(spacing: 4) {
-                    Text(store.mailFolder == .sent ? "Sent" : "Inbox")
+                    Text(store.mailFolder.tabTitle)
                     let count = store.selectedAccount.map { store.unreadCount(for: $0.id) } ?? 0
                     if count > 0, store.mailFolder == .inbox {
                         Text("\(count)")
@@ -278,8 +278,8 @@ struct PopoverRootView: View {
         .keyboardShortcut(key, modifiers: .command)
     }
 
-    /// The menu on the left: the folder, Inbox or Sent Items (the user's call, 2026-09-28: here,
-    /// not a third tab), and with several accounts the account above it. It is named after the
+    /// The menu on the left: the folder (the user's call, 2026-09-28: here, not a third tab),
+    /// and with several accounts the account above it. It is named after the
     /// account when there are several, else after the folder.
     private var accountMenu: some View {
         Menu {
@@ -295,7 +295,7 @@ struct PopoverRootView: View {
                 }
                 Divider()
             }
-            ForEach([MailFolder.inbox, .sent], id: \.self) { folder in
+            ForEach(MailFolder.allCases, id: \.self) { folder in
                 Button {
                     pick(folder)
                 } label: {
@@ -330,8 +330,8 @@ struct PopoverRootView: View {
         } else if let account = store.selectedAccount {
             if store.isSearchOpen, store.searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 {
                 searchContent(account)
-            } else if store.mailFolder == .sent {
-                sentContent(account)
+            } else if store.mailFolder != .inbox {
+                folderContent(store.mailFolder, account)
             } else {
                 inboxContent(account)
             }
@@ -403,32 +403,32 @@ struct PopoverRootView: View {
         }
     }
 
-    /// Sent Items. While the account itself is failing (unreachable, password rejected) the
-    /// Inbox's own screen for that says so, rather than a second, vaguer one.
+    /// Any folder but the Inbox. While the account itself is failing (unreachable, password
+    /// rejected) the Inbox's own screen for that says so, rather than a second, vaguer one.
     @ViewBuilder
-    private func sentContent(_ account: Account) -> some View {
+    private func folderContent(_ folder: MailFolder, _ account: Account) -> some View {
         Group {
             switch store.state(for: account.id) {
             case .needsPassword, .passwordRejected, .unreachable, .failed:
                 inboxContent(account)
             case .loading, .messages, .empty:
-                switch store.sent[account.id] ?? .idle {
+                switch store.list(folder, for: account.id) ?? .idle {
                 case .idle, .searching:
                     SkeletonListView()
                 case .results(let messages) where messages.isEmpty:
-                    StatePlaceholder(symbol: "paperplane", tint: .secondary,
-                                     title: "Nothing sent yet",
-                                     message: "Sent Items of \(account.displayName) is empty.") {
+                    StatePlaceholder(symbol: folder.emptySymbol, tint: .secondary,
+                                     title: folder.emptyTitle,
+                                     message: "\(folder.title) of \(account.displayName) is empty.") {
                         EmptyView()
                     }
                 case .results(let messages):
-                    InboxListView(messages: messages, accountID: account.id, store: store, folder: .sent)
+                    InboxListView(messages: messages, accountID: account.id, store: store, folder: folder)
                 case .failed(let message):
-                    GenericFailureView(message: message) { Task { await store.loadSent(account.id) } }
+                    GenericFailureView(message: message) { Task { await store.loadFolder(folder, account.id) } }
                 }
             }
         }
-        .task(id: account.id) { await store.loadSent(account.id) }
+        .task(id: "\(account.id) \(folder)") { await store.loadFolder(folder, account.id) }
     }
 
     @ViewBuilder
@@ -474,7 +474,7 @@ struct PopoverRootView: View {
                 }
                 Button {
                     onRefresh()
-                    if store.showsSent { Task { await store.loadSent() } }
+                    if store.showsFolderList { Task { await store.loadFolder() } }
                 } label: {
                     Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
                 }

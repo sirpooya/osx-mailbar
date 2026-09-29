@@ -61,7 +61,7 @@ struct MessageReaderView: View {
             Button(action: onBack) {
                 HStack(spacing: 3) {
                     Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
-                    Text(store.isSearchOpen ? "Results" : store.mailFolder == .sent ? "Sent" : "Inbox").font(.system(size: 12))
+                    Text(store.isSearchOpen ? "Results" : store.mailFolder.tabTitle).font(.system(size: 12))
                 }
             }
             .buttonStyle(.plain)
@@ -72,7 +72,8 @@ struct MessageReaderView: View {
 
             responseButtons
             Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 14)
-            MessageActionButtons(message: current, accountID: accountID, store: store, size: 12)
+            MessageActionButtons(message: current, accountID: accountID, store: store,
+                                 folder: store.isSearchOpen ? store.searchFolder : store.mailFolder, size: 12)
         }
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
@@ -283,11 +284,13 @@ struct MessageReaderView: View {
 }
 
 /// Mark unread or read, flag, archive, delete. The same four in the reader's toolbar and on a
-/// hovered row, so they cannot drift apart.
+/// hovered row, so they cannot drift apart. Archive leaves out Archive, and Deleted Items leaves
+/// out Delete (`MailFolder.canDelete`).
 struct MessageActionButtons: View {
     let message: MailMessage
     let accountID: UUID
     @Bindable var store: MailStore
+    var folder: MailFolder = .inbox
     var size: CGFloat = 11
 
     var body: some View {
@@ -300,11 +303,15 @@ struct MessageActionButtons: View {
                    help: message.isFlagged ? "Clear flag" : "Flag") {
                 await store.setFlag(!message.isFlagged, message: message.id, in: accountID)
             }
-            button("archivebox", help: "Archive") {
-                await store.archive(message: message.id, in: accountID)
+            if folder.canArchive {
+                button("archivebox", help: "Archive") {
+                    await store.archive(message: message.id, in: accountID)
+                }
             }
-            button("trash", help: "Delete (moves to Deleted Items)") {
-                await store.delete(message: message.id, in: accountID)
+            if folder.canDelete {
+                button("trash", help: "Delete (moves to Deleted Items)") {
+                    await store.delete(message: message.id, in: accountID)
+                }
             }
         }
     }
