@@ -788,6 +788,8 @@ final class MailStore {
                 return
             }
             folder = found
+        } catch is CancellationError {
+            return
         } catch {
             actionError = describe(error, accountID: accountID)
             return
@@ -804,6 +806,8 @@ final class MailStore {
         guard let (url, credential) = connection(for: pending.accountID) else { return }
         do {
             archiveFolders[pending.accountID] = try await client.createArchiveFolder(at: url, credential: credential)
+        } catch is CancellationError {
+            return
         } catch {
             actionError = describe(error, accountID: pending.accountID)
             return
@@ -834,6 +838,9 @@ final class MailStore {
         do {
             try await request(client, url, credential, isModern(accountID))
             edits[id]?.at = Date()
+        } catch is CancellationError {
+            // Not a refusal: the server may have applied it. The next poll shows what it holds.
+            edits[id] = nil
         } catch {
             edits[id] = nil
             if message(id, in: accountID) != nil { replace(before, in: accountID, unreadDelta: -unreadDelta) }
@@ -871,6 +878,8 @@ final class MailStore {
         do {
             try await request(client, url, credential, isModern(accountID))
             edits[id]?.at = Date()
+        } catch is CancellationError {
+            edits[id] = nil
         } catch {
             edits[id] = nil
             if let index {

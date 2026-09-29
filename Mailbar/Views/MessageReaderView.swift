@@ -271,8 +271,10 @@ struct MessageReaderView: View {
             }
             guard !Task.isCancelled else { return }
             phase = .loaded(body, images: images)
-            // Opening a message reads it, as in Outlook.
-            await store.setRead(true, message: summary.id, in: accountID)
+            // Opening a message reads it, as in Outlook. Not tied to this view's task: going back
+            // before the server answers cancelled the request and flashed a CancellationError.
+            let store = store, id = summary.id, accountID = accountID
+            Task { await store.setRead(true, message: id, in: accountID) }
         } catch is CancellationError {
             return
         } catch let error as EWSError {

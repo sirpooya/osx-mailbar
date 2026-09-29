@@ -35,6 +35,7 @@ section when a release is cut.
 - The calendar's Day, Week and Month switcher no longer changes size when you switch views.
 - In the inbox, hovering a message without a preview line, such as a meeting answer, no longer covers its time with the action buttons: they sit on the subject line as on every other row.
 - Hovering an inbox row no longer makes its action buttons flicker when the pointer rests where they appear.
+- Leaving a message before the server confirmed it as read no longer shows a "CancellationError" banner or puts the message back to unread.
 
 ## [1.1.0] - 2026-09-26
 

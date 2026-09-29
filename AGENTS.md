@@ -565,7 +565,8 @@ are compiled out of it, so screenshot QC still runs on the Debug build in `.dd`.
 - 2026-09-24 The poller's refresh runs in an unstructured `Task`, because `refreshNow` restarts the
   loop by cancelling it, and that cancellation reached the requests in flight and surfaced as
   "Something went wrong" every time the popover opened mid-poll. A cancelled request never changes
-  what is on screen.
+  what is on screen. The same holds for actions (2026-09-29): opening a message marks it read in
+  its own `Task`, not the reader's, and a cancelled action is neither rolled back nor reported.
 - 2026-09-24 Adding an account asks for email and password only; Sign In runs Autodiscover (user's
   request) to find the EWS URL and display name, guesses the user name (short name, then the full
   address, keeping whichever the server accepts), and tests the connection. Server Details then
