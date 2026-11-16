@@ -1,8 +1,9 @@
 import Foundation
 
-/// A message being written (M12 to M14). One at a time, in memory only: it survives the popover
-/// closing, and goes when it is sent, discarded, or Mailbar quits. Never written to disk, never
-/// saved to the server's Drafts folder.
+/// A message being written (M12 to M14, M23 to M25). One at a time. Nothing of it is ever on the
+/// Mac's disk: it lives in memory, and (since M25, Outlook's behaviour) a copy is kept in the
+/// server's Drafts folder a few seconds after typing stops, so it can be reopened from Drafts.
+/// Attached files stay in memory only until the message is sent.
 struct Draft: Equatable, Identifiable {
     enum Kind: Equatable {
         case reply
@@ -25,12 +26,76 @@ struct Draft: Equatable, Identifiable {
     var isSending = false
     var error: String?
 
+    // MARK: M23 to M25
+
+    /// Forward as attachment and Redirect are forwards of their own (they mark the original
+    /// forwarded); Resend is a new message filled from a sent one.
+    enum Style: Equatable, Sendable {
+        case standard
+        /// The original rides along as an attached message (`ItemAttachment`).
+        case asAttachment
+        /// The original's subject, body and files, sent on with no quote header and no "FW:".
+        case redirect
+    }
+
+    var style: Style = .standard
+    var bcc = ""
+    /// An alias or a mailbox the account may send as or on behalf of. Empty: the account.
+    var from = ""
+    var options = MessageOptions()
+    /// Files to send, bytes in memory until the message goes.
+    var attachments: [OutgoingFile] = []
+    /// The copy in the server's Drafts folder, once saved.
+    var serverID: String?
+    /// HTML the server or the original supplies under the user's text: a reply's quote (from the
+    /// saved draft), or the original message for Redirect and Resend. Never edited here.
+    var baseHTML: String?
+    /// Reply to selected text: only this is quoted, not the whole original.
+    var quotedSelection: String?
+    /// The formatted body from the rich editor, or nil while the text has no formatting.
+    var bodyHTML: String?
+    /// Signature and "always Cc or Bcc me" applied, once, when the composer first shows it.
+    var prepared = false
+    /// Files already on a reopened server copy, by name. They stay on it and go with it.
+    var keptFiles: [String] = []
+    /// What the server copy holds, so an unchanged draft is not saved again.
+    var savedFingerprint: String?
+
+    /// The body as it goes to the server: the user's part (formatted or plain) marked so a
+    /// reopened draft can be split again, then any quoted selection, then the base HTML.
+    var outgoingHTML: String {
+        var mine = bodyHTML ?? ComposeHTML.html(from: body)
+        if let quote = quotedSelection, !quote.isEmpty {
+            mine += ComposeHTML.quote(quote)
+        }
+        let marked = #"<div class="\#(ComposeHTML.marker)">"# + mine + "</div>"
+        guard let base = baseHTML, !base.isEmpty else { return marked }
+        return ComposeHTML.inserting(marked, intoBodyOf: base)
+    }
+
+    /// Everything a save writes, to tell whether the server copy is current.
+    var fingerprint: String {
+        [to, cc, bcc, subject, from, outgoingHTML, options.importance.rawValue,
+         options.sensitivity.rawValue, "\(options.readReceipt)", "\(options.deliveryReceipt)"].joined(separator: "\u{1}")
+    }
+
+    /// Stands in for a draft that has just gone, so a binding read during a close has a value.
+    static let placeholder = Draft(kind: .new, accountID: UUID(), originalID: nil, originalSubject: "",
+                                   to: "", cc: "", subject: "", body: "")
+
+    var allRecipients: [String] { Recipients.parse(to) + Recipients.parse(cc) + Recipients.parse(bcc) }
+
+    /// Total bytes attached.
+    var attachedBytes: Int { attachments.reduce(0) { $0 + $1.data.count } }
+
     var title: String {
-        switch kind {
-        case .reply: return "Reply"
-        case .replyAll: return "Reply All"
-        case .forward: return "Forward"
-        case .new: return "New Message"
+        switch (kind, style) {
+        case (.forward, .asAttachment): return "Forward as Attachment"
+        case (.forward, .redirect): return "Redirect"
+        case (.reply, _): return quotedSelection == nil ? "Reply" : "Reply to Selection"
+        case (.replyAll, _): return quotedSelection == nil ? "Reply All" : "Reply All to Selection"
+        case (.forward, _): return "Forward"
+        case (.new, _): return "New Message"
         }
     }
 
@@ -39,7 +104,7 @@ struct Draft: Equatable, Identifiable {
     var subjectPreview: String {
         switch kind {
         case .reply, .replyAll: return "RE: \(originalSubject)"
-        case .forward: return "FW: \(originalSubject)"
+        case .forward: return style == .redirect ? originalSubject : "FW: \(originalSubject)"
         case .new: return subject
         }
     }
@@ -47,20 +112,23 @@ struct Draft: Equatable, Identifiable {
     var hasContent: Bool {
         !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (kind == .new && !subject.trimmingCharacters(in: .whitespaces).isEmpty)
+            || !attachments.isEmpty
     }
 
     /// The first thing stopping Send, or nil.
     var sendProblem: String? {
-        let toList = Recipients.parse(to)
-        let ccList = Recipients.parse(cc)
-        if toList.isEmpty && ccList.isEmpty { return "Add a recipient." }
-        if let bad = (toList + ccList).first(where: { !Recipients.isValid($0) }) {
-            return "\u{201C}\(bad)\u{201D} is not an email address."
+        let all = allRecipients
+        if all.isEmpty { return "Add a recipient." }
+        if let bad = all.first(where: { !Recipients.isValid($0) }) {
+            return "\u{201C}\(bad)\u{201D} is not an email address. Check Names (⌘K) looks it up."
         }
+        if !from.isEmpty, !Recipients.isValid(from) { return "The From address is not an email address." }
         if kind == .new && subject.trimmingCharacters(in: .whitespaces).isEmpty
-            && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+            && (baseHTML ?? "").isEmpty {
             return "Write something first."
         }
+        if attachedBytes > OutgoingFile.maxTotal { return "The files come to more than 25 MB." }
         return nil
     }
 }
@@ -154,5 +222,56 @@ enum ComposeHTML {
             return "<div>" + escaped + "</div>"
         }.joined()
         return #"<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">"# + body + "</div>"
+    }
+
+    /// The class on the user's own part of a saved draft's body, so reopening the draft puts only
+    /// that part back in the editor and keeps the quote under it as it was.
+    static let marker = "mailbar-compose"
+
+    /// Selected text from the original, quoted as Outlook quotes: a rule on the left.
+    static func quote(_ text: String) -> String {
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n").map { line -> String in
+            let escaped = SOAP.escape(line)
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { return "<div><br></div>" }
+            return TextDirection.firstStrong(in: line) == .rightToLeft
+                ? #"<div dir="rtl" style="text-align:right">"# + escaped + "</div>" : "<div>" + escaped + "</div>"
+        }.joined()
+        return #"<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">"# + lines + "</blockquote>"
+    }
+
+    /// `html` put first inside `base`'s body element (after `<body ...>`), or before it all when
+    /// `base` has no body element.
+    static func inserting(_ html: String, intoBodyOf base: String) -> String {
+        if let open = base.range(of: "<body", options: .caseInsensitive),
+           let close = base[open.upperBound...].firstIndex(of: ">") {
+            let at = base.index(after: close)
+            return String(base[..<at]) + html + String(base[at...])
+        }
+        return html + base
+    }
+
+    /// A saved body split into the user's part (inside the marker) and everything else. Nil when
+    /// the marker is not there (a draft written elsewhere): then the whole body is the user's.
+    static func split(_ html: String) -> (mine: String, base: String)? {
+        guard let start = html.range(of: #"<div class="\#(marker)""#) ??
+                html.range(of: #"<div class=\#(marker)"#) else { return nil }
+        var depth = 0
+        var index = start.lowerBound
+        while index < html.endIndex {
+            let rest = html[index...]
+            if rest.hasPrefix("<div") || rest.hasPrefix("<DIV") {
+                depth += 1
+            } else if rest.hasPrefix("</div") || rest.hasPrefix("</DIV") {
+                depth -= 1
+                if depth == 0, let end = rest.firstIndex(of: ">") {
+                    let after = html.index(after: end)
+                    let mine = String(html[start.lowerBound..<after])
+                    let base = String(html[..<start.lowerBound]) + String(html[after...])
+                    return (mine, base)
+                }
+            }
+            index = html.index(after: index)
+        }
+        return nil
     }
 }

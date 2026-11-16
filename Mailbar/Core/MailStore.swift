@@ -49,6 +49,12 @@ final class MailStore {
     /// Set when Archive found no Archive folder. The popover asks before one is created.
     var pendingArchive: OpenMessage?
 
+    /// Multi-select, the undo toast, swipes, folders and favorites (M20, M21).
+    let listActions = ListActionsState()
+
+    /// Undo Send, the server copy of the draft, MailTips, Check Names, templates (M23 to M25).
+    let compose = ComposeState()
+
     // MARK: Search (M8)
 
     /// Whether the search field is showing, over the selected account's Inbox or Sent Items,
@@ -56,17 +62,18 @@ final class MailStore {
     var isSearchOpen = false
     /// What is typed. Searching starts from two characters.
     var searchQuery = ""
-    private(set) var searchPhase: ListPhase = .idle
+    var searchPhase: ListPhase = .idle
     /// The account and folder the current results belong to.
-    private(set) var searchAccountID: UUID?
-    private(set) var searchFolder: MailFolder = .inbox
+    var searchAccountID: UUID?
+    var searchFolder: MailFolder = .inbox
+    /// Scope, criteria, saved searches, Events and People (2026-11-16, `MailStore+Search`).
+    let searchExtras = SearchState()
 
     /// The words of the query, for marking where they match in rows and in the open message,
     /// as Outlook does. Empty when no search is running.
     var highlightTerms: [String] {
         guard isSearchOpen else { return [] }
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.count >= 2 ? SearchHighlight.terms(in: query) : []
+        return SearchHighlight.terms(in: currentSearch)
     }
 
     /// A list read from the server on demand: search results, and every folder but the Inbox.
@@ -113,6 +120,34 @@ final class MailStore {
     func list(_ folder: MailFolder, for accountID: UUID) -> ListPhase? {
         folderLists[folder]?[accountID]
     }
+
+    // MARK: Filter and sort (2026-11-16, after Outlook's Filter By and Sort By)
+
+    /// The list's filters and order. Filters last while the popover is open; the order stays
+    /// until the app quits. In memory only.
+    var listOptions = MailListOptions()
+    /// The filtered or reordered list, asked of the server, for one account and folder.
+    private(set) var optionsPhase: ListPhase = .idle
+    private(set) var optionsAccountID: UUID?
+    /// Which account, folder and options `optionsPhase` answers.
+    @ObservationIgnored private var optionsKey: String?
+
+    /// The options apply to the folder showing (a filter that means nothing there is ignored).
+    var showsOptionsList: Bool { !listOptions.isDefault(in: mailFolder) }
+
+    // MARK: Row details (2026-11-16): attachment chips and invitation buttons
+
+    /// Each listed item's files, names and types only, by item id. Fetched once per item for
+    /// rows that have attachments, in memory with the rest of the list data.
+    private(set) var rowAttachments: [String: [FileAttachment]] = [:]
+    /// Each listed invitation's time, place and answer, by item id.
+    private(set) var rowMeetings: [String: RowMeeting] = [:]
+    /// Invitations being answered from their row.
+    private(set) var rowAnswering: Set<String> = []
+    @ObservationIgnored private var detailsAsked: Set<String> = []
+    /// Sender photos for the rows, by account and address, while the popover is open. Dropped
+    /// when it closes, as the reader drops its images.
+    @ObservationIgnored private var rowPhotoTasks: [String: Task<NSImage?, Never>] = [:]
 
     /// The rest of today's events per account. In memory only.
     private(set) var today: [UUID: [CalendarEvent]] = [:]
@@ -238,6 +273,8 @@ final class MailStore {
     /// Every unread message id across accounts, after anything that can change it, so delivered
     /// notifications for mail that has since been read or removed can be withdrawn.
     @ObservationIgnored var onUnreadChanged: ((Set<String>) -> Void)?
+    /// After a message has left (M26): plays the sent sound.
+    @ObservationIgnored var onSent: (() -> Void)?
     @ObservationIgnored private var newMail = NewMailTracker()
 
     /// Pre-2013 servers only: previews built from text bodies, so a poll does not refetch them.
@@ -405,6 +442,7 @@ final class MailStore {
         state(for: account).messages.first { $0.id == id }
             ?? folderLists.values.lazy.compactMap { $0[account]?.messages.first { $0.id == id } }.first
             ?? (searchAccountID == account ? searchPhase.messages.first { $0.id == id } : nil)
+            ?? (optionsAccountID == account ? optionsPhase.messages.first { $0.id == id } : nil)
     }
 
     private func unreadChanged() {
@@ -469,7 +507,8 @@ final class MailStore {
         sending.error = nil
         draft = sending
         do {
-            try await client.send(sending, at: url, credential: credential)
+            try await deliver(sending, at: url, credential: credential)
+            onSent?()
             let count = Recipients.parse(sending.to).count + Recipients.parse(sending.cc).count
             draft = nil
             isComposing = false
@@ -480,10 +519,31 @@ final class MailStore {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 self?.sentNotice = nil
             }
+            // After the composer has closed, so the mark never holds it open.
+            await markResponded(sending)
         } catch {
             draft?.isSending = false
             draft?.error = describe(error, accountID: sending.accountID)
         }
+    }
+
+    /// The replied or forwarded arrow on the original, on screen at once and on the server, as
+    /// Outlook marks it. A failure here is not the send's: the mail went, so it is not reported.
+    func markResponded(_ sent: Draft) async {
+        let verb: LastVerb
+        switch sent.kind {
+        case .reply: verb = .replied
+        case .replyAll: verb = .repliedAll
+        case .forward: verb = .forwarded
+        case .new: return
+        }
+        guard let original = sent.originalID else { return }
+        if var message = message(original, in: sent.accountID) {
+            message.lastVerb = verb
+            replace(message, in: sent.accountID, unreadDelta: 0)
+        }
+        guard let (url, credential) = connection(for: sent.accountID) else { return }
+        try? await client.setLastVerb(verb, id: original, at: url, credential: credential)
     }
 
     /// Addresses to offer while typing a recipient: everyone who has written to any inbox here,
@@ -677,7 +737,7 @@ final class MailStore {
     }
 
     /// The Archive folder's id, from memory or `FindFolder`. Nil when the mailbox has none.
-    private func archiveFolderID(for accountID: UUID, url: URL, credential: EWSCredential) async throws -> String? {
+    func archiveFolderID(for accountID: UUID, url: URL, credential: EWSCredential) async throws -> String? {
         if let known = archiveFolders[accountID] { return known }
         let found = try await client.archiveFolderID(at: url, credential: credential)
         if let found { archiveFolders[accountID] = found }
@@ -686,44 +746,11 @@ final class MailStore {
 
     // MARK: - Searching
 
-    /// Runs the typed query against the server, for the selected account, in the folder its tab
-    /// shows. A result that comes back after the query or the tab changed is dropped, so fast
-    /// typing never shows stale matches.
+    /// Runs the typed query against the server, for the selected account, in the scope chosen
+    /// (`performSearch`). A result that comes back after the query, the scope or the tab
+    /// changed is dropped, so fast typing never shows stale matches.
     func runSearch() async {
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let folder = mailFolder
-        guard query.count >= 2, let account = selectedAccount else {
-            searchPhase = .idle
-            return
-        }
-        guard let (url, credential) = connection(for: account.id) else {
-            searchPhase = .failed("The password for this account is missing. Enter it in Settings.")
-            return
-        }
-        searchPhase = .searching
-        searchAccountID = account.id
-        searchFolder = folder
-        let current = { [weak self] in
-            self?.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query && self?.mailFolder == folder
-        }
-        do {
-            var found: [MailMessage] = []
-            if folder != .archive {
-                found = try await client.search(query, in: folder, at: url, credential: credential,
-                                                modern: isModern(account.id))
-            } else if let archiveID = try await archiveFolderID(for: account.id, url: url, credential: credential) {
-                found = try await client.search(query, in: .archive, archiveID: archiveID, at: url,
-                                                credential: credential, modern: isModern(account.id))
-            }
-            if folder == .flagged { found = found.filter(\.isFlagged) }
-            guard current() else { return }
-            searchPhase = .results(found)
-        } catch is CancellationError {
-            return
-        } catch {
-            guard current() else { return }
-            searchPhase = .failed(describe(error, accountID: account.id))
-        }
+        await performSearch()
     }
 
     func closeSearch() {
@@ -731,6 +758,137 @@ final class MailStore {
         searchQuery = ""
         searchPhase = .idle
         searchAccountID = nil
+        searchExtras.reset()
+    }
+
+    // MARK: - Filter and sort
+
+    /// Reads the folder showing with the chosen filters and order, for the selected account.
+    /// The rows shown stay while it runs; an answer for options no longer chosen is dropped.
+    func loadOptionsList() async {
+        let folder = mailFolder
+        let options = listOptions
+        guard !options.isDefault(in: folder), let account = selectedAccount else {
+            optionsPhase = .idle
+            optionsKey = nil
+            optionsAccountID = nil
+            return
+        }
+        guard let (url, credential) = connection(for: account.id) else {
+            optionsPhase = .failed("The password for this account is missing. Enter it in Settings.")
+            return
+        }
+        let key = "\(account.id) \(folder) \(options.sort) \(options.filters(in: folder).map(\.rawValue))"
+        if optionsKey != key {
+            optionsKey = key
+            optionsAccountID = account.id
+            optionsPhase = .searching
+        }
+        do {
+            var found: [MailMessage] = []
+            if folder != .archive {
+                found = try await client.messages(in: folder, options: options, at: url,
+                                                  credential: credential, modern: isModern(account.id))
+            } else if let archiveID = try await archiveFolderID(for: account.id, url: url, credential: credential) {
+                found = try await client.messages(in: .archive, archiveID: archiveID, options: options, at: url,
+                                                  credential: credential, modern: isModern(account.id))
+            }
+            if folder != .archive, folder != .deleted {
+                found = found.filter { edits[$0.id]?.removed != true }
+            }
+            guard optionsKey == key else { return }
+            optionsPhase = .results(found)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard optionsKey == key else { return }
+            if case .results = optionsPhase { return }
+            optionsPhase = .failed(describe(error, accountID: account.id))
+        }
+    }
+
+    func toggleFilter(_ filter: MailFilter) {
+        if listOptions.filters.contains(filter) {
+            listOptions.filters.remove(filter)
+        } else {
+            listOptions.filters.insert(filter)
+        }
+    }
+
+    // MARK: - Row details
+
+    /// Attachment names for rows that have files, and time, place and answer for invitations,
+    /// for the rows on screen. Each item is asked about once; a failure leaves the row as it
+    /// was, since both are niceties.
+    func loadRowDetails(for messages: [MailMessage], accountID: UUID) async {
+        let withFiles = messages.filter { $0.hasAttachments && !detailsAsked.contains($0.id) }.map(\.id)
+        let invitations = messages.filter { $0.isMeetingRequest && !detailsAsked.contains("m " + $0.id) }.map(\.id)
+        guard !withFiles.isEmpty || !invitations.isEmpty,
+              let (url, credential) = connection(for: accountID) else { return }
+        detailsAsked.formUnion(withFiles)
+        detailsAsked.formUnion(invitations.map { "m " + $0 })
+        async let files = try? client.attachmentLists(for: withFiles, at: url, credential: credential)
+        async let meetings = try? client.rowMeetings(for: invitations, at: url, credential: credential)
+        let (foundFiles, foundMeetings) = await (files, meetings)
+        // Only details for rows still in some list are worth keeping.
+        let listed = listedIDs()
+        rowAttachments = rowAttachments.filter { listed.contains($0.key) }
+            .merging(foundFiles ?? [:]) { _, new in new }
+        rowMeetings = rowMeetings.filter { listed.contains($0.key) }
+            .merging(foundMeetings ?? [:]) { old, new in
+                // An answer given here stands until the server reports one.
+                var merged = new
+                if merged.response == nil { merged.response = old.response }
+                return merged
+            }
+    }
+
+    private func listedIDs() -> Set<String> {
+        var ids = Set(states.values.flatMap(\.messages).map(\.id))
+        for lists in folderLists.values { for phase in lists.values { ids.formUnion(phase.messages.map(\.id)) } }
+        ids.formUnion(searchPhase.messages.map(\.id))
+        ids.formUnion(optionsPhase.messages.map(\.id))
+        return ids
+    }
+
+    /// Accept, Tentative or Decline on an invitation's row: the organizer is told at once, as
+    /// the reader's main capsule does. A note or a proposal needs the message opened.
+    func answerFromRow(_ answer: CalendarSOAP.Answer, message id: String, in accountID: UUID) async {
+        guard !rowAnswering.contains(id) else { return }
+        rowAnswering.insert(id)
+        defer { rowAnswering.remove(id) }
+        do {
+            try await answerInvitation(answer, message: id, in: accountID, note: "")
+            rowMeetings[id]?.response = answer.responseType
+        } catch is CancellationError {
+            return
+        } catch {
+            actionError = describe(error, accountID: accountID)
+        }
+    }
+
+    // MARK: - Row photos
+
+    /// A sender's photo for the list, asked once per address while the popover is open.
+    func rowPhoto(for address: String, accountID: UUID) async -> NSImage? {
+        let key = "\(accountID) \(address.lowercased())"
+        if let task = rowPhotoTasks[key] { return await task.value }
+        let task = Task { await self.photo(for: address, accountID: accountID) }
+        rowPhotoTasks[key] = task
+        return await task.value
+    }
+
+    /// The popover closed: photos go, and so do the filters (the order stays).
+    func popoverClosed() {
+        rowPhotoTasks = [:]
+        listActions.popoverClosed()
+        // A screenshot run's filters (DEBUG `--list-filter=`) outlive the opening's own close.
+        listOptions.filters = QCFlags.listOptions?.filters ?? []
+        if listOptions.isDefault(in: mailFolder) {
+            optionsPhase = .idle
+            optionsKey = nil
+            optionsAccountID = nil
+        }
     }
 
     /// The endpoint and a fresh credential, read from the Keychain for this one call.
@@ -768,35 +926,15 @@ final class MailStore {
         }
     }
 
+    /// To Deleted Items, with an undo toast (`MailStore+ListActions`).
     func delete(message id: String, in accountID: UUID) async {
-        await remove(id, in: accountID) { client, url, credential, _ in
-            try await client.moveToDeletedItems(id: id, at: url, credential: credential)
-        }
+        await delete([id], in: accountID)
     }
 
     /// Moves to the Archive folder. When the mailbox has none, nothing is moved and nothing is
     /// created: `pendingArchive` is set so the popover can ask first.
     func archive(message id: String, in accountID: UUID) async {
-        guard let (url, credential) = connection(for: accountID) else {
-            actionError = "The password for this account is missing. Enter it in Settings."
-            return
-        }
-        let folder: String
-        do {
-            guard let found = try await archiveFolderID(for: accountID, url: url, credential: credential) else {
-                pendingArchive = OpenMessage(accountID: accountID, messageID: id)
-                return
-            }
-            folder = found
-        } catch is CancellationError {
-            return
-        } catch {
-            actionError = describe(error, accountID: accountID)
-            return
-        }
-        await remove(id, in: accountID) { client, url, credential, _ in
-            try await client.move(id: id, toFolder: folder, at: url, credential: credential)
-        }
+        await archive([id], in: accountID)
     }
 
     /// The user said yes: make the Archive folder, then archive the message that asked for it.
@@ -812,7 +950,7 @@ final class MailStore {
             actionError = describe(error, accountID: pending.accountID)
             return
         }
-        await archive(message: pending.messageID, in: pending.accountID)
+        await archive([pending.messageID] + listActions.takePendingArchive(), in: pending.accountID)
     }
 
     private typealias Request = @Sendable (EWSClient, URL, EWSCredential, Bool) async throws -> Void
@@ -848,48 +986,128 @@ final class MailStore {
         }
     }
 
-    /// Delete and archive: the row leaves at once, and comes back where it was on failure.
-    private func remove(_ id: String, in accountID: UUID, request: @escaping Request) async {
-        guard let (url, credential) = connection(for: accountID),
-              let removed = message(id, in: accountID) else { return }
+    // MARK: - Many at once (M20)
+
+    /// Archive, delete, move and junk, for one row or many: the rows leave at once, and come
+    /// back where they were on failure. Returns the items' new ids from the server's reply (nil
+    /// for one it did not name), or nil when the move failed or was cancelled.
+    func removeMany(_ ids: [String], in accountID: UUID,
+                    request: @escaping @Sendable (EWSClient, URL, EWSCredential, Bool) async throws -> [String?]) async -> [String?]? {
+        guard let (url, credential) = connection(for: accountID) else {
+            actionError = "The password for this account is missing. Enter it in Settings."
+            return nil
+        }
+        let gone = Set(ids)
         let messages = state(for: accountID).messages
-        let index = messages.firstIndex(where: { $0.id == id })
+        let removed = messages.enumerated().filter { gone.contains($0.element.id) }
         let searchBefore = searchPhase
         let listsBefore = folderLists
+        let optionsBefore = optionsPhase
         for (folder, lists) in folderLists {
             if case .results(let list) = lists[accountID] {
-                folderLists[folder]?[accountID] = .results(list.filter { $0.id != id })
+                folderLists[folder]?[accountID] = .results(list.filter { !gone.contains($0.id) })
             }
         }
-        if let index {
-            var remaining = messages
-            remaining.remove(at: index)
-            states[accountID] = .from(remaining)
-            if !removed.isRead { unreadCounts[accountID] = max(0, (unreadCounts[accountID] ?? 0) - 1) }
+        if !removed.isEmpty {
+            states[accountID] = .from(messages.filter { !gone.contains($0.id) })
+            let unread = removed.filter { !$0.element.isRead }.count
+            unreadCounts[accountID] = max(0, (unreadCounts[accountID] ?? 0) - unread)
         }
         if case .results(let list) = searchPhase, searchAccountID == accountID {
-            searchPhase = .results(list.filter { $0.id != id })
+            searchPhase = .results(list.filter { !gone.contains($0.id) })
         }
-        if openMessage?.messageID == id { openMessage = nil }
-        edits[id] = Edit(removed: true, at: Date())
-
+        if case .results(let list) = optionsPhase, optionsAccountID == accountID {
+            optionsPhase = .results(list.filter { !gone.contains($0.id) })
+        }
+        if let open = openMessage?.messageID, gone.contains(open) { openMessage = nil }
+        listActions.selection.subtract(gone)
+        for id in ids { edits[id] = Edit(removed: true, at: Date()) }
         unreadChanged()
 
         do {
-            try await request(client, url, credential, isModern(accountID))
-            edits[id]?.at = Date()
+            let newIDs = try await request(client, url, credential, isModern(accountID))
+            for (index, id) in ids.enumerated() {
+                // An item that kept its id (only a test server does that) is in its new folder
+                // under the same id, where "removed" must not hide it.
+                if index < newIDs.count, newIDs[index] == id { edits[id] = nil } else { edits[id]?.at = Date() }
+            }
+            return newIDs
         } catch is CancellationError {
-            edits[id] = nil
+            for id in ids { edits[id] = nil }
+            return nil
         } catch {
-            edits[id] = nil
-            if let index {
+            for id in ids { edits[id] = nil }
+            if !removed.isEmpty {
                 var restored = state(for: accountID).messages
-                restored.insert(removed, at: min(index, restored.count))
+                for (index, message) in removed { restored.insert(message, at: min(index, restored.count)) }
                 states[accountID] = .from(restored)
-                if !removed.isRead { unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + 1 }
+                let unread = removed.filter { !$0.element.isRead }.count
+                unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + unread
             }
             if searchAccountID == accountID, case .results = searchBefore { searchPhase = searchBefore }
+            if optionsAccountID == accountID, case .results = optionsBefore { optionsPhase = optionsBefore }
             for (folder, lists) in listsBefore { folderLists[folder]?[accountID] = lists[accountID] }
+            actionError = describe(error, accountID: accountID)
+            return nil
+        }
+    }
+
+    /// Undo put these rows back where they came from: on screen at once, newest first, with
+    /// the ids the server gave them there. The next read of the list settles the rest.
+    func restoreRows(_ rows: [MailMessage], in accountID: UUID, folder: MailFolder) {
+        for row in rows { edits[row.id] = nil }
+        if folder == .inbox || folder == .flagged, case .messages = state(for: accountID) {
+            var inbox = state(for: accountID).messages.filter { message in !rows.contains { $0.id == message.id } }
+            inbox.append(contentsOf: rows)
+            states[accountID] = .from(inbox.sorted { $0.received > $1.received })
+            unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + rows.filter { !$0.isRead }.count
+        } else if folder == .inbox || folder == .flagged {
+            states[accountID] = .from(rows.sorted { $0.received > $1.received })
+            unreadCounts[accountID] = (unreadCounts[accountID] ?? 0) + rows.filter { !$0.isRead }.count
+        }
+        if case .results(var list) = self.list(folder, for: accountID) {
+            list.removeAll { message in rows.contains { $0.id == message.id } }
+            list.append(contentsOf: folder == .flagged ? rows.filter(\.isFlagged) : rows)
+            folderLists[folder]?[accountID] = .results(list.sorted { $0.received > $1.received })
+        }
+        unreadChanged()
+    }
+
+    /// Read or flag for many rows in one request, on screen first, put back on failure.
+    func performMany(_ ids: [String], in accountID: UUID, read: Bool? = nil, flagged: Bool? = nil) async {
+        guard let (url, credential) = connection(for: accountID) else { return }
+        let before = ids.compactMap { message($0, in: accountID) }
+            .filter { (read != nil && $0.isRead != read) || (flagged != nil && $0.isFlagged != flagged) }
+        guard !before.isEmpty else { return }
+        for original in before {
+            var after = original
+            if let read { after.isRead = read }
+            if let flagged { after.isFlagged = flagged }
+            let delta = read == nil || original.isRead == read ? 0 : (read == true ? -1 : 1)
+            replace(after, in: accountID, unreadDelta: delta)
+            var record = edits[original.id] ?? Edit(at: Date())
+            if let read { record.isRead = read }
+            if let flagged { record.isFlagged = flagged }
+            record.at = Date()
+            edits[original.id] = record
+        }
+        let changed = before.map(\.id)
+        do {
+            if let read {
+                try await client.setRead(read, ids: changed, modern: isModern(accountID), at: url, credential: credential)
+            }
+            if let flagged {
+                try await client.setFlag(flagged, ids: changed, modern: isModern(accountID), at: url, credential: credential)
+            }
+            for id in changed { edits[id]?.at = Date() }
+        } catch is CancellationError {
+            for id in changed { edits[id] = nil }
+        } catch {
+            for original in before {
+                edits[original.id] = nil
+                let delta = read == nil || original.isRead == read ? 0 : (read == true ? 1 : -1)
+                if message(original.id, in: accountID) != nil { replace(original, in: accountID, unreadDelta: delta) }
+            }
             actionError = describe(error, accountID: accountID)
         }
     }
@@ -899,6 +1117,11 @@ final class MailStore {
            let index = list.firstIndex(where: { $0.id == message.id }) {
             list[index] = message
             searchPhase = .results(list)
+        }
+        if case .results(var list) = optionsPhase, optionsAccountID == accountID,
+           let index = list.firstIndex(where: { $0.id == message.id }) {
+            list[index] = message
+            optionsPhase = .results(list)
         }
         for (folder, lists) in folderLists {
             if case .results(var list) = lists[accountID], let index = list.firstIndex(where: { $0.id == message.id }) {
@@ -915,7 +1138,7 @@ final class MailStore {
         unreadChanged()
     }
 
-    private func describe(_ error: Error, accountID: UUID) -> String {
+    func describe(_ error: Error, accountID: UUID) -> String {
         let host = accounts.account(accountID)?.host ?? "The server"
         if let error = error as? EWSError { return error.message(host: host) }
         return error.localizedDescription

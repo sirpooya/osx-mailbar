@@ -28,6 +28,9 @@ struct PopoverRootView: View {
     @FocusState private var searchFocused: Bool
     @State private var swipe = SwipeTracker()
     @State private var daySwipe = PagerSwipe()
+    /// A two-finger swipe across a row (M20), and whether it has locked sideways or vertical.
+    @State private var rowSwipe = SwipeTracker()
+    @State private var rowSwipeSideways: Bool?
 
     private static let swipeThreshold: CGFloat = 40
     /// The list's tallest, and the fixed height of both tabs when Today is on.
@@ -67,6 +70,11 @@ struct PopoverRootView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { installSwipe() }
         .onDisappear { removeSwipe() }
+        // Whether the opened message has a List-Unsubscribe header, for the reader's button (M20).
+        .task(id: store.openMessage) {
+            guard let open = store.openMessage else { return }
+            _ = await store.unsubscribeLink(for: open.messageID, in: open.accountID)
+        }
         // A search stays open across folders and looks again in the one now showing.
         .onChange(of: store.mailFolder) { _, _ in
             if store.isSearchOpen { Task { await store.runSearch() } }
@@ -82,6 +90,12 @@ struct PopoverRootView: View {
         VStack(spacing: 0) {
             header
             if store.isSearchOpen, !showsTodayTab { searchBar }
+            if !showsTodayTab, !store.listOptions.filters(in: store.mailFolder).isEmpty { filterStrip }
+            if !showsTodayTab, !store.isSearchOpen, let account = store.selectedAccount,
+               MailStore.emptyTarget(store.mailFolder) != nil,
+               !(store.list(store.mailFolder, for: account.id)?.messages.isEmpty ?? true) {
+                emptyStrip(account)
+            }
             Divider().opacity(0.5)
             banners
             ZStack {
@@ -96,9 +110,58 @@ struct PopoverRootView: View {
             .frame(height: Self.contentHeight, alignment: .top)
             .clipped()
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: store.selectedAccount?.id)
+            // The undo toast floats over the list's foot for its five seconds (M20).
+            .overlay(alignment: .bottom) {
+                if let toast = store.listActions.toast, !showsTodayTab {
+                    UndoToastView(toast: toast, store: store)
+                        .padding(.bottom, 10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: store.listActions.toast)
             Divider().opacity(0.5)
-            footer
+            // Two or more rows selected: their actions take the footer's place.
+            if let account = store.selectedAccount, !showsTodayTab, store.listActions.selection.count >= 2 {
+                SelectionBar(ids: Array(store.listActions.selection), accountID: account.id,
+                             folder: listFolder, store: store)
+            } else {
+                footer
+            }
         }
+        // The folder tree, for More Folders, Favorites and Move to, once per account per run.
+        .task(id: store.selectedAccount?.id) {
+            if let account = store.selectedAccount { await store.loadFolderTree(for: account.id) }
+        }
+        // A selection belongs to the list it was made in.
+        .onChange(of: store.mailFolder) { _, _ in store.listActions.clearSelection() }
+        .onChange(of: store.selectedAccount?.id) { _, _ in store.listActions.clearSelection() }
+        .onChange(of: store.isSearchOpen) { _, _ in store.listActions.clearSelection() }
+        .onChange(of: store.popoverTab) { _, _ in store.listActions.clearSelection() }
+        .onAppear { applyListQCFlags() }
+    }
+
+    /// The folder whose rows are showing: a search's, or the one the menu picked.
+    private var listFolder: MailFolder {
+        store.isSearchOpen && store.searchQuery.trimmingCharacters(in: .whitespaces).count >= 2
+            ? store.searchFolder : store.mailFolder
+    }
+
+    /// Empty Deleted Items or Junk Email (M21), over the list. Asks first, with the count.
+    private func emptyStrip(_ account: Account) -> some View {
+        HStack(spacing: 6) {
+            Spacer(minLength: 4)
+            Button {
+                Task { await store.askToEmpty(store.mailFolder, in: account.id) }
+            } label: {
+                Label("Empty \(store.mailFolder.title)", systemImage: store.mailFolder == .deleted ? "trash.slash" : "xmark.bin")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Banners
@@ -107,6 +170,10 @@ struct PopoverRootView: View {
     /// create an Archive folder. Inline rather than an alert, which an `NSPopover` presents badly.
     @ViewBuilder
     private var banners: some View {
+        // Undo Send's toast and a held send that failed (M24).
+        ComposeBanners(store: store)
+        // Automatic replies on, password expiring, mailbox almost full (2026-11-16).
+        AccountHealthBanners(store: store)
         if let pending = store.pendingArchive {
             banner(symbol: "archivebox", tint: .accentColor,
                    text: "\(store.accounts.account(pending.accountID)?.displayName ?? "This mailbox") has no Archive folder yet.") {
@@ -124,10 +191,42 @@ struct PopoverRootView: View {
                 Button("Continue") { store.isComposing = true }
             }
         }
+        switch store.listActions.pending {
+        case .empty(let folder, let accountID, let count)?:
+            banner(symbol: "exclamationmark.triangle.fill", tint: .red,
+                   text: folder == .deleted
+                       ? "Permanently delete \(count) \(count == 1 ? "item" : "items") in Deleted Items?"
+                       : "Move \(count) \(count == 1 ? "item" : "items") from Junk Email to Deleted Items?") {
+                Button(folder == .deleted ? "Delete" : "Empty", role: .destructive) {
+                    Task { await store.empty(folder, in: accountID) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                Button("Cancel") { store.listActions.pending = nil }
+            }
+        case .unsubscribe(let way, let sender, _)?:
+            banner(symbol: "envelope.badge.shield.half.filled", tint: .accentColor,
+                   text: Self.unsubscribeQuestion(way, sender: sender)) {
+                Button("Unsubscribe") { Task { await store.confirmUnsubscribe() } }
+                    .buttonStyle(.borderedProminent)
+                Button("Cancel") { store.listActions.pending = nil }
+            }
+        case nil:
+            EmptyView()
+        }
         if let error = store.actionError {
             banner(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error) {
                 Button("Dismiss") { store.actionError = nil }
             }
+        }
+    }
+
+    static func unsubscribeQuestion(_ way: UnsubscribeLink.Preferred, sender: String) -> String {
+        switch way {
+        case .web(let url):
+            return "Unsubscribe from \(sender)? Opens \(url.host ?? "their page") in your browser."
+        case .mail(let mail):
+            return "Unsubscribe from \(sender)? Sends \u{201C}\(mail.subject)\u{201D} to \(mail.address)."
         }
     }
 
@@ -197,6 +296,8 @@ struct PopoverRootView: View {
                 // than leaving a hole. It goes and comes without a transition: animated, it slid
                 // the icons beside it and the bar looked as if it changed height.
                 if !showsTodayTab {
+                    optionsMenu
+                        .transition(.identity)
                     Button {
                         if store.isSearchOpen { store.closeSearch() } else { store.isSearchOpen = true }
                     } label: {
@@ -234,6 +335,9 @@ struct PopoverRootView: View {
             tabButton(.inbox, key: "1") {
                 HStack(spacing: 4) {
                     Text(store.mailFolder.tabTitle)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 120)
                     let count = store.selectedAccount.map { store.unreadCount(for: $0.id) } ?? 0
                     if count > 0, store.mailFolder == .inbox {
                         Text("\(count)")
@@ -278,6 +382,66 @@ struct PopoverRootView: View {
         .keyboardShortcut(key, modifiers: .command)
     }
 
+    /// Outlook's Filter By and Sort By in one menu beside search (2026-11-16). The glyph fills
+    /// while a filter is on, so a shortened list never passes for the whole folder.
+    private var optionsMenu: some View {
+        let folder = store.mailFolder
+        let filtered = !store.listOptions.filters(in: folder).isEmpty
+        return Menu {
+            Section("Filter") {
+                ForEach(MailFilter.allCases.filter { $0.applies(to: folder) }) { filter in
+                    Toggle(isOn: Binding(get: { store.listOptions.filters.contains(filter) },
+                                         set: { _ in store.toggleFilter(filter) })) {
+                        Label(filter.title, systemImage: filter.symbol)
+                    }
+                }
+                if filtered {
+                    Button("Clear Filters") { store.listOptions.filters = [] }
+                }
+            }
+            Section("Sort By") {
+                Picker("Sort By", selection: $store.listOptions.sort) {
+                    ForEach(MailSort.allCases) { sort in
+                        Text(sort.title(in: folder)).tag(sort)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+        } label: {
+            Image(systemName: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(filtered ? Color.accentColor : Color.secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Filter and Sort")
+        .accessibilityLabel("Filter and sort")
+        .disabled(store.selectedAccount == nil)
+    }
+
+    /// Says which filters are on, with a way out, under the header.
+    private var filterStrip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+            Text("Showing \(store.listOptions.summary(in: store.mailFolder))")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Button("Clear") { store.listOptions.filters = [] }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
+    }
+
     /// The menu on the left: the folder (the user's call, 2026-09-28: here, not a third tab),
     /// and with several accounts the account above it. It is named after the
     /// account when there are several, else after the folder.
@@ -295,13 +459,14 @@ struct PopoverRootView: View {
                 }
                 Divider()
             }
-            ForEach(MailFolder.allCases, id: \.self) { folder in
+            ForEach(MailFolder.standard, id: \.self) { folder in
                 Button {
                     pick(folder)
                 } label: {
                     Label(folder.title, systemImage: store.mailFolder == folder ? "checkmark" : "")
                 }
             }
+            if let account = store.selectedAccount { otherFolders(account) }
         } label: {
             HStack(spacing: 3) {
                 Text(accounts.count > 1 ? (store.selectedAccount?.displayName ?? "") : store.mailFolder.title)
@@ -317,6 +482,50 @@ struct PopoverRootView: View {
         .fixedSize()
     }
 
+    /// Favorites straight in the menu, the whole tree under More Folders, and a way to pin the
+    /// custom folder showing (M21, after Outlook's Favorites).
+    @ViewBuilder
+    private func otherFolders(_ account: Account) -> some View {
+        let favorites = store.listActions.favorites(for: account.id)
+        if !favorites.isEmpty {
+            Section("Favorites") {
+                ForEach(favorites) { folder in
+                    Button {
+                        open(folder)
+                    } label: {
+                        Label(folder.name, systemImage: store.mailFolder == folder.mailFolder ? "checkmark" : "star")
+                    }
+                }
+            }
+        }
+        Divider()
+        Menu("More Folders") {
+            switch store.listActions.folderTrees[account.id] {
+            case .loaded(let folders)?:
+                FolderTreeItems(folders: folders, checked: store.mailFolder) { open($0) }
+            case .failed?:
+                Button("Could Not Load Folders. Try Again") {
+                    Task { await store.loadFolderTree(for: account.id, force: true) }
+                }
+            case .loading?, nil:
+                Text("Loading Folders...")
+            }
+        }
+        if case .custom(let folder) = store.mailFolder {
+            let favorite = store.listActions.isFavorite(folder, accountID: account.id)
+            Button(favorite ? "Remove \u{201C}\(folder.name)\u{201D} from Favorites" : "Add \u{201C}\(folder.name)\u{201D} to Favorites") {
+                store.listActions.toggleFavorite(folder, accountID: account.id, persist: store.accounts.persists)
+            }
+        }
+    }
+
+    private func open(_ folder: MailboxFolder) {
+        store.open(folder)
+        if store.popoverTab == .today {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { store.popoverTab = .inbox }
+        }
+    }
+
     // MARK: - Content
 
     /// One case per state and no `default`, so a new state cannot inherit somebody else's view
@@ -328,8 +537,10 @@ struct PopoverRootView: View {
                          onOpenEvent: { event in onOpenEvent(account.id, event.id) },
                          onOpenCalendar: { onOpenEvent(account.id, "") })
         } else if let account = store.selectedAccount {
-            if store.isSearchOpen, store.searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 {
+            if store.hasSearchInput {
                 searchContent(account)
+            } else if store.showsOptionsList {
+                optionsContent(account)
             } else if store.mailFolder != .inbox {
                 folderContent(store.mailFolder, account)
             } else {
@@ -346,60 +557,45 @@ struct PopoverRootView: View {
     /// keystroke does not become a request; results that arrive after the text changed are dropped
     /// by the store.
     private var searchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            TextField("Search \(store.mailFolder.title)", text: $store.searchQuery)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .focused($searchFocused)
-                .onSubmit { Task { await store.runSearch() } }
-            if !store.searchQuery.isEmpty {
-                Button {
-                    store.searchQuery = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .help("Clear")
-            }
-            Button("Done") { store.closeSearch() }
-                .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .fill(Color.primary.opacity(0.06)))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 7)
-        .onAppear { searchFocused = true }
-        .task(id: store.searchQuery) {
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled else { return }
-            await store.runSearch()
-        }
+        SearchBarView(store: store, focused: $searchFocused)
     }
 
-    @ViewBuilder
+    /// Events, People and the mail found (`SearchResultsView`).
     private func searchContent(_ account: Account) -> some View {
-        switch store.searchPhase {
-        case .idle, .searching:
-            SkeletonListView(rowCount: 3)
-        case .results(let messages) where messages.isEmpty:
-            StatePlaceholder(symbol: "magnifyingglass", tint: .secondary,
-                             title: "No messages match",
-                             message: "Nothing in \(store.searchFolder.title) of \(account.displayName) matches \u{201C}\(store.searchQuery)\u{201D}.") {
-                EmptyView()
+        SearchResultsView(store: store, account: account, onOpenEvent: onOpenEvent)
+    }
+
+    /// The folder showing, filtered or reordered by the server. While the account itself is
+    /// failing, the Inbox's own screen for that says so.
+    @ViewBuilder
+    private func optionsContent(_ account: Account) -> some View {
+        let folder = store.mailFolder
+        Group {
+            switch store.state(for: account.id) {
+            case .needsPassword, .passwordRejected, .unreachable, .failed:
+                inboxContent(account)
+            case .loading, .messages, .empty:
+                switch store.optionsAccountID == account.id ? store.optionsPhase : .idle {
+                case .idle, .searching:
+                    SkeletonListView()
+                case .results(let messages) where messages.isEmpty:
+                    StatePlaceholder(symbol: "line.3.horizontal.decrease.circle", tint: .secondary,
+                                     title: "No messages match",
+                                     message: "Nothing in \(folder.title) of \(account.displayName) is \(store.listOptions.summary(in: folder).lowercased()).") {
+                        Button("Clear Filters") { store.listOptions.filters = [] }
+                    }
+                case .results(let messages):
+                    InboxListView(messages: messages, accountID: account.id, store: store, folder: folder,
+                                  groupsByDate: store.listOptions.sort == .date)
+                case .failed(let message):
+                    GenericFailureView(message: message) { Task { await store.loadOptionsList() } }
+                }
             }
-        case .results(let messages):
-            InboxListView(messages: messages, accountID: account.id, store: store,
-                          folder: store.searchFolder, highlight: store.highlightTerms)
-        case .failed(let message):
-            GenericFailureView(message: message) { Task { await store.runSearch() } }
+        }
+        // Again whenever the options, the folder or the account change, and after every poll,
+        // so new mail that matches shows up as it does in the plain list.
+        .task(id: "\(account.id) \(folder) \(store.listOptions.sort) \(store.listOptions.filters(in: folder).map(\.rawValue)) \(store.lastRefresh?.timeIntervalSince1970 ?? 0)") {
+            await store.loadOptionsList()
         }
     }
 
@@ -422,7 +618,8 @@ struct PopoverRootView: View {
                         EmptyView()
                     }
                 case .results(let messages):
-                    InboxListView(messages: messages, accountID: account.id, store: store, folder: folder)
+                    InboxListView(messages: messages, accountID: account.id, store: store, folder: folder,
+                                  groupsByDate: true)
                 case .failed(let message):
                     GenericFailureView(message: message) { Task { await store.loadFolder(folder, account.id) } }
                 }
@@ -438,7 +635,7 @@ struct PopoverRootView: View {
             case .loading:
                 SkeletonListView()
             case .messages(let messages):
-                InboxListView(messages: messages, accountID: account.id, store: store)
+                InboxListView(messages: messages, accountID: account.id, store: store, groupsByDate: true)
             case .empty:
                 EmptyInboxView(onRefresh: onRefresh)
             case .needsPassword:
@@ -475,6 +672,7 @@ struct PopoverRootView: View {
                 Button {
                     onRefresh()
                     if store.showsFolderList { Task { await store.loadFolder() } }
+                    if store.showsOptionsList { Task { await store.loadOptionsList() } }
                 } label: {
                     Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .semibold))
                 }
@@ -553,6 +751,11 @@ struct PopoverRootView: View {
            let window = store.popoverWindow, event.window === window {
             return daySwipe.handle(event, pager: store.dayPager)
         }
+        // On a row of the list: its swipe action (M20).
+        if store.openMessage == nil, !store.isComposing, !showsTodayTab,
+           let window = store.popoverWindow, event.window === window {
+            return handleRowSwipe(event)
+        }
         // In a message: back, fingers moving right, as in Safari.
         if store.openMessage != nil {
             if event.phase.contains(.began) {
@@ -567,36 +770,118 @@ struct PopoverRootView: View {
     }
 }
 
+extension PopoverRootView {
+    /// A swipe across the row under the pointer follows the fingers once it is clearly sideways
+    /// (vertical ones stay the list's scroll), and acts when let go past the threshold. The
+    /// side it goes picks the action (Settings, General); one the folder does not offer only
+    /// gives a little.
+    fileprivate func handleRowSwipe(_ event: NSEvent) -> Bool {
+        let actions = store.listActions
+        if event.phase.contains(.began) {
+            rowSwipe.began()
+            rowSwipeSideways = nil
+            actions.swipingRow = actions.hoveredRow
+            actions.swipeOffset = 0
+            return false
+        }
+        guard let id = actions.swipingRow, let account = store.selectedAccount else { return false }
+        if event.phase.contains(.changed) {
+            rowSwipe.moved(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
+            if rowSwipeSideways == nil, abs(rowSwipe.sidewaysTravel) > 4 || abs(event.scrollingDeltaY) > 4 {
+                rowSwipeSideways = rowSwipe.isSideways
+            }
+            guard rowSwipeSideways == true else { return false }
+            let travel = rowSwipe.sidewaysTravel
+            let action = travel < 0 ? SwipeAction.left() : SwipeAction.right()
+            actions.swipeOffset = SwipeTracker.rubberBand(travel, limit: action.applies(in: listFolder) ? 150 : 12)
+            return true
+        }
+        guard event.phase.contains(.ended) || event.phase.contains(.cancelled) else { return false }
+        let sideways = rowSwipeSideways == true
+        let offset = actions.swipeOffset
+        _ = rowSwipe.ended(threshold: 0)
+        rowSwipeSideways = nil
+        let action = offset < 0 ? SwipeAction.left() : SwipeAction.right()
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { actions.swipeOffset = 0 }
+        if sideways, event.phase.contains(.ended), abs(offset) >= SwipeReveal.threshold,
+           action.applies(in: listFolder), let message = store.message(id, in: account.id) {
+            Task { await store.perform(action, on: message, in: account.id) }
+        }
+        return sideways
+    }
+
+    /// DEBUG launch flags for screenshots of this milestone's states, which need clicks.
+    fileprivate func applyListQCFlags() {
+        #if DEBUG
+        guard let account = store.selectedAccount else { return }
+        Task {
+            if let name = QCFlags.openFolder {
+                if let standard = MailFolder.standard.first(where: { $0.title.lowercased() == name.lowercased() || $0.tabTitle.lowercased() == name.lowercased() }) {
+                    store.mailFolder = standard
+                } else {
+                    await store.loadFolderTree(for: account.id)
+                    // The list's own task may have started the read; wait for it.
+                    for _ in 0..<40 where store.listActions.folderTrees[account.id] == .loading {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    if let found = store.listActions.folderTrees[account.id]?.folders.first(where: { $0.name == name }) {
+                        store.open(found)
+                        if QCFlags.favoriteFolder { store.listActions.toggleFavorite(found, accountID: account.id, persist: false) }
+                    }
+                }
+            }
+            try? await Task.sleep(for: .seconds(1.2))
+            let shown = store.mailFolder == .inbox ? store.state(for: account.id).messages
+                : (store.list(store.mailFolder, for: account.id)?.messages ?? [])
+            if let rows = QCFlags.selectRows {
+                store.listActions.selection = Set(rows.compactMap { shown.indices.contains($0) ? shown[$0].id : nil })
+            }
+            if let (index, offset) = QCFlags.swipeRow, shown.indices.contains(index) {
+                store.listActions.swipingRow = shown[index].id
+                store.listActions.swipeOffset = offset
+            }
+            if let toast = QCFlags.showToast {
+                store.listActions.toast = UndoToast(text: toast, accountID: account.id,
+                                                    undo: .init(ids: [], back: .distinguished("inbox"), wasJunk: false, rows: [], folder: .inbox))
+            }
+            switch QCFlags.confirm {
+            case "empty"?: await store.askToEmpty(store.mailFolder, in: account.id)
+            case "unsubscribe"?:
+                if let letter = shown.first(where: { $0.senderName == "Newsletter" }) {
+                    await store.askToUnsubscribe(message: letter.id, in: account.id)
+                }
+            default: break
+            }
+        }
+        #endif
+    }
+}
+
 struct InboxListView: View {
     let messages: [MailMessage]
     let accountID: UUID
     @Bindable var store: MailStore
     var folder: MailFolder = .inbox
     var highlight: [String] = []
+    /// Today, Yesterday, the weekdays, Last Week and so on, over a newest-first list
+    /// (2026-11-16, after Outlook). Off for any other order, whose groups would mean nothing.
+    var groupsByDate = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                    if index > 0 {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.07))
-                            .frame(height: 1)
-                            // The same inset on both sides as the row's own content, no special
-                            // left indent (the user's call, 2026-09-25).
-                            .padding(.horizontal, MessageRowView.Metrics.horizontalPadding)
+            LazyVStack(spacing: 0, pinnedViews: groupsByDate ? [.sectionHeaders] : []) {
+                if groupsByDate {
+                    ForEach(MailDateGroup.sections(messages)) { section in
+                        Section {
+                            rows(section.messages, first: section.messages.first?.id == messages.first?.id)
+                        } header: {
+                            groupHeader(section.title)
+                        }
                     }
-                    MessageRowView(message: message, accountID: accountID, store: store,
-                                   folder: folder, highlight: highlight,
-                                   startsHovered: index == 0 && QCFlags.hoverFirstRow) {
-                        store.actionError = nil
-                        store.openMessage = .init(accountID: accountID, messageID: message.id)
-                    }
-                    // A row that leaves (archived, deleted) fades and gives up its height, so the
-                    // rows below are seen to close the gap rather than teleporting up.
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                } else {
+                    rows(messages, first: true)
                 }
             }
             .padding(.horizontal, 5)
@@ -607,5 +892,55 @@ struct InboxListView: View {
         }
         // About seven rows in the popover, which must not run past the bottom of the screen.
         .frame(maxHeight: PopoverRootView.contentHeight)
+        // File names and invitation times for the rows, one request each for all of them.
+        .task(id: messages.map(\.id)) {
+            await store.loadRowDetails(for: messages, accountID: accountID)
+        }
+    }
+
+    @ViewBuilder
+    private func rows(_ list: [MailMessage], first: Bool) -> some View {
+        ForEach(Array(list.enumerated()), id: \.element.id) { index, message in
+            if index > 0 {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.07))
+                    .frame(height: 1)
+                    // The same inset on both sides as the row's own content, no special
+                    // left indent (the user's call, 2026-09-25).
+                    .padding(.horizontal, MessageRowView.Metrics.horizontalPadding)
+            }
+            MessageRowView(message: message, accountID: accountID, store: store,
+                           folder: folder, highlight: highlight,
+                           startsHovered: first && index == 0 && QCFlags.hoverFirstRow) {
+                // Cmd-click toggles a row in the selection, Shift-click extends it (M20); a
+                // plain click opens the message, as before.
+                let flags = NSEvent.modifierFlags
+                if store.listActions.click(message.id, command: flags.contains(.command),
+                                           shift: flags.contains(.shift), order: messages.map(\.id)) { return }
+                store.actionError = nil
+                // A draft opens in the composer (M25).
+                if folder == .drafts {
+                    Task { await store.openDraft(message.id, in: accountID) }
+                    return
+                }
+                store.openMessage = .init(accountID: accountID, messageID: message.id)
+            }
+            // A row that leaves (archived, deleted) fades and gives up its height, so the
+            // rows below are seen to close the gap rather than teleporting up.
+            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+        }
+    }
+
+    /// Pinned while its rows scroll under it, so it has the popover's own opaque surface.
+    private func groupHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, MessageRowView.Metrics.horizontalPadding)
+            .padding(.top, 6)
+            .padding(.bottom, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .accessibilityAddTraits(.isHeader)
     }
 }

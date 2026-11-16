@@ -312,6 +312,7 @@ final class CalendarStore {
             if editor == nil {
                 formPhotos = [:]; formStatuses = [:]; formPhotoAsked = []; formStatusesKey = ""
                 askingWhoToSend = false
+                pendingWarning = nil
             }
         }
     }
@@ -331,6 +332,25 @@ final class CalendarStore {
     var notice: String?
     /// Rooms the organization publishes, loaded the first time the room menu opens.
     private(set) var rooms: [Room]?
+
+    // MARK: Outlook's extras (2026-11-16)
+
+    enum SeriesAction: Equatable { case edit, delete }
+    /// Edit or Delete was pressed on an occurrence: the panel asks which part of the series.
+    var askingSeries: SeriesAction?
+    /// Delete was pressed on someone else's meeting: the panel offers to decline or to delete
+    /// quietly.
+    var askingInviteeDelete = false
+    /// The series' master is being read for All Events or This and Following.
+    var seriesLoading = false
+    /// Proposed new times on the selected meeting, when the user organized it. In memory only,
+    /// dropped when another event is selected.
+    var proposals: [TimeProposal] = []
+    /// A proposal being accepted, for its spinner.
+    var acceptingProposal: String?
+    /// Send was pressed on a form with no title, or a meeting with no location: the bottom bar
+    /// asks before sending.
+    var pendingWarning: EventDraft.MissingWarning?
     /// The room lists are being read, for the spinner in Location.
     private(set) var roomsLoading = false
 
@@ -358,7 +378,7 @@ final class CalendarStore {
               let (url, credential) = mail.connection(for: draft.accountID) else { return }
         if let sendToAll {
             draft.sendToAll = sendToAll
-        } else if draft.asksWhoToSend {
+        } else if draft.asksWhoToSend, !draft.saveWithoutSending, !draft.invitationsUnsent {
             askingWhoToSend = true
             return
         }
@@ -366,13 +386,19 @@ final class CalendarStore {
         draft.error = nil
         editor = draft
         do {
+            // This and Following: the old series ends the day before, then this one starts.
+            // Ending it again on a retry changes nothing, so a failed create can be sent again.
+            if let split = draft.splitFrom {
+                try await mail.client.endSeries(split, at: url, credential: credential)
+            }
             if let id = draft.id {
                 try await mail.client.updateEvent(draft, id: id, at: url, credential: credential)
             } else {
                 try await mail.client.createEvent(draft, at: url, credential: credential)
             }
             editor = nil
-            show(notice: draft.sendsInvitations ? (draft.isNew ? "Invitations sent." : "Updates sent.") : "Saved.")
+            show(notice: draft.saveWithoutSending && draft.sendsInvitations ? "Saved. Nobody was told yet."
+                 : draft.sendsInvitations ? (draft.isNew ? "Invitations sent." : "Updates sent.") : "Saved.")
             await refresh()
             if let id = draft.id, let event = events.first(where: { $0.id == id }) { await select(event) }
         } catch {
@@ -382,15 +408,18 @@ final class CalendarStore {
     }
 
     /// Deletes the selected event. A meeting the user organized sends the cancellation.
-    func deleteSelected() async {
-        guard let event = selectedEvent, canEditSelected, let account,
+    /// Someone else's meeting (`quietly`, Outlook's "Delete Without Notifying") goes to Deleted
+    /// Items without a word to its organizer.
+    func deleteSelected(quietly: Bool = false) async {
+        guard let event = selectedEvent, canEditSelected || quietly, let account,
               let (url, credential) = mail.connection(for: account.id) else { return }
         do {
-            try await mail.client.deleteEvent(id: event.id, cancelMeeting: event.isMeeting && event.isOrganizer,
+            try await mail.client.deleteEvent(id: event.id, cancelMeeting: !quietly && event.isMeeting && event.isOrganizer,
                                               at: url, credential: credential)
             events.removeAll { $0.id == event.id }
             await select(nil)
-            show(notice: event.isMeeting && event.isOrganizer ? "Cancelled; everyone invited was told." : "Deleted.")
+            show(notice: quietly && event.isMeeting && !event.isOrganizer ? "Deleted. \(event.organizer.isEmpty ? "The organizer" : event.organizer) was not told."
+                 : event.isMeeting && event.isOrganizer ? "Cancelled; everyone invited was told." : "Deleted.")
             await refresh()
         } catch {
             show(notice: describe(error))
@@ -487,7 +516,7 @@ final class CalendarStore {
         rooms = (try? await mail.client.rooms(at: url, credential: credential)) ?? []
     }
 
-    private func show(notice text: String) {
+    func show(notice text: String) {
         notice = text
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_500_000_000)
@@ -495,12 +524,17 @@ final class CalendarStore {
         }
     }
 
-    private func describe(_ error: Error) -> String {
+    func describe(_ error: Error) -> String {
         if let error = error as? EWSError { return error.message(host: account?.host ?? "The server") }
         return error.localizedDescription
     }
 
     func select(_ event: CalendarEvent?) async {
+        if selectedEventID != event?.id {
+            askingSeries = nil
+            askingInviteeDelete = false
+            proposals = []
+        }
         selectedEventID = event?.id
         guard let event, let account, let (url, credential) = mail.connection(for: account.id) else {
             detail = .idle
@@ -511,6 +545,7 @@ final class CalendarStore {
             let loaded = try await mail.client.eventDetail(id: event.id, at: url, credential: credential)
             guard selectedEventID == event.id else { return }
             detail = .loaded(loaded)
+            await loadProposals(for: loaded)
         } catch let error as EWSError {
             guard selectedEventID == event.id else { return }
             detail = .failed(error.message(host: account.host))

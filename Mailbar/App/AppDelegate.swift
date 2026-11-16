@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var reminders: EventReminders!
     private var statusItemController: StatusItemController!
     private let notifications = NotificationService()
+    private var widgetFeed: WidgetFeed?
     private var editingShortcutMonitor: Any?
 
     /// The unit tests use the app as their TEST_HOST, so this delegate runs for them too. Without
@@ -20,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isRunningTests else { return }
+        #if DEBUG
+        QCScreen.install()
+        #endif
 
         // First, always: anything whose default is not 0 or false must be registered before
         // anything reads it.
@@ -40,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reminders = EventReminders(mail: store)
         if QCFlags.openToday { store.popoverTab = .today }
         if QCFlags.openSent { store.mailFolder = .sent }
+        if let options = QCFlags.listOptions { store.listOptions = options }
         if let offset = QCFlags.todayOffset { store.dayOffset = offset }
         if QCFlags.todaySwipe {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
@@ -56,13 +61,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notifications.configure()
         store.onNewMail = { [weak self] account, messages in
             let defaults = UserDefaults.standard
-            guard let self, defaults.bool(forKey: Keys.notifyNewMail) else { return }
+            guard let self else { return }
+            // An account the active Focus filter silences makes no sound either.
+            guard FocusFilterState.shared.allows(account.id) else { return }
+            // Banners off: the new-mail sound alone (M26).
+            guard defaults.bool(forKey: Keys.notifyNewMail) else { MailSounds.play(MailSounds.newMail); return }
             // Sender and subject always: the switch that hid them was removed (the user's call).
             self.notifications.notify(messages, account: account, showDetails: true)
         }
         store.onUnreadChanged = { [weak self] unread in
             self?.notifications.withdraw(except: unread)
         }
+        store.onSent = { MailSounds.play(MailSounds.sent) }
+        // The buttons on a new-mail banner (M26), through the same actions as the popover's.
+        notifications.onAction = { [weak self] action, account, message in
+            guard let self else { return }
+            switch action {
+            case .markRead: await self.store.setRead(true, message: message, in: account)
+            case .delete: await self.store.delete(message: message, in: account)
+            case .archive:
+                await self.store.archive(message: message, in: account)
+                // No Archive folder yet: the popover asks before creating one.
+                if self.store.pendingArchive != nil { self.statusItemController.show() }
+            }
+        }
+        widgetFeed = WidgetFeed(store: store)
+        widgetFeed?.start()
+        #if DEBUG
+        if WidgetPreviewWindow.isRequested {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { WidgetPreviewWindow.show() }
+        }
+        #endif
         statusItemController = StatusItemController(
             store: store,
             onOpenSettings: { [weak self] in self?.showSettings() },
@@ -128,6 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Attachments.clearOpenedCopies()
 
         statusItemController.onOpenCalendar = { [weak self] in self?.showCalendar() }
+        // The calendar's Forward and Email Attendees open the composer, which lives in the popover.
+        NotificationCenter.default.addObserver(forName: .mailbarShowComposer, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.statusItemController.show() }
+        }
         if QCFlags.openCalendar != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.showCalendar() }
         }
@@ -228,6 +261,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettingsFromMenu() { showSettings() }
+
+    /// A mailto: link (M23), when Mailbar is the default mail app: the composer, filled from it.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let link = urls.lazy.compactMap(MailtoLink.init).first, !accounts.accounts.isEmpty else { return }
+        store.closeSearch()
+        store.openMessage = nil
+        store.popoverTab = .inbox
+        store.startMailto(link)
+        statusItemController.show()
+    }
 
     private func showSettings() {
         // An account added, edited or deleted, or a new interval, all mean "check now".

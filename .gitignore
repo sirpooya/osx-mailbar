@@ -9,6 +9,8 @@ Build/
 DerivedData/
 # -derivedDataPath folders: osx-font-manager uses .dd/, osx-feather-app uses dd/
 .dd/
+.dd-*/
+_qc-*/
 dd/
 
 # Per-user Xcode state. Never commit (osx-launchpad and osx-prairie still track it: legacy).

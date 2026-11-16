@@ -10,7 +10,8 @@ enum CalendarSOAP {
     /// `invite: false` saves without telling anyone yet: an event with files is created first,
     /// then given its files, then sent (`EWSClient.createEvent`), so the invitations carry them.
     static func createEvent(_ draft: EventDraft, invite: Bool = true) -> String {
-        let invites = !invite || (draft.attendeeList.isEmpty && draft.rooms.isEmpty) ? "SendToNone" : "SendToAllAndSaveCopy"
+        let invites = !invite || draft.saveWithoutSending || (draft.attendeeList.isEmpty && draft.rooms.isEmpty)
+            ? "SendToNone" : "SendToAllAndSaveCopy"
         return """
             <m:CreateItem SendMeetingInvitations="\(invites)">
               <m:SavedItemFolderId><t:DistinguishedFolderId Id="calendar"/></m:SavedItemFolderId>
@@ -18,6 +19,7 @@ enum CalendarSOAP {
                 <t:CalendarItem>
         \(itemFields(draft))
         \(recurrence(draft))
+        \(timeZones(draft))
                 </t:CalendarItem>
               </m:Items>
             </m:CreateItem>
@@ -29,8 +31,10 @@ enum CalendarSOAP {
     /// person still tells them, with a cancellation.
     /// Changed files go to everyone (`sendToAll`), not only to the people whose part changed.
     static func updateEvent(_ draft: EventDraft, id: String, sendToAll: Bool = false) -> String {
-        let sends = draft.invitees.isEmpty && draft.originalInvitees.isEmpty ? "SendToNone"
-            : sendToAll ? "SendToAllAndSaveCopy" : "SendToChangedAndSaveCopy"
+        // Saved without sending: nobody is told. Saved so before and sent now: everyone is
+        // invited, since nobody has the meeting yet.
+        let sends = draft.saveWithoutSending || draft.invitees.isEmpty && draft.originalInvitees.isEmpty ? "SendToNone"
+            : sendToAll || draft.invitationsUnsent ? "SendToAllAndSaveCopy" : "SendToChangedAndSaveCopy"
         func set(_ field: String, _ element: String) -> String {
             """
                           <t:SetItemField><t:FieldURI FieldURI="\(field)"/><t:CalendarItem>\(element)</t:CalendarItem></t:SetItemField>
@@ -70,6 +74,18 @@ enum CalendarSOAP {
         changes.append(draft.rooms.isEmpty
             ? #"              <t:DeleteItemField><t:FieldURI FieldURI="calendar:Resources"/></t:DeleteItemField>"#
             : set("calendar:Resources", "<t:Resources>\(attendees(draft.rooms.map(\.address)))</t:Resources>"))
+        // The whole series (All Events): its repeat rule as the form now has it.
+        if draft.editsSeries {
+            changes.append(draft.repeatPattern == nil
+                ? #"              <t:DeleteItemField><t:FieldURI FieldURI="calendar:Recurrence"/></t:DeleteItemField>"#
+                : set("calendar:Recurrence", recurrenceElement(draft)))
+        }
+        if !draft.isAllDay, let zone = draft.startTimeZone {
+            changes.append(set("calendar:StartTimeZone", #"<t:StartTimeZone Id="\#(SOAP.escape(zone))"/>"#))
+        }
+        if !draft.isAllDay, let zone = draft.endTimeZone {
+            changes.append(set("calendar:EndTimeZone", #"<t:EndTimeZone Id="\#(SOAP.escape(zone))"/>"#))
+        }
         return """
             <m:UpdateItem ConflictResolution="AlwaysOverwrite" SendMeetingInvitationsOrCancellations="\(sends)">
               <m:ItemChanges>
@@ -344,7 +360,22 @@ enum CalendarSOAP {
     }
 
     private static func recurrence(_ draft: EventDraft) -> String {
-        guard draft.id == nil, let pattern = draft.repeatPattern else { return "" }
+        guard draft.id == nil, draft.repeatPattern != nil else { return "" }
+        return "          " + recurrenceElement(draft)
+    }
+
+    /// Different zones for the start and the end (Exchange 2010 and later), after Recurrence in
+    /// CalendarItemType's order. Never on an all-day event, which runs midnight to midnight.
+    private static func timeZones(_ draft: EventDraft) -> String {
+        guard !draft.isAllDay else { return "" }
+        let start = draft.startTimeZone.map { #"<t:StartTimeZone Id="\#(SOAP.escape($0))"/>"# } ?? ""
+        let end = draft.endTimeZone.map { #"<t:EndTimeZone Id="\#(SOAP.escape($0))"/>"# } ?? ""
+        return start.isEmpty && end.isEmpty ? "" : "          " + start + end
+    }
+
+    /// `<t:Recurrence>` for the draft's pattern and end, from its start's day.
+    static func recurrenceElement(_ draft: EventDraft) -> String {
+        guard let pattern = draft.repeatPattern else { return "" }
         let start = draft.requestStart
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -361,7 +392,7 @@ enum CalendarSOAP {
         case .after(let count):
             range = "<t:NumberedRecurrence>\(from)<t:NumberOfOccurrences>\(max(count, 1))</t:NumberOfOccurrences></t:NumberedRecurrence>"
         }
-        return "          <t:Recurrence>\(pattern.xml(start: start))\(range)</t:Recurrence>"
+        return "<t:Recurrence>\(pattern.xml(start: start))\(range)</t:Recurrence>"
     }
 }
 
@@ -575,14 +606,14 @@ extension EWSClient {
             try await calendarWrite(CalendarSOAP.createEvent(draft), url: url, credential: credential)
             return
         }
-        let created = try await raw(CalendarSOAP.createEvent(draft, invite: false), url: url, credential: credential)
+        let created = try await calendarRaw(CalendarSOAP.createEvent(draft, invite: false), url: url, credential: credential)
         let root = try EWSResponse.parse(created)
         _ = try EWSResponse.responseMessages(in: root)
         guard let id = root.first("ItemId")?.attributes["Id"] else {
             throw EWSError.invalidResponse("Exchange did not return the new event.")
         }
         try await calendarWrite(CalendarSOAP.createAttachments(draft.newFiles, parent: id), url: url, credential: credential)
-        if draft.sendsInvitations {
+        if draft.sendsInvitations, !draft.saveWithoutSending {
             try await calendarWrite(CalendarSOAP.updateEvent(draft, id: id, sendToAll: true), url: url, credential: credential)
         }
     }
@@ -652,8 +683,8 @@ extension EWSClient {
         try await calendarWrite(CalendarSOAP.removeCancelled(id, changeKey: changeKey), url: url, credential: credential)
     }
 
-    private func currentChangeKey(_ id: String, url: URL, credential: EWSCredential) async throws -> String {
-        let identity = try await raw(SOAP.getItemIdentity(id: id), url: url, credential: credential)
+    func currentChangeKey(_ id: String, url: URL, credential: EWSCredential) async throws -> String {
+        let identity = try await calendarRaw(SOAP.getItemIdentity(id: id), url: url, credential: credential)
         let root = try EWSResponse.parse(identity)
         _ = try EWSResponse.responseMessages(in: root)
         guard let changeKey = root.first("ItemId")?.attributes["ChangeKey"] else {
@@ -663,27 +694,27 @@ extension EWSClient {
     }
 
     func resolveNames(_ text: String, at url: URL, credential: EWSCredential) async throws -> [PersonSuggestion] {
-        try EWSResponse.resolvedNames(from: try await raw(CalendarSOAP.resolveNames(text), url: url, credential: credential))
+        try EWSResponse.resolvedNames(from: try await calendarRaw(CalendarSOAP.resolveNames(text), url: url, credential: credential))
     }
 
     func contactCard(_ address: String, at url: URL, credential: EWSCredential) async throws -> ContactCard? {
-        try EWSResponse.contactCard(from: try await raw(CalendarSOAP.resolveContact(address), url: url, credential: credential),
+        try EWSResponse.contactCard(from: try await calendarRaw(CalendarSOAP.resolveContact(address), url: url, credential: credential),
                                     address: address)
     }
 
     func expandGroup(_ address: String, at url: URL, credential: EWSCredential) async throws -> (members: [PersonSuggestion], complete: Bool) {
-        try EWSResponse.groupMembers(from: try await raw(CalendarSOAP.expandGroup(address), url: url, credential: credential))
+        try EWSResponse.groupMembers(from: try await calendarRaw(CalendarSOAP.expandGroup(address), url: url, credential: credential))
     }
 
     /// Every room in every room list the organization publishes. Empty when it publishes none.
     func rooms(at url: URL, credential: EWSCredential) async throws -> [Room] {
-        let lists = try EWSResponse.roomAddresses(from: try await raw(CalendarSOAP.getRoomLists, url: url, credential: credential),
+        let lists = try EWSResponse.roomAddresses(from: try await calendarRaw(CalendarSOAP.getRoomLists, url: url, credential: credential),
                                                   element: "Address")
         // Every list at once: one after another took long over the VPN.
         let rooms = try await withThrowingTaskGroup(of: [Room].self) { group in
             for list in lists {
                 group.addTask {
-                    let data = try await self.raw(CalendarSOAP.getRooms(list: list.address), url: url, credential: credential)
+                    let data = try await self.calendarRaw(CalendarSOAP.getRooms(list: list.address), url: url, credential: credential)
                     return try EWSResponse.roomAddresses(from: data, element: "Room")
                 }
             }
@@ -694,12 +725,12 @@ extension EWSClient {
         return Array(Set(rooms)).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    private func calendarWrite(_ body: String, url: URL, credential: EWSCredential) async throws {
-        try EWSResponse.checkSuccess(try await raw(body, url: url, credential: credential))
+    func calendarWrite(_ body: String, url: URL, credential: EWSCredential) async throws {
+        try EWSResponse.checkSuccess(try await calendarRaw(body, url: url, credential: credential))
     }
 
     /// With the user's time zone in the header, so all-day and repeating events keep their days.
-    private func raw(_ body: String, url: URL, credential: EWSCredential) async throws -> Data {
+    func calendarRaw(_ body: String, url: URL, credential: EWSCredential) async throws -> Data {
         try await sendRaw(SOAP.envelope(.exchange2010SP2, body: body, timeZone: WindowsTimeZone.current),
                           to: url, credential: credential)
     }

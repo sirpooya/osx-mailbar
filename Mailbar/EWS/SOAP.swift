@@ -51,7 +51,11 @@ enum SOAP {
     ///
     /// Archive has no distinguished id, so `archiveID` is its `FolderId`, from `FindFolder`.
     /// Flagged is the Inbox restricted to PidTagFlagStatus 2 (flagged), which every version has.
+    ///
+    /// `options` filters and orders on the server (Outlook's Filter By and Sort By): each filter
+    /// is one more condition ANDed with the folder's own.
     static func findMessages(in folder: MailFolder = .inbox, archiveID: String? = nil,
+                             options: MailListOptions = MailListOptions(),
                              limit: Int, modern: Bool) -> String {
         let versionFields = modern
             ? """
@@ -62,8 +66,14 @@ enum SOAP {
                   <t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/>
               """
         let parent = folder.distinguishedID.map { #"<t:DistinguishedFolderId Id="\#($0)"/>"# }
-            ?? #"<t:FolderId Id="\#(escape(archiveID ?? ""))"/>"#
-        let restriction = folder == .flagged ? flaggedRestriction : ""
+            ?? #"<t:FolderId Id="\#(escape(folder.customID ?? archiveID ?? ""))"/>"#
+        let conditions = (folder == .flagged ? [flaggedCondition] : []) + options.filters(in: folder).map(\.condition)
+        let restriction: String
+        switch conditions.count {
+        case 0: restriction = ""
+        case 1: restriction = "      <m:Restriction>\(conditions[0])</m:Restriction>"
+        default: restriction = "      <m:Restriction><t:And>\(conditions.joined())</t:And></m:Restriction>"
+        }
         return """
             <m:FindItem Traversal="Shallow">
               <m:ItemShape>
@@ -76,13 +86,17 @@ enum SOAP {
                   <t:FieldURI FieldURI="item:HasAttachments"/>
                   <t:FieldURI FieldURI="item:ItemClass"/>
                   <t:FieldURI FieldURI="item:DisplayTo"/>
+                  <t:FieldURI FieldURI="item:Importance"/>
+                  <t:FieldURI FieldURI="item:Size"/>
+                  <t:ExtendedFieldURI PropertyTag="0x1081" PropertyType="Integer"/>
+                  <t:ExtendedFieldURI PropertyTag="0x0057" PropertyType="Boolean"/>
         \(versionFields)
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:IndexedPageItemView MaxEntriesReturned="\(max(1, limit))" Offset="0" BasePoint="Beginning"/>
         \(restriction)
               <m:SortOrder>
-                <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
+                \(options.sort.fieldOrders(in: folder))
               </m:SortOrder>
               <m:ParentFolderIds>\(parent)</m:ParentFolderIds>
             </m:FindItem>
@@ -90,12 +104,69 @@ enum SOAP {
     }
 
     /// Flagged mail only: PidTagFlagStatus (0x1090) is 2 when flagged, on every version.
-    static let flaggedRestriction = """
-    <m:Restriction><t:IsEqualTo>\
+    static let flaggedCondition = """
+    <t:IsEqualTo>\
     <t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/>\
     <t:FieldURIOrConstant><t:Constant Value="2"/></t:FieldURIOrConstant>\
-    </t:IsEqualTo></m:Restriction>
+    </t:IsEqualTo>
     """
+
+    /// The files on each listed item, names and types only (no content), for the chips under a
+    /// row (Outlook's "Show Attachment Previews"). One request for every row that has any.
+    static func attachmentLists(ids: [String]) -> String {
+        let idElements = ids.map { "      <t:ItemId Id=\"\(escape($0))\"/>" }.joined(separator: "\n")
+        return """
+            <m:GetItem>
+              <m:ItemShape>
+                <t:BaseShape>IdOnly</t:BaseShape>
+                <t:AdditionalProperties><t:FieldURI FieldURI="item:Attachments"/></t:AdditionalProperties>
+              </m:ItemShape>
+              <m:ItemIds>
+        \(idElements)
+              </m:ItemIds>
+            </m:GetItem>
+        """
+    }
+
+    /// Each invitation's time, place and the user's answer so far, for the buttons on its row.
+    /// Asked only of meeting requests, which carry the calendar fields.
+    static func rowMeetings(ids: [String]) -> String {
+        let idElements = ids.map { "      <t:ItemId Id=\"\(escape($0))\"/>" }.joined(separator: "\n")
+        return """
+            <m:GetItem>
+              <m:ItemShape>
+                <t:BaseShape>IdOnly</t:BaseShape>
+                <t:AdditionalProperties>
+                  <t:FieldURI FieldURI="calendar:Start"/>
+                  <t:FieldURI FieldURI="calendar:End"/>
+                  <t:FieldURI FieldURI="calendar:IsAllDayEvent"/>
+                  <t:FieldURI FieldURI="calendar:Location"/>
+                  <t:FieldURI FieldURI="calendar:MyResponseType"/>
+                </t:AdditionalProperties>
+              </m:ItemShape>
+              <m:ItemIds>
+        \(idElements)
+              </m:ItemIds>
+            </m:GetItem>
+        """
+    }
+
+    /// Marks a message replied to or forwarded, as Outlook does after sending a response, so
+    /// the arrow shows on its row here and in Outlook and OWA: PidTagLastVerbExecuted (0x1081)
+    /// and its time, PidTagLastVerbExecutionTime (0x1082).
+    static func setLastVerb(id: String, verb: LastVerb, at date: Date = Date()) -> String {
+        let time = ISO8601DateFormatter().string(from: date)
+        func set(_ tag: String, _ type: String, _ value: String) -> String {
+            """
+                          <t:SetItemField>
+                            <t:ExtendedFieldURI PropertyTag="\(tag)" PropertyType="\(type)"/>
+                            <t:Message><t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="\(tag)" PropertyType="\(type)"/><t:Value>\(value)</t:Value></t:ExtendedProperty></t:Message>
+                          </t:SetItemField>
+            """
+        }
+        return updateItem(id: id, suppress: "",
+                          change: set("0x1081", "Integer", "\(verb.rawValue)") + "\n" + set("0x1082", "SystemTime", time))
+    }
 
     /// Search (M8). Exchange 2013 and later: `QueryString`, the server's own search index, the
     /// same one Outlook's search box uses, matching sender, subject and body. Older servers have
@@ -317,6 +388,9 @@ enum SOAP {
                   <t:FieldURI FieldURI="calendar:OptionalAttendees"/>
                   <t:FieldURI FieldURI="calendar:Resources"/>
                   <t:FieldURI FieldURI="item:Attachments"/>
+                  <t:FieldURI FieldURI="calendar:MeetingRequestWasSent"/>
+                  <t:FieldURI FieldURI="calendar:StartTimeZone"/>
+                  <t:FieldURI FieldURI="calendar:EndTimeZone"/>
                 </t:AdditionalProperties>
               </m:ItemShape>
               <m:ItemIds><t:ItemId Id="\(escape(id))"/></m:ItemIds>

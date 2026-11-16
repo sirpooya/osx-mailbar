@@ -11,6 +11,10 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
+    # Project-wide so the widget extension always carries the app's version and build, as an
+    # embedded extension must. scripts/release.sh bumps these two lines.
+    MARKETING_VERSION: 1.1.0
+    CURRENT_PROJECT_VERSION: 2
 
 # Sparkle, the one approved package (2026-09-26, the user's request): updates from this repo's
 # GitHub Releases. osx-flipoff pins the same floor.
@@ -35,12 +39,12 @@ targets:
     platform: macOS
     sources:
       - path: Mailbar
+      # The widgets' file format and faces (M26), shared with MailbarWidgets.
+      - path: MailbarWidgets/Shared
     settings:
       base:
         PRODUCT_NAME: Mailbar
         PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar
-        MARKETING_VERSION: 1.1.0
-        CURRENT_PROJECT_VERSION: 2
         # Signed with the real development certificate, never ad-hoc. A Keychain item's ACL trusts
         # the app's designated requirement; ad-hoc makes that a cdhash of one exact build, so every
         # rebuild would re-prompt for the login password before reading a stored mail password.
@@ -57,11 +61,16 @@ targets:
         # Resources/AppIcon.icon, an Icon Composer bundle (needs Xcode 26 to compile), the same
         # arrangement as osx-jirabar.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The App Group the widgets' file lives in (M26). Team-prefixed, the macOS form, which a
+        # Development certificate may claim without a provisioning profile.
+        MAILBAR_APP_GROUP: 37MA269X54.in.pooya.mailbar
       configs:
         Debug:
           # A dev build and the installed release coexist, each with its own defaults and its own
           # Keychain items, so testing never touches the real accounts.
           PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar.debug
+          # Its own group too, so sample events never reach the installed app's widgets.
+          MAILBAR_APP_GROUP: 37MA269X54.in.pooya.mailbar.debug
     info:
       path: Mailbar/Info.plist
       properties:
@@ -70,9 +79,16 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Read by WidgetAgenda in the app and the widget extension.
+        MailbarAppGroup: $(MAILBAR_APP_GROUP)
         # Menu-bar only: no Dock tile, ever.
         LSUIElement: true
         NSHumanReadableCopyright: ""
+        # mailto: links open the composer (M23), once Mailbar is the default mail app.
+        CFBundleURLTypes:
+          - CFBundleURLName: Email Address
+            CFBundleURLSchemes: [mailto]
+            CFBundleTypeRole: Editor
         # Sparkle (UpdateController). The feed is appcast.xml on main, written by
         # scripts/release.sh; the EdDSA key is the trust anchor (the app is not notarized). Its
         # private half is in the login Keychain, account "mailbar": lose it and no installed copy
@@ -93,8 +109,53 @@ targets:
         # Off. The app talks to a mail server and writes Keychain items; the sandbox buys nothing
         # here and complicates the Keychain ACL across rebuilds.
         com.apple.security.app-sandbox: false
+        # Where the widgets' file is written (M26, WidgetFeed).
+        com.apple.security.application-groups:
+          - $(MAILBAR_APP_GROUP)
     dependencies:
       - package: Sparkle
+      # Embedded in Contents/PlugIns.
+      - target: MailbarWidgets
+
+  # Up Next and Agenda (M26). Reads only the App Group file the app writes; no network, no
+  # credentials. Sandboxed, as macOS requires of a widget extension.
+  MailbarWidgets:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: MailbarWidgets
+      - path: Mailbar/Core/TextDirection.swift
+    settings:
+      base:
+        PRODUCT_NAME: MailbarWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar.widgets
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ADF79CA48A71BB7E096865C8778307573FC201B7
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        DEVELOPMENT_TEAM: 37MA269X54
+        ENABLE_HARDENED_RUNTIME: YES
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks @executable_path/../../../../Frameworks"
+        MAILBAR_APP_GROUP: 37MA269X54.in.pooya.mailbar
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: in.pooya.mailbar.debug.widgets
+          MAILBAR_APP_GROUP: 37MA269X54.in.pooya.mailbar.debug
+    info:
+      path: MailbarWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Mailbar
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        MailbarAppGroup: $(MAILBAR_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: MailbarWidgets/MailbarWidgets.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - $(MAILBAR_APP_GROUP)
 
   MailbarTests:
     type: bundle.unit-test

@@ -91,8 +91,11 @@ import Testing
         #expect(store.draft == nil)
         #expect(!store.isComposing)
         #expect(store.sentNotice == "Sent.")
-        let request = try #require(transport.sentRequests.last)
+        let request = try #require(transport.sentRequests.last { $0.contains("<m:CreateItem") })
         #expect(request.contains("<t:ReplyToItem>"))
+        // Then the original is marked replied, as Outlook marks it, here and on the server.
+        #expect(transport.sentRequests.last?.contains(#"PropertyTag="0x1081" PropertyType="Integer"/><t:Value>102</t:Value>"#) == true)
+        #expect(store.message(original.id, in: work.id)?.lastVerb == .replied)
         #expect(request.contains(#"ReferenceItemId Id="\#(original.id)" ChangeKey="ck""#))
         #expect(request.contains("dir=&quot;rtl&quot;"))
     }
@@ -106,7 +109,8 @@ import Testing
         #expect(store.draft?.to == "")
         store.draft?.to = "someone@example.net"
         await store.sendDraft()
-        #expect(transport.sentRequests.last?.contains("<t:ForwardItem>") == true)
+        #expect(transport.sentRequests.last { $0.contains("<m:CreateItem") }?.contains("<t:ForwardItem>") == true)
+        #expect(store.message(original.id, in: work.id)?.lastVerb == .forwarded)
 
         store.startNewMessage()
         store.draft?.to = "a@example.net, b@example.net"

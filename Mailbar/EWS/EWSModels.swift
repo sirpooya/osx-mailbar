@@ -45,20 +45,92 @@ struct MailMessage: Identifiable, Equatable, Sendable {
     /// The recipients' names, "Ada Lovelace; Bo Chen", as Exchange lists them (`item:DisplayTo`).
     /// A Sent Items row shows them where an Inbox row shows the sender.
     var displayTo: String = ""
+    /// `item:Importance`: a red "!" on High rows, a blue arrow on Low ones, as in Outlook.
+    var importance: Importance = .normal
+    /// What was last done with it (PidTagLastVerbExecuted, 0x1081): the replied and forwarded
+    /// arrows on the row.
+    var lastVerb: LastVerb? = nil
+    /// The mailbox owner is on the To line (PidTagMessageToMe, 0x0057), for the "To Me" filter.
+    var isToMe = false
+    /// Bytes, `item:Size`, for sorting by size.
+    var size = 0
 
     /// An invitation: the reader offers Accept, Tentative, Decline (M17).
     var isMeetingRequest: Bool { meeting == .request }
 }
 
+enum Importance: String, Sendable {
+    case low = "Low"
+    case normal = "Normal"
+    case high = "High"
+
+    var rank: Int {
+        switch self {
+        case .low: 0
+        case .normal: 1
+        case .high: 2
+        }
+    }
+}
+
+/// PidTagLastVerbExecuted's values for the three a mail client sets: 102 reply to sender,
+/// 103 reply to all, 104 forward.
+enum LastVerb: Int, Sendable {
+    case replied = 102
+    case repliedAll = 103
+    case forwarded = 104
+
+    var symbol: String {
+        switch self {
+        case .replied: "arrowshape.turn.up.left"
+        case .repliedAll: "arrowshape.turn.up.left.2"
+        case .forwarded: "arrowshape.turn.up.right"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .replied: "Replied"
+        case .repliedAll: "Replied to all"
+        case .forwarded: "Forwarded"
+        }
+    }
+}
+
+/// An invitation row's meeting: when and where, and the answer already given, for the Accept,
+/// Tentative and Decline buttons on the row (Outlook's "Show Event RSVP"). In memory only.
+struct RowMeeting: Equatable, Sendable {
+    let start: Date
+    let end: Date
+    let isAllDay: Bool
+    let location: String
+    /// `calendar:MyResponseType`: Accept, Tentative, Decline, or nil while unanswered.
+    var response: String?
+}
+
 /// The mail folders the popover lists: the Inbox, Sent Items (the user's request, 2026-09-28),
-/// and Flagged, Archive, Deleted Items and Junk Email (2026-09-29). No other folder is ever read.
-enum MailFolder: String, Sendable, CaseIterable {
+/// and Flagged, Archive, Deleted Items and Junk Email (2026-09-29); since M21 any other mail
+/// folder of the mailbox too, picked from More Folders or Favorites (`custom`).
+enum MailFolder: Hashable, Sendable {
     case inbox
     case sent
     case flagged
     case archive
     case deleted
     case junk
+    /// Drafts (M25): the server copies of messages being written; a row opens the composer.
+    case drafts
+    /// Any other mail folder, by its server id (M21). Equal by id alone (`MailboxFolder`).
+    case custom(MailboxFolder)
+
+    /// The folders the header's menu always lists, in its order.
+    static let standard: [MailFolder] = [.inbox, .sent, .drafts, .flagged, .archive, .deleted, .junk]
+
+    /// A custom folder's server id, which `FindItem` looks in.
+    var customID: String? {
+        if case .custom(let folder) = self { return folder.id }
+        return nil
+    }
 
     var title: String {
         switch self {
@@ -68,6 +140,8 @@ enum MailFolder: String, Sendable, CaseIterable {
         case .archive: "Archive"
         case .deleted: "Deleted Items"
         case .junk: "Junk Email"
+        case .drafts: "Drafts"
+        case .custom(let folder): folder.name
         }
     }
 
@@ -91,6 +165,8 @@ enum MailFolder: String, Sendable, CaseIterable {
         case .archive: nil
         case .deleted: "deleteditems"
         case .junk: "junkemail"
+        case .drafts: "drafts"
+        case .custom: nil
         }
     }
 
@@ -103,6 +179,8 @@ enum MailFolder: String, Sendable, CaseIterable {
         case .archive: "Nothing archived yet"
         case .deleted: "Nothing deleted"
         case .junk: "No junk"
+        case .drafts: "No drafts"
+        case .custom: "Nothing here"
         }
     }
 
@@ -114,11 +192,13 @@ enum MailFolder: String, Sendable, CaseIterable {
         case .archive: "archivebox"
         case .deleted: "trash"
         case .junk: "xmark.bin"
+        case .drafts: "doc.text"
+        case .custom: "folder"
         }
     }
 
     /// Rows name the recipients where the sender goes, as Outlook's Sent Items does.
-    var showsRecipients: Bool { self == .sent }
+    var showsRecipients: Bool { self == .sent || self == .drafts }
     /// Archive is offered everywhere but in Archive itself.
     var canArchive: Bool { self != .archive }
     /// Not in Deleted Items: deleting there again would remove it from the mailbox for good,
@@ -399,6 +479,7 @@ enum EWSResponse {
         let subject = item.child("Subject")?.trimmedText ?? ""
         let received = item.child("DateTimeReceived").flatMap { parseDate($0.trimmedText) } ?? .distantPast
 
+        let extended = extendedProperties(item)
         return MailMessage(
             id: id,
             changeKey: itemID.attributes["ChangeKey"] ?? "",
@@ -411,7 +492,75 @@ enum EWSResponse {
             isFlagged: isFlagged(item),
             hasAttachments: item.child("HasAttachments")?.trimmedText == "true",
             meeting: MeetingMail(element: item.name, itemClass: item.child("ItemClass")?.trimmedText),
-            displayTo: item.child("DisplayTo")?.trimmedText ?? "")
+            displayTo: item.child("DisplayTo")?.trimmedText ?? "",
+            importance: item.child("Importance").flatMap { Importance(rawValue: $0.trimmedText) } ?? .normal,
+            lastVerb: extended["0x1081"].flatMap(Int.init).flatMap(LastVerb.init),
+            isToMe: extended["0x0057"] == "true",
+            size: item.child("Size").flatMap { Int($0.trimmedText) } ?? 0)
+    }
+
+    /// Tag (lowercase hex, "0x1081") to value, for the MAPI properties a row asks for.
+    private static func extendedProperties(_ item: XMLTreeNode) -> [String: String] {
+        var values: [String: String] = [:]
+        for property in item.children where property.name == "ExtendedProperty" {
+            guard let tag = property.child("ExtendedFieldURI")?.attributes["PropertyTag"]?.lowercased(),
+                  let value = property.child("Value")?.trimmedText else { continue }
+            // Exchange writes tags as "0x1081" or "4225"; one spelling for the lookup.
+            let key = tag.hasPrefix("0x") ? tag : Int(tag).map { String(format: "0x%04x", $0) } ?? tag
+            values[key] = value
+        }
+        return values
+    }
+
+    /// The files of each item in a `GetItem` of `item:Attachments`, by item id, leaving out what
+    /// the body draws itself: inline parts, and images with a content id (signature logos).
+    /// Items the server could not return (moved meanwhile) are skipped, not an error.
+    static func attachmentLists(from data: Data) throws -> [String: [FileAttachment]] {
+        let root = try parse(data)
+        if let fault = root.first("Fault") {
+            throw EWSError.server(fault.child("faultstring")?.trimmedText ?? "Exchange returned a SOAP fault.")
+        }
+        var result: [String: [FileAttachment]] = [:]
+        for response in root.first("ResponseMessages")?.children ?? [] where response.attributes["ResponseClass"] != "Error" {
+            for item in response.child("Items")?.children ?? [] {
+                guard let id = item.child("ItemId")?.attributes["Id"] else { continue }
+                result[id] = (item.child("Attachments")?.children ?? []).compactMap { attachment in
+                    guard attachment.name == "FileAttachment",
+                          let attachmentID = attachment.child("AttachmentId")?.attributes["Id"],
+                          attachment.child("IsInline")?.trimmedText != "true" else { return nil }
+                    let type = attachment.child("ContentType")?.trimmedText ?? ""
+                    let contentID = attachment.child("ContentId")?.trimmedText ?? ""
+                    if type.lowercased().hasPrefix("image/"), !contentID.isEmpty { return nil }
+                    return FileAttachment(id: attachmentID,
+                                          name: attachment.child("Name")?.trimmedText.nonEmpty ?? "Attachment",
+                                          contentType: type,
+                                          size: attachment.child("Size").flatMap { Int($0.trimmedText) } ?? 0)
+                }
+            }
+        }
+        return result
+    }
+
+    /// Each invitation's time, place and answer, by item id, from a `GetItem` of calendar fields.
+    static func rowMeetings(from data: Data) throws -> [String: RowMeeting] {
+        let root = try parse(data)
+        if let fault = root.first("Fault") {
+            throw EWSError.server(fault.child("faultstring")?.trimmedText ?? "Exchange returned a SOAP fault.")
+        }
+        var result: [String: RowMeeting] = [:]
+        for response in root.first("ResponseMessages")?.children ?? [] where response.attributes["ResponseClass"] != "Error" {
+            for item in response.child("Items")?.children ?? [] {
+                guard let id = item.child("ItemId")?.attributes["Id"],
+                      let start = item.child("Start").flatMap({ parseDate($0.trimmedText) }),
+                      let end = item.child("End").flatMap({ parseDate($0.trimmedText) }) else { continue }
+                let answer = item.child("MyResponseType")?.trimmedText ?? ""
+                result[id] = RowMeeting(start: start, end: end,
+                                        isAllDay: item.child("IsAllDayEvent")?.trimmedText == "true",
+                                        location: item.child("Location")?.trimmedText ?? "",
+                                        response: ["Accept", "Tentative", "Decline"].contains(answer) ? answer : nil)
+            }
+        }
+        return result
     }
 
     /// `item:Flag` on 2013 and later, the MAPI flag status (2 is flagged) on older servers.
@@ -419,12 +568,7 @@ enum EWSResponse {
         if let status = item.path("Flag", "FlagStatus")?.trimmedText {
             return status == "Flagged"
         }
-        for property in item.children where property.name == "ExtendedProperty" {
-            if property.child("ExtendedFieldURI")?.attributes["PropertyTag"]?.lowercased() == "0x1090" {
-                return property.child("Value")?.trimmedText == "2"
-            }
-        }
-        return false
+        return extendedProperties(item)["0x1090"] == "2"
     }
 
     /// One line: every run of whitespace, including the blank lines between paragraphs, becomes a

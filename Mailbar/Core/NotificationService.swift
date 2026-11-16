@@ -19,6 +19,25 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     var onOpenMessage: ((UUID, String) -> Void)?
     /// Called with the account and event when the user clicks an event reminder (M18).
     var onOpenEvent: ((UUID, String) -> Void)?
+    /// Called when a button on a new-mail banner is pressed (M26): the action, account and message.
+    var onAction: (@MainActor (MailAction, UUID, String) async -> Void)?
+
+    /// The buttons on a new-mail banner (M26). Event reminders carry none: they stay plain (M18).
+    enum MailAction: String, CaseIterable, Sendable {
+        case markRead = "mailbar.markRead"
+        case archive = "mailbar.archive"
+        case delete = "mailbar.delete"
+
+        var title: String {
+            switch self {
+            case .markRead: return "Mark as Read"
+            case .archive: return "Archive"
+            case .delete: return "Delete"
+            }
+        }
+    }
+
+    nonisolated static let newMailCategory = "mailbar.newMail"
 
     private static let individualLimit = 4
 
@@ -31,6 +50,15 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     func configure() {
         center.delegate = self
+        // Run in the background: the app is already running in the menu bar, so pressing one
+        // never brings a window forward. Delete is drawn as destructive.
+        let actions = MailAction.allCases.map { action in
+            UNNotificationAction(identifier: action.rawValue, title: action.title,
+                                 options: action == .delete ? [.destructive] : [])
+        }
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.newMailCategory, actions: actions, intentIdentifiers: [], options: []),
+        ])
     }
 
     /// Asks once. macOS remembers a denial, so re-asking does nothing and shows nothing.
@@ -46,8 +74,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     func notify(_ messages: [MailMessage], account: Account, showDetails: Bool) {
         guard !messages.isEmpty else { return }
+        // Silenced by the active Focus filter (2026-11-16).
+        guard FocusFilterState.shared.allows(account.id) else { return }
 
-        for message in messages.prefix(Self.individualLimit) {
+        for (index, message) in messages.prefix(Self.individualLimit).enumerated() {
             let content = UNMutableNotificationContent()
             if showDetails {
                 content.title = message.senderName
@@ -57,7 +87,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                 content.title = "New mail"
                 content.body = "A new message in \(account.displayName)."
             }
-            content.sound = .default
+            // The chosen sound (M26), once per batch, so four banners do not chime four times.
+            content.sound = index == 0 ? MailSounds.notificationSound(for: MailSounds.newMail) : nil
+            content.categoryIdentifier = Self.newMailCategory
             content.threadIdentifier = account.id.uuidString
             content.userInfo = [Self.accountKey: account.id.uuidString, Self.messageKey: message.id]
             let identifier = "mail-\(UUID().uuidString)"
@@ -70,7 +102,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = overflow == 1 ? "1 more new message" : "\(overflow) more new messages"
         content.body = "In \(account.displayName). Open Mailbar to see them."
-        content.sound = .default
         content.threadIdentifier = account.id.uuidString
         center.add(UNNotificationRequest(identifier: "mail-more-\(UUID().uuidString)",
                                          content: content, trigger: nil))
@@ -83,6 +114,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         guard !gone.isEmpty else { return }
         center.removeDeliveredNotifications(withIdentifiers: Array(gone.values))
         for id in gone.keys { delivered[id] = nil }
+    }
+
+    private func perform(_ action: MailAction, account: UUID, message: String) async {
+        await onAction?(action, account, message)
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -104,6 +139,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
         let account = (info[Self.accountKey] as? String).flatMap(UUID.init(uuidString:))
         let message = info[Self.messageKey] as? String
+        if let action = MailAction(rawValue: response.actionIdentifier) {
+            guard let account, let message else { return }
+            await self.perform(action, account: account, message: message)
+            return
+        }
         await MainActor.run {
             guard let account, let message else { return }
             self.onOpenMessage?(account, message)

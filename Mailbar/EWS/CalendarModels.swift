@@ -78,6 +78,12 @@ struct EventDetail: Equatable, Sendable {
     /// be forwarded.
     var requestsResponses = true
     var allowsForwarding = true
+    /// False for a meeting saved without sending (Save Without Sending): its invitations are
+    /// still to go. True when the server does not say.
+    var meetingRequestWasSent = true
+    /// The zones the start and the end were set in, Windows ids, when the server says.
+    var startTimeZone: String? = nil
+    var endTimeZone: String? = nil
 }
 
 extension EWSResponse {
@@ -174,6 +180,9 @@ extension EWSResponse {
                                property.name == "ExtendedProperty"
                                    && property.child("ExtendedFieldURI")?.attributes["PropertyName"] == "DoNotForward"
                                    && property.child("Value")?.trimmedText == "true"
-                           })
+                           },
+                           meetingRequestWasSent: item.child("MeetingRequestWasSent")?.trimmedText != "false",
+                           startTimeZone: item.child("StartTimeZone")?.attributes["Id"],
+                           endTimeZone: item.child("EndTimeZone")?.attributes["Id"])
     }
 }

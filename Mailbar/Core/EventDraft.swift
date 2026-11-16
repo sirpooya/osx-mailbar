@@ -84,6 +84,20 @@ struct EventDraft: Equatable, Identifiable {
     var allowForwarding = true
     /// Editing one occurrence of a series: the repeat rule is the series', not changeable here.
     var isOccurrence = false
+    /// Editing the whole series, its master (Outlook's "All Events", 2026-11-16): the repeat rule
+    /// is the series' own and can be changed.
+    var editsSeries = false
+    /// "This and Following": the series this event splits off. Saving ends that series the day
+    /// before and creates this one as a new series from here on.
+    var splitFrom: SeriesSplit?
+    /// Outlook's Time zones: the zones the start and the end are in, Windows ids, when they are
+    /// not the app's own (a flight from Tehran to Istanbul). Nil uses the app's zone.
+    var startTimeZone: String?
+    var endTimeZone: String?
+    /// A meeting saved earlier without sending: Send now invites everyone.
+    var invitationsUnsent = false
+    /// Save Without Sending: the event is written, nobody is told (`SendToNone`).
+    var saveWithoutSending = false
     /// The people and rooms the event had when the form opened, lower-cased, so an edit can
     /// tell whether it adds or removes anyone.
     var originalInvitees: Set<String> = []
@@ -94,6 +108,27 @@ struct EventDraft: Equatable, Identifiable {
     var error: String?
 
     var isNew: Bool { id == nil }
+    var usesTimeZones: Bool { startTimeZone != nil || endTimeZone != nil }
+    /// The repeat rule can be set: a new event, or the whole series being edited.
+    var editsRepeat: Bool { isNew || editsSeries }
+
+    /// What the form asks about before sending, after Outlook: no title, or a meeting with people
+    /// and nowhere to meet.
+    enum MissingWarning: Equatable {
+        case title, location
+        var question: String {
+            switch self {
+            case .title: return "Send without a title?"
+            case .location: return "Send without a location?"
+            }
+        }
+    }
+
+    var missingWarning: MissingWarning? {
+        if subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .title }
+        if !attendeeList.isEmpty && locationText.isEmpty { return .location }
+        return nil
+    }
     var attendeeList: [String] { people.map(\.address) }
     var keptFiles: [FileAttachment] { existingFiles.filter { !removedFileIDs.contains($0.id) } }
     var changesFiles: Bool { !newFiles.isEmpty || !removedFileIDs.isEmpty }
@@ -184,7 +219,10 @@ struct EventDraft: Equatable, Identifiable {
 
     /// A new event at the start of the next half hour, an hour long; or at a slot double-clicked;
     /// or over the range dragged out on the grid (`until`).
-    static func new(accountID: UUID, at slot: Date? = nil, until end: Date? = nil) -> EventDraft {
+    /// Outlook's Shorten events (Settings, Calendar): the end comes `shorten` minutes early, for an
+    /// event of half an hour or more, so a 15-minute slot is never cut to 5.
+    static func new(accountID: UUID, at slot: Date? = nil, until end: Date? = nil,
+                    shorten: Int = Keys.shortenEventMinutes()) -> EventDraft {
         let calendar = Calendar.current
         let start: Date
         if let slot {
@@ -197,7 +235,10 @@ struct EventDraft: Equatable, Identifiable {
             let thisMinute = calendar.dateInterval(of: .minute, for: now)?.start ?? now
             start = calendar.date(byAdding: .minute, value: minute < 30 ? 30 - minute : 60 - minute, to: thisMinute) ?? now
         }
-        let finish = end.flatMap { $0 > start ? $0 : nil } ?? start.addingTimeInterval(3600)
+        var finish = end.flatMap { $0 > start ? $0 : nil } ?? start.addingTimeInterval(3600)
+        if shorten > 0, finish.timeIntervalSince(start) >= 30 * 60 {
+            finish = finish.addingTimeInterval(-TimeInterval(shorten * 60))
+        }
         return EventDraft(accountID: accountID, start: start, end: finish)
     }
 
@@ -223,6 +264,14 @@ struct EventDraft: Equatable, Identifiable {
         draft.requestResponses = detail.requestsResponses
         draft.allowForwarding = detail.allowsForwarding
         draft.isOccurrence = event.isRecurring
+        draft.invitationsUnsent = event.isMeeting && event.isOrganizer && !detail.meetingRequestWasSent
+            && !draft.originalInvitees.isEmpty
+        if let zone = detail.startTimeZone, zone != WindowsTimeZone.current { draft.startTimeZone = zone }
+        if let zone = detail.endTimeZone, zone != WindowsTimeZone.current { draft.endTimeZone = zone }
+        if draft.usesTimeZones {
+            draft.startTimeZone = draft.startTimeZone ?? WindowsTimeZone.current
+            draft.endTimeZone = draft.endTimeZone ?? WindowsTimeZone.current
+        }
         return draft
     }
 

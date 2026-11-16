@@ -16,6 +16,10 @@ struct MessageReaderView: View {
     @State private var allowRemoteImages = QCFlags.loadImages
     /// The meeting a meeting email is for, with its answer; nil for plain mail.
     @State private var meetingCard: MeetingCard?
+    /// Find, text size and the selection in the body (M22). Holds the web view weakly.
+    @State private var web = ReaderWebController()
+    @State private var findOpen = QCFlags.readerFind != nil
+    @State private var findFocus = 0
 
     private enum Phase: Equatable {
         case loading
@@ -44,6 +48,17 @@ struct MessageReaderView: View {
             Divider().opacity(0.5)
             content
                 .frame(height: Self.bodyHeight)
+                .overlay(alignment: .topTrailing) {
+                    if findOpen {
+                        ReaderFindBar(web: web, focusRequest: findFocus, onClose: closeFind)
+                            .padding(.top, 8)
+                            .padding(.trailing, 12)
+                    }
+                }
+        }
+        .background { shortcuts }
+        .onAppear {
+            if let zoom = QCFlags.readerZoom { web.setZoom(zoom) }
         }
         .task(id: summary.id) {
             let card = summary.meeting.map { MeetingCard(kind: $0, mailID: summary.id, accountID: accountID, store: store) }
@@ -57,18 +72,26 @@ struct MessageReaderView: View {
     // MARK: - Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             Button(action: onBack) {
                 HStack(spacing: 3) {
                     Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                    // A long folder name ("Deleted Items") is cut, so the icons always fit 380 pt.
                     Text(store.isSearchOpen ? "Results" : store.mailFolder.tabTitle).font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
+                .frame(maxWidth: 74, alignment: .leading)
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .help("Back to the Inbox")
+            // Escape closes the find bar first, when it is open.
+            .keyboardShortcut(findOpen ? nil : .cancelAction)
+            .help("Back to \(store.isSearchOpen ? "the results" : store.mailFolder.title)")
+            .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 0)
+
+            zoomMenu
 
             responseButtons
             Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 14)
@@ -78,6 +101,58 @@ struct MessageReaderView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Find and zoom (M22)
+
+    /// Text size, and Find, behind one small button.
+    private var zoomMenu: some View {
+        Menu {
+            Button("Find in Message") { openFind() }
+            Divider()
+            Button("Zoom In") { web.zoomIn() }
+                .disabled(web.zoom >= ReaderZoom.steps.last!)
+            Button("Zoom Out") { web.zoomOut() }
+                .disabled(web.zoom <= ReaderZoom.steps.first!)
+            Button("Actual Size") { web.resetZoom() }
+                .disabled(web.zoom == 1)
+            Divider()
+            Text("Text size \(ReaderZoom.label(web.zoom))")
+        } label: {
+            Image(systemName: "textformat.size")
+                .font(.system(size: 12, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Find  ⌘F, text size  ⌘+  ⌘−  ⌘0")
+        .accessibilityLabel("Find and text size")
+    }
+
+    /// The reader's key equivalents, on buttons never seen. The list's Cmd+F is not on screen
+    /// while a message is open, so this one is the only Cmd+F then.
+    private var shortcuts: some View {
+        ZStack {
+            Button("") { openFind() }.keyboardShortcut("f", modifiers: .command)
+            Button("") { web.zoomIn() }.keyboardShortcut("=", modifiers: .command)
+            Button("") { web.zoomIn() }.keyboardShortcut("+", modifiers: .command)
+            Button("") { web.zoomOut() }.keyboardShortcut("-", modifiers: .command)
+            Button("") { web.resetZoom() }.keyboardShortcut("0", modifiers: .command)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private func openFind() {
+        findOpen = true
+        findFocus += 1
+    }
+
+    private func closeFind() {
+        findOpen = false
+        Task { await web.endFind() }
     }
 
     // MARK: - Header
@@ -126,6 +201,24 @@ struct MessageReaderView: View {
                 .padding(.top, 2)
             }
 
+            // Unsubscribe (M20) as Outlook's infobar, under the From line: an icon of its own
+            // pushed the toolbar past the popover's width.
+            if store.listActions.unsubscribeLinks[current.id]?.preferred != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "envelope.badge.shield.half.filled").font(.system(size: 10))
+                    Text("Too much mail from \(fromLine)?").font(.system(size: 11)).lineLimit(1)
+                    Button("Unsubscribe...") {
+                        Task { await store.askToUnsubscribe(message: current.id, in: accountID) }
+                    }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11))
+                    .fixedSize()
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+            }
+
             if let card = meetingCard, card.kind == .request {
                 MeetingAnswerBar(card: card)
                     .padding(.top, 8)
@@ -134,6 +227,7 @@ struct MessageReaderView: View {
             if let files = loadedBody?.files, !files.isEmpty {
                 AttachmentStrip(files: files, accountID: accountID, store: store)
                     .padding(.top, 4)
+                ICSImportButton(files: files, accountID: accountID, store: store)
             }
         }
         .padding(.horizontal, 14)
@@ -143,20 +237,23 @@ struct MessageReaderView: View {
     /// Reply, reply all, forward (M12, M13). Available once the message has loaded, since a
     /// reply all needs its recipients.
     private var responseButtons: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             responseButton("arrowshape.turn.up.left", help: "Reply  ⌘R", kind: .reply)
                 .keyboardShortcut("r", modifiers: .command)
             responseButton("arrowshape.turn.up.left.2", help: "Reply All  ⇧⌘R", kind: .replyAll)
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             responseButton("arrowshape.turn.up.right", help: "Forward  ⇧⌘F", kind: .forward)
                 .keyboardShortcut("f", modifiers: [.command, .shift])
+            // Forward as Attachment, Redirect, Resend (M24).
+            ComposeMoreMenu(store: store, body_: loadedBody, accountID: accountID)
         }
     }
 
     private func responseButton(_ symbol: String, help: String, kind: Draft.Kind) -> some View {
         Button {
             guard let body = loadedBody else { return }
-            store.startResponse(kind, to: body, in: accountID)
+            // Text selected in the message is all a reply quotes (M24).
+            Task { store.startResponse(kind, to: body, in: accountID, selection: await ReaderSelection.selectedText()) }
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
@@ -171,9 +268,8 @@ struct MessageReaderView: View {
 
     private var fromAndTime: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            DirectionalText(fromLine, font: .system(size: 12, weight: .medium))
-                .foregroundStyle(.primary)
-                .help(fromAddress)
+            PersonNameButton(name: fromLine, address: fromAddress, accountID: accountID, store: store,
+                             font: .system(size: 12, weight: .medium), color: .primary, fillsWidth: true)
             Text(current.received.formatted(date: .abbreviated, time: .shortened))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -181,14 +277,19 @@ struct MessageReaderView: View {
         }
     }
 
+    /// To and Cc, every name opening the person's card (M22).
     @ViewBuilder
     private var recipients: some View {
-        if let recipients = recipientLine {
-            Text(recipients)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        if let body = loadedBody, !body.to.isEmpty || !body.cc.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                if !body.to.isEmpty {
+                    ReaderPeopleLine(label: "To", people: body.to, accountID: accountID, store: store)
+                }
+                if !body.cc.isEmpty {
+                    ReaderPeopleLine(label: "Cc", people: body.cc, accountID: accountID, store: store)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -205,13 +306,6 @@ struct MessageReaderView: View {
         loadedBody?.from?.address ?? current.senderAddress
     }
 
-    private var recipientLine: String? {
-        guard let body = loadedBody else { return nil }
-        var parts: [String] = []
-        if !body.to.isEmpty { parts.append("To: " + body.to.map(\.display).joined(separator: ", ")) }
-        if !body.cc.isEmpty { parts.append("Cc: " + body.cc.map(\.display).joined(separator: ", ")) }
-        return parts.isEmpty ? nil : parts.joined(separator: "   ")
-    }
 
     // MARK: - Body
 
@@ -229,7 +323,7 @@ struct MessageReaderView: View {
                 body: body.html,
                 images: images.mapValues { (type: $0.type, data: $0.data) },
                 allowRemoteImages: allowRemoteImages),
-                highlight: store.highlightTerms)
+                highlight: store.highlightTerms, controller: web)
             if let card = meetingCard, card.kind == .request, card.phase != .unavailable {
                 // The meeting's day above the description; the whole body when there is none.
                 VStack(spacing: 0) {

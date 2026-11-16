@@ -14,6 +14,20 @@ enum QCFlags {
     static var openPopover: Bool { has("--open-popover") || openMessage || searchText != nil || composeKind != nil || openToday || openSent }
     /// `--open-sent`: the popover on its Sent tab. With `--search=`, searches Sent Items.
     static var openSent: Bool { has("--open-sent") }
+    /// `--list-filter=attachments,unread` and `--list-sort=size`: the list filtered and ordered,
+    /// for screenshots of the filter strip, the file chips and the other orders.
+    static var listOptions: MailListOptions? {
+        #if DEBUG
+        let filters = CommandLine.arguments.first { $0.hasPrefix("--list-filter=") }
+            .map { $0.dropFirst("--list-filter=".count).split(separator: ",").compactMap { MailFilter(rawValue: String($0)) } }
+        let sort = CommandLine.arguments.first { $0.hasPrefix("--list-sort=") }
+            .flatMap { MailSort(rawValue: String($0.dropFirst("--list-sort=".count))) }
+        guard filters != nil || sort != nil else { return nil }
+        return MailListOptions(filters: Set(filters ?? []), sort: sort ?? .date)
+        #else
+        return nil
+        #endif
+    }
     /// `--open-today`: the popover on its Today tab.
     static var openToday: Bool { has("--open-today") }
     /// `--today-swipe`: with `--open-today`, a scripted sideways swipe to the next day, through the
@@ -136,6 +150,15 @@ enum QCFlags {
     /// `--calendar-assistant`: with `--calendar-new`, the Scheduling Assistant open.
     static var calendarAssistant: Bool { has("--calendar-assistant") }
 
+    /// `--calendar-qc=series-edit`: the calendar in one of the extras' states (`CalendarQC`).
+    static var calendarQC: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--calendar-qc=") }.map { String($0.dropFirst("--calendar-qc=".count)) }
+        #else
+        return nil
+        #endif
+    }
+
     /// `--calendar-drag`: the calendar with a new event being dragged out today, 10:00 to 11:30.
     static var calendarDrag: Bool { has("--calendar-drag") }
 
@@ -177,9 +200,51 @@ enum QCFlags {
     /// Opens messages with remote images already allowed: the positive control for the pixel
     /// test (a blocked load only proves something if an allowed one is seen to arrive).
     static var loadImages: Bool { has("--load-images") }
+    /// `--reader-find=review`: with `--open-message`, the reader's find bar open on that text.
+    static var readerFind: String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--reader-find=") }.map { String($0.dropFirst("--reader-find=".count)) }
+        #else
+        return nil
+        #endif
+    }
+    /// `--reader-zoom=1.25`: with `--open-message`, the reader's text at that size.
+    static var readerZoom: Double? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix("--reader-zoom=") }.flatMap { Double($0.dropFirst("--reader-zoom=".count)) }
+        #else
+        return nil
+        #endif
+    }
     /// Draws the first inbox row as hovered, since a synthetic pointer cannot reach the app
     /// without the Accessibility grant.
     static var hoverFirstRow: Bool { has("--hover-first-row") }
+
+    // M20 and M21, list actions and folders: states that need clicks, put on screen at launch.
+    /// `--open-folder=Projects` (a folder of the tree) or `--open-folder=deleted` (a standard one).
+    static var openFolder: String? { value("--open-folder=") }
+    /// `--favorite`: with `--open-folder=`, that folder added to Favorites for this run only.
+    static var favoriteFolder: Bool { has("--favorite") }
+    /// `--select-rows=0,2,3`: those rows of the list showing selected.
+    static var selectRows: [Int]? { value("--select-rows=").map { $0.split(separator: ",").compactMap { Int($0) } } }
+    /// `--swipe-row=1:-90`: that row slid that far, as a swipe leaves it before letting go.
+    static var swipeRow: (Int, CGFloat)? {
+        guard let raw = value("--swipe-row="), case let parts = raw.split(separator: ":"), parts.count == 2,
+              let index = Int(parts[0]), let offset = Double(parts[1]) else { return nil }
+        return (index, CGFloat(offset))
+    }
+    /// `--show-toast=Archived.`: the undo toast with that text.
+    static var showToast: String? { value("--show-toast=") }
+    /// `--confirm=empty` (the folder showing) or `--confirm=unsubscribe` (the newsletter).
+    static var confirm: String? { value("--confirm=") }
+
+    private static func value(_ prefix: String) -> String? {
+        #if DEBUG
+        return CommandLine.arguments.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+        #else
+        return nil
+        #endif
+    }
 
     private static func has(_ flag: String) -> Bool {
         #if DEBUG

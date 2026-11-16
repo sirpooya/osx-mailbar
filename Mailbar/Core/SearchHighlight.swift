@@ -9,16 +9,29 @@ import SwiftUI
 enum SearchHighlight {
 
     /// The words of a query. Quotes and search operators ("from:", AND, OR, NOT) are not words
-    /// anyone expects to see marked.
+    /// anyone expects to see marked, and neither are the values of keywords that are not text
+    /// ("hasattachment:true", "received:yesterday"); a text keyword's value is ("from:sara").
     static func terms(in query: String) -> [String] {
         let operators: Set<String> = ["and", "or", "not"]
         let words = query.split(whereSeparator: \.isWhitespace).compactMap { raw -> String? in
             var word = String(raw).trimmingCharacters(in: CharacterSet(charactersIn: "\"'()"))
-            if let colon = word.firstIndex(of: ":") { word = String(word[word.index(after: colon)...]) }
+            if let colon = word.firstIndex(of: ":") {
+                let key = word[..<colon].lowercased()
+                if ParsedSearch.keywords.contains(key), !ParsedSearch.textKeywords.contains(key) { return nil }
+                word = String(word[word.index(after: colon)...]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'()"))
+            }
             return word.isEmpty || operators.contains(word.lowercased()) ? nil : word
         }
         // Longest first, so "design" is not marked inside a longer term that already covers it.
         return Array(Set(words)).sorted { $0.count > $1.count }
+    }
+
+    /// The marked words of a whole search: the typed ones (from two characters) and the text
+    /// criteria (From, To, Subject).
+    static func terms(in search: SearchQuery) -> [String] {
+        let typed = search.trimmedText.count >= 2 ? search.trimmedText : ""
+        let criteria = [search.criteria.from, search.criteria.to, search.criteria.subject].joined(separator: " ")
+        return terms(in: typed + " " + criteria)
     }
 
     /// Each place a term appears in `text`, merged where they overlap, in order.

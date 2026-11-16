@@ -30,6 +30,8 @@ enum FieldBoxFill {
 struct PlainDatePicker: NSViewRepresentable {
     @Binding var date: Date
     let elements: NSDatePicker.ElementFlags
+    /// Shown and typed in this zone instead of the app's (the event form's Time zones).
+    var timeZone: TimeZone? = nil
 
     func makeNSView(context: Context) -> NSDatePicker {
         let picker = SteppingDatePicker()
@@ -55,12 +57,14 @@ struct PlainDatePicker: NSViewRepresentable {
         picker.datePickerElements = elements
         picker.target = context.coordinator
         picker.action = #selector(Coordinator.changed(_:))
+        picker.timeZone = timeZone
         picker.dateValue = date
         return picker
     }
 
     func updateNSView(_ picker: NSDatePicker, context: Context) {
         context.coordinator.date = $date
+        if picker.timeZone != timeZone { picker.timeZone = timeZone }
         if picker.dateValue != date { picker.dateValue = date }
     }
 

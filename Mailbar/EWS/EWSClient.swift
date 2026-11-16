@@ -23,11 +23,12 @@ struct EWSClient: Sendable {
     /// empty and are filled by `previews(for:)`.
     func messages(in folder: MailFolder = .inbox,
                   archiveID: String? = nil,
+                  options: MailListOptions = MailListOptions(),
                   at url: URL,
                        credential: EWSCredential,
                        modern: Bool,
                        limit: Int = EWSClient.pageSize) async throws -> [MailMessage] {
-        let body = SOAP.findMessages(in: folder, archiveID: archiveID, limit: limit, modern: modern)
+        let body = SOAP.findMessages(in: folder, archiveID: archiveID, options: options, limit: limit, modern: modern)
         let data = try await send(SOAP.envelope(modern ? .exchange2013 : .exchange2010SP2, body: body),
                                   to: url, credential: credential)
         return try EWSResponse.messages(from: data)
@@ -55,6 +56,27 @@ struct EWSClient: Sendable {
             throw EWSError.invalidResponse("Exchange did not return the attachment.")
         }
         return bytes
+    }
+
+    /// The files on each of these items, by item id: names and types, never the bytes.
+    func attachmentLists(for ids: [String], at url: URL, credential: EWSCredential) async throws -> [String: [FileAttachment]] {
+        guard !ids.isEmpty else { return [:] }
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.attachmentLists(ids: ids)),
+                                  to: url, credential: credential)
+        return try EWSResponse.attachmentLists(from: data)
+    }
+
+    /// Each invitation's time, place and answer, by item id.
+    func rowMeetings(for ids: [String], at url: URL, credential: EWSCredential) async throws -> [String: RowMeeting] {
+        guard !ids.isEmpty else { return [:] }
+        let data = try await send(SOAP.envelope(.exchange2010SP2, body: SOAP.rowMeetings(ids: ids)),
+                                  to: url, credential: credential)
+        return try EWSResponse.rowMeetings(from: data)
+    }
+
+    /// The replied or forwarded mark on the original, after a response went out.
+    func setLastVerb(_ verb: LastVerb, id: String, at url: URL, credential: EWSCredential) async throws {
+        try await perform(SOAP.setLastVerb(id: id, verb: verb), modern: false, url: url, credential: credential)
     }
 
     /// One-line previews built from text bodies, for servers without `item:Preview`.
@@ -193,12 +215,17 @@ struct EWSClient: Sendable {
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch let error as URLError {
-            throw EWSError.from(urlError: error)
+            let mapped = EWSError.from(urlError: error)
+            ActivityLog.report(mapped, operation: "GetStreamingEvents", url: url, username: credential.username)
+            throw mapped
         }
         if status != 200 {
             var whole = Data()
             for try await part in envelopes { whole.append(part) }
-            _ = try check(status: status, data: whole)
+            do { _ = try check(status: status, data: whole) } catch {
+                ActivityLog.report(error, operation: "GetStreamingEvents", url: url, username: credential.username)
+                throw error
+            }
         }
         return AsyncThrowingStream { continuation in
             let relay = Task {
@@ -210,7 +237,9 @@ struct EWSClient: Sendable {
                 } catch let error as URLError where error.code == .cancelled {
                     continuation.finish(throwing: CancellationError())
                 } catch let error as URLError {
-                    continuation.finish(throwing: EWSError.from(urlError: error))
+                    let mapped = EWSError.from(urlError: error)
+                    ActivityLog.report(mapped, operation: "GetStreamingEvents", url: url, username: credential.username)
+                    continuation.finish(throwing: mapped)
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -230,7 +259,22 @@ struct EWSClient: Sendable {
         try await send(body, to: url, credential: credential)
     }
 
+    /// Every request's failure also goes to the activity log (operation, host, the shown line).
     private func send(_ body: Data, to url: URL, credential: EWSCredential) async throws -> Data {
+        do {
+            let data = try await deliver(body, to: url, credential: credential)
+            // EWS also fails with a 200 whose every response says Error; the caller throws it.
+            if let error = ActivityLog.responseError(in: data) {
+                ActivityLog.report(error, body: body, url: url, username: credential.username)
+            }
+            return data
+        } catch {
+            ActivityLog.report(error, body: body, url: url, username: credential.username)
+            throw error
+        }
+    }
+
+    private func deliver(_ body: Data, to url: URL, credential: EWSCredential) async throws -> Data {
         let data: Data
         let status: Int
         do {

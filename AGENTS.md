@@ -56,6 +56,33 @@ in mock mode. The Milestones section below is the record; none is open.
 
 - **Instant new mail** (M11): EWS streaming notifications; polling drops to a 10-minute safety net.
 
+### List features (built 2026-11-16, the user's picks from the Outlook feature map)
+`docs/outlook-features.md` maps Outlook for Mac's features; the user picks from it. Built:
+- **Filter** (Unread, Flagged, Has Attachments, To Me) and **Sort By** (Date, From or To,
+  Subject, Size, Importance) in one menu beside search; asked of the server, so a filter reaches
+  past the 50 newest. A strip under the header names the filters with Clear. Filters reset when
+  the popover closes, the order lasts until quit; search results are filtered and sorted here.
+- **Date groups** over newest-first lists: Today, Yesterday, weekday names, Last Week, Two and
+  Three Weeks Ago, Last Month, Older, pinned while scrolling.
+- **Sender photo** on every row (directory, then `GetUserPhoto`), else coloured initials.
+- **File chips** under a row with attachments (two, then "+N"; click Quick Look, right-click Save).
+- **Accept, Tentative, Decline on invitation rows**, with the time and place; sends at once.
+- **Marks**: replied, replied to all, forwarded (PidTagLastVerbExecuted, which Mailbar also sets
+  after its own replies, as Outlook does), and High or Low importance.
+**Unproven on the real server**: sorting on the MAPI columns 0x0C1A, 0x0E04, 0x0E1D; the 0x0057
+restriction; writing 0x1081 and 0x1082.
+
+### Outlook picks (M20 to M29, built 2026-11-16): what changed in this file's rules
+The user picked these from the feature map, so these "Not wanted" lines no longer hold:
+move to folder and the folder tree (any mail folder opens, favorites pin), junk (Mark as Junk,
+Block Sender and Not Junk through `MarkAsJunk`, which keeps the blocked list on the server; no
+list editor), rich text, drafts (in the server's Drafts folder, autosaved; never on the Mac),
+signatures (Settings, Mail; UserDefaults), outgoing attachments (in memory until sent),
+templates (a Templates folder under Drafts, created only after asking). Repeating events now
+offer This Event, This and Following, All Events. Empty Deleted Items uses `SoftDelete` behind a
+confirmation: the only permanent delete in the app. Delete is now `MoveItem` to Deleted Items so
+it can be undone. S/MIME is not built (needs a signing identity and a proven `MimeContent` send).
+
 ### Simple sending (M12 to M14, built 2026-09-25)
 - Reply, reply all, forward, new message. Plain text writing, right to left for Persian. The
   server builds quotes and keeps copies in Sent Items (EWS `ReplyToItem`, `ForwardItem`,
@@ -118,8 +145,9 @@ Keep it minimal and dependency-light. No cloud sync, no analytics.
 
 ## Milestones
 All done, 2026-09-24 and 25, every one proven in `MAILBAR_MOCK` mode (screenshots, tests). The
-real-account column is what is still unproven. There is no `PLAN.md`: every milestone is done.
-New work gets a plan and moves here once it lands.
+real-account column is what is still unproven. M20 to M29 (2026-11-16) are the user's picks from the
+Outlook feature map (`docs/outlook-features.md`), built by parallel agents and proven in mock mode;
+`PLAN.md` keeps what is still open (S/MIME).
 
 | # | What | Unproven on the real account |
 |---|---|---|
@@ -143,6 +171,16 @@ New work gets a plan and moves here once it lands.
 | M17 | Answer invitations from the calendar and from the invitation email | answering a real one |
 | M18 | Event reminders: one plain notification per event, no snooze | a real banner |
 | M19 | Popover tabs Inbox and Today: today as a one-day calendar, Join links | a real meeting link |
+| M20 | List actions: multi-select bar, Undo toast, row swipes, Move to Inbox, Unsubscribe | MoveItem ReturnNewItemIds, Undo, List-Unsubscribe headers |
+| M21 | Junk and folders: Mark as Junk, Block Sender, Not Junk, Empty Deleted Items and Junk, folder tree, favorites, Move to folder | MarkAsJunk, EmptyFolder SoftDelete, the deep folder tree |
+| M22 | Reader: Find (Cmd+F), text zoom, conflict warning on invitations, contact card on any name | real keyboard use |
+| M23 | Compose fields: Bcc, always Cc/Bcc me, From alias, importance, sensitivity, receipts, Check Names, @mentions, spell check, mailto: | From an alias, receipts |
+| M24 | Sending: Undo Send, MailTips, Forward as Attachment, Redirect, Resend, reply to selected text | GetMailTips, ItemAttachment, threading headers |
+| M25 | Rich compose: drafts on the server, attachments, formatting, signatures, templates (S/MIME not built) | SendItem, reply drafts, Templates folder |
+| M26 | System: banner actions, sounds, menu bar count choice, default mail app, Up Next and Agenda widgets | banners, sounds, widget gallery |
+| M27 | Search: scope (all folders, Deleted, Online Archive), options, typed keywords, saved searches, Events and People | multi-folder FindItem, archive search |
+| M28 | Calendar: series (this, following, all), forward, email attendees, proposals, response counts, shorten, two time zones, warnings, save without sending, delete without notifying, .ics import and export, free time in Today | every write on the real calendar |
+| M29 | Account health: automatic replies, password expiry, mailbox quota, activity log, Focus filter | OOF, expiry, quota tags, Focus in System Settings |
 
 Testing rule for sending: **never send real mail** unless the user names the exact message and
 recipient. Everything else is proven against `MAILBAR_MOCK`, where Send goes nowhere.
@@ -175,6 +213,15 @@ the Outlook row layout, with Persian lines right-aligned, and each failure state
 All of it is proven in `MAILBAR_MOCK` mode by screenshot. **Nothing is proven against the real
 server yet**: the user has to add their account (the password never passes through Claude). That
 one Test press settles the user name format and the Exchange version. Next: M4, the reader.
+
+QC rule (the user's, 2026-11-16): screenshot runs open only on the MacBook's built-in display,
+never the LG (the main display). `App/QCScreen.swift` does it in DEBUG mock runs: windows move
+there once, the popover hangs from an anchor there. Each M20 to M29 area added its own DEBUG
+flags (`--list-filter=`, `--list-sort=`, `--reader-find=`, `--reader-zoom=`, `--person-card=`,
+`--calendar-qc=<state>`, `--auto-replies-sheet`, `--activity-log`, `--focus-keep=`, search's in
+`SearchViews.swift`). Settings now has a Mail tab (signatures, Undo Send, Cc/Bcc defaults,
+From addresses); General gained Sounds, Menu bar count, Default mail app, Swipe; Calendar gained
+Widgets and Shorten events.
 
 QC note: Accessibility is not granted to the VS Code host, so `mac-qc` can photograph windows but
 cannot click the status item or hover. `macqc shot` also misses WKWebView content (it draws in
@@ -241,6 +288,15 @@ its reply's `ServerVersionInfo` decides whether `FindItem` asks for `Exchange201
 | Answer without telling, propose a time | `CreateItem` `SaveOnly` into `deleteditems`; `ProposedStart`/`ProposedEnd` on `TentativelyAcceptItem` or `DeclineItem` (2013+) |
 | Remove a cancelled meeting | `CreateItem` `RemoveItem` referencing the cancellation email |
 | Archive | `FindFolder` for a top-level `Archive` under `msgfolderroot` (id kept in memory), then `MoveItem`. No folder: `CreateFolder` only after the user presses "Create and Archive" |
+| Filter and sort the list | The same `FindItem` with a `Restriction` (`message:IsRead` false, `item:HasAttachments` true, PidTagMessageToMe 0x0057 true, PidTagFlagStatus 2; several in `And`) and `SortOrder` on `item:Size`, `item:Importance` or the MAPI columns 0x0C1A (sender), 0x0E04 (display to), 0x0E1D (normalized subject), then `item:DateTimeReceived`. Every row also asks `item:Importance`, `item:Size`, 0x1081 and 0x0057 |
+| A row's file chips | `GetItem` IdOnly with `item:Attachments` for every listed item that has any (names and types, never content); inline parts and images with a `ContentId` left out |
+| An invitation row's time and answer | `GetItem` IdOnly with `calendar:Start`, `End`, `IsAllDayEvent`, `Location`, `MyResponseType` on the meeting requests listed |
+| Mark replied or forwarded | After a reply, reply all or forward is sent: `UpdateItem` setting PidTagLastVerbExecuted (0x1081: 102, 103, 104) and PidTagLastVerbExecutionTime (0x1082) |
+| Move, undo, junk (M20, M21) | `MoveItem` with `ReturnNewItemIds` (Delete too, to deleteditems, for Undo); `MarkAsJunk` IsJunk and MoveItem (2013+); `EmptyFolder` (SoftDelete for Deleted Items, MoveToDeletedItems for Junk); `FindFolder` Deep under msgfolderroot for the tree; batch `UpdateItem`; `item:InternetMessageHeaders` for List-Unsubscribe |
+| Drafts, files, tips (M23 to M25) | `CreateItem` SaveOnly into drafts then `UpdateItem` SaveOnly; `SendItem` with a Sent Items copy; `CreateAttachment`; `GetItem` IncludeMimeContent then an `ItemAttachment` (forward as attachment); `GetMailTips`; `FindFolder`/`CreateFolder` Templates under drafts; Discard is `DeleteItem` MoveToDeletedItems |
+| Search (M27) | All Folders: one `FindItem` Shallow over many `ParentFolderIds` with `QueryString` (AQS as typed plus options), else per folder merged (EWS has no Deep FindItem); Online Archive: `GetFolder` archivemsgfolderroot once, then its folders; Events: `FindItem` on calendar with `QueryString` |
+| Calendar (M28) | Series: `GetItem`/`UpdateItem`/`DeleteItem` on `RecurringMasterItemId`, `calendar:Recurrence` with `EndDateRecurrence` for This and Following; proposals: `FindItem` inbox `IPM.Schedule.Meeting.Resp` then `ProposedStart` (2013); `StartTimeZone`/`EndTimeZone`; `SendToNone` for Save Without Sending and Delete Without Notifying; export by `IncludeMimeContent`; .ics import by `CreateItem` SendToNone |
+| Account health (M29) | `GetUserOofSettings`/`SetUserOofSettings` (the account's address); `GetPasswordExpirationDate`; `GetFolder` msgfolderroot with 0x0E08, 0x666E, 0x3FF5, 0x666A for size and quota |
 
 Writes send the `ItemId` without its `ChangeKey` and `AlwaysOverwrite`. Setting one boolean is
 idempotent, so there is nothing to conflict with, and it removes the refetch-and-retry path the
@@ -643,6 +699,7 @@ No telemetry, no analytics. Network calls, exhaustively:
   `https://<email domain>/autodiscover/autodiscover.xml`. HTTPS only; no HTTP redirect method and
   no DNS SRV lookup.
 - Remote images inside a message, only when the user clicks "Load images" for that message.
+- An Unsubscribe link (https) opens in the browser, only after the user confirms.
 - Sparkle, Release builds only: `appcast.xml` from raw.githubusercontent.com (this repo) once a
   day and on Check for Updates, and the update zip from GitHub Releases when the user installs.
   No system profile is sent. Sparkle keeps a downloaded update in the app's Caches folder until
@@ -661,6 +718,12 @@ Passwords live only in the Keychain. Never log a password, an `Authorization` he
 body, not even in DEBUG.
 
 ## Caching (the user's rule, 2026-09-24: never cache anything)
+**One exception (2026-11-16, widgets, decided for the user who delegated it):** `Agenda.json` in
+`~/Library/Group Containers/37MA269X54.in.pooya.mailbar/` (Debug: `.debug`) holds today's
+remaining events only: start, end, title, location, join link. No mail, no ids. Overwritten after
+each Today refresh, deleted when Settings' "Show events in widgets" is off or the last account
+goes. The widget reads it and never touches the network.
+
 **Nothing from the mailbox is ever written to disk.** No database, no file cache, no URL cache, no
 WebKit cache, no thumbnails, no "offline" mode.
 - The only thing kept even in memory between polls is the list data: sender, subject, preview,
@@ -681,6 +744,9 @@ WebKit cache, no thumbnails, no "offline" mode.
   `WKWebView` uses `WKWebsiteDataStore.nonPersistent()`, one store per reader, released on close.
 - Pre-2013 servers only: previews built from text bodies are held in memory for rows still in the
   list, so a poll does not refetch fifty bodies. They die with the process like everything else.
+- The rows' attachment names and invitation times (2026-11-16) are list data: in memory, for
+  rows still listed. Sender photos on rows are held only while the popover is open, one request
+  per address, and dropped when it closes (the reader's rule, applied to the list).
 
 ## Reference material and QC
 - `_samples/`: screenshots of the reference look, when supplied. Where this doc is ambiguous, the

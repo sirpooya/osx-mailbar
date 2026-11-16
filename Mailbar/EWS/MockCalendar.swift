@@ -26,6 +26,8 @@ enum MockCalendar {
         var files: [(String, String, Int)] = []
         var requestsResponses = true
         var allowsForwarding = true
+        /// False for a meeting saved without sending.
+        var requestSent = true
     }
 
     /// The mock mailbox's master category list: OWA's defaults plus a custom "Storybook", whose
@@ -377,6 +379,7 @@ enum MockCalendar {
                       <t:IsCancelled>\(event.isCancelled)</t:IsCancelled>
                       <t:IsRecurring>\(event.isRecurring)</t:IsRecurring>
                       <t:IsResponseRequested>\(event.requestsResponses)</t:IsResponseRequested>
+                      <t:MeetingRequestWasSent>\(event.requestSent)</t:MeetingRequestWasSent>
                       <t:MyResponseType>\(event.response)</t:MyResponseType>
                       <t:Organizer><t:Mailbox><t:Name>\(SOAP.escape(event.organizer))</t:Name><t:EmailAddress>\(event.organizerAddress)</t:EmailAddress></t:Mailbox></t:Organizer>
                       <t:RequiredAttendees>\(attendees)</t:RequiredAttendees>

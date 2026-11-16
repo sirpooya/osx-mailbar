@@ -44,13 +44,20 @@ struct SettingsView: View {
                 SettingsTabBody {
                     refreshSection
                     notificationsSection
+                    SoundsSettingsSection()
+                    MenuBarSettingsSection()
+                    DefaultMailAppSection()
+                    SwipeSettingsSection()
                     generalSection
                 }
             case .accounts:
                 SettingsTabBody { accountsSection }
+            case .mail:
+                SettingsTabBody { MailSettingsSections(accounts: accounts) }
             case .calendar:
                 SettingsTabBody {
                     calendarSection
+                    WidgetsSettingsSection()
                     workTimeSection
                     directorySection
                 }
@@ -112,6 +119,7 @@ struct SettingsView: View {
             }
             // Right under the card it is about (the user's call).
             privacySection
+                .task { await AccountHealth.shared.checkIfDue() }
             SettingsCardActions {
                 Button("Add Account...") {
                     editing = EditorTarget(account: Account(), isNew: true)
@@ -121,7 +129,8 @@ struct SettingsView: View {
     }
 
     private func accountRow(_ account: Account) -> some View {
-        SettingsRow(account.displayName) {
+        // Size and password expiry under the name (2026-11-16), once the server has said.
+        SettingsRow(account.displayName, subtitle: AccountHealth.shared.settingsSummary(for: account.id)) {
             HStack(spacing: 6) {
                 if !accounts.hasPassword(account.id) {
                     Label("No password", systemImage: "exclamationmark.triangle.fill")
@@ -133,6 +142,7 @@ struct SettingsView: View {
                     editing = EditorTarget(account: account, isNew: false)
                 }
                 Button("Delete") { pendingDelete = account }
+                AccountRowMenu(account: account)
             }
             .controlSize(.small)
         }
@@ -174,6 +184,7 @@ struct SettingsView: View {
             SettingsRow("Event reminders") {
                 SettingsSwitch(isOn: $eventReminders)
             }
+            ShortenEventsRow()
         }
     }
 
@@ -370,6 +381,7 @@ struct SettingsView: View {
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General"
     case accounts = "Accounts"
+    case mail = "Mail"
     case calendar = "Calendar"
 
     var id: String { rawValue }
@@ -378,6 +390,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .accounts: return "at"
+        case .mail: return "envelope"
         case .calendar: return "calendar"
         }
     }

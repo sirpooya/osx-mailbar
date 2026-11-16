@@ -30,6 +30,8 @@ struct EventEditorView: View {
     @State private var repeatEditorOpen = QCFlags.calendarRepeat
     @State private var endCalendarOpenForSeries = false
     @State private var endCalendarOpen = false
+    /// The warning in the bottom bar is for Save Without Sending, not Send.
+    @State private var pendingSaveOnly = false
 
     private static let labelWidth: CGFloat = 78
     /// The form's size, cut to the user's marks (2026-09-25): 440 pt of fields, a 250 pt People
@@ -211,6 +213,7 @@ struct EventEditorView: View {
                     showAsMenu
                     reminderMenu
                     privateButton
+                    TimeZonesButton(draft: draft, store: store)
                     Spacer()
                 }
                 .frame(height: Self.toolbarRowHeight)
@@ -225,29 +228,54 @@ struct EventEditorView: View {
     /// What saving will do, or what stops it, on the left; Cancel and Send on the right.
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            if pane == .schedule { SchedulingAssistant.Legend() }
-            footer
-            Spacer()
-            Button("Cancel") { store.editor = nil }
-                .keyboardShortcut(.cancelAction)
-            if draft.isSaving {
-                ProgressView().controlSize(.small).frame(width: 60)
+            if let warning = store.pendingWarning {
+                // Outlook's check before sending: no title, or a meeting with nowhere to meet.
+                // Asked here in the bar, not in an alert over the form.
+                MissingWarningBar(warning: warning, savingOnly: pendingSaveOnly,
+                                  onBack: { store.pendingWarning = nil },
+                                  onGo: { save(saveOnly: pendingSaveOnly, checked: true) })
             } else {
-                // Always "Send" (the user's call); an event with nobody invited just saves.
-                // A paper plane before the word, as mail clients mark Send (the user's call).
-                Button { Task { await store.saveEditor() } } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "paperplane.fill").font(.system(size: 11, weight: .semibold))
-                        Text("Send")
+                if pane == .schedule { SchedulingAssistant.Legend() }
+                footer
+                Spacer()
+                Button("Cancel") { store.editor = nil }
+                    .keyboardShortcut(.cancelAction)
+                if draft.isSaving {
+                    ProgressView().controlSize(.small).frame(width: 60)
+                } else {
+                    // Always "Send" (the user's call); an event with nobody invited just saves.
+                    // A paper plane before the word, as mail clients mark Send (the user's call).
+                    // Option-click saves without sending, as Send's menu does.
+                    Button { save(saveOnly: NSEvent.modifierFlags.contains(.option) && draft.sendsInvitations) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "paperplane.fill").font(.system(size: 11, weight: .semibold))
+                            Text("Send")
+                        }
+                    }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(draft.problem != nil)
+                    if draft.sendsInvitations {
+                        SendOptionsMenu { save(saveOnly: true) }
+                            .disabled(draft.problem != nil)
                     }
                 }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(draft.problem != nil)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Send, or save without telling anyone. A missing title or location is asked about first.
+    private func save(saveOnly: Bool, checked: Bool = false) {
+        if !checked, draft.missingWarning != nil {
+            pendingSaveOnly = saveOnly
+            store.pendingWarning = draft.missingWarning
+            return
+        }
+        store.pendingWarning = nil
+        store.editor?.saveWithoutSending = saveOnly
+        Task { await store.saveEditor() }
     }
 
     // MARK: - Fields
@@ -399,8 +427,14 @@ struct EventEditorView: View {
                 // Back from all day: an hour, not the whole span to its last day's evening.
                 if !allDay, draft.duration <= 0 || draft.duration > 24 * 3600 { store.editor?.duration = 3600 }
             }
-            row("Starts") { dateTime(field(\.startKeepingDuration), calendarOpen: $calendarOpen) }
-            row("Ends") { dateTime(field(\.end), calendarOpen: $endCalendarOpen) }
+            row("Starts") {
+                dateTime(field(\.startKeepingDuration), calendarOpen: $calendarOpen, zone: zoneShown(draft.startTimeZone))
+                if draft.usesTimeZones, !draft.isAllDay { zoneMenu(start: true) }
+            }
+            row("Ends") {
+                dateTime(field(\.end), calendarOpen: $endCalendarOpen, zone: zoneShown(draft.endTimeZone))
+                if draft.usesTimeZones, !draft.isAllDay { zoneMenu(start: false) }
+            }
         }
     }
 
@@ -415,19 +449,43 @@ struct EventEditorView: View {
 
     /// One row's date box, with its calendar button inside it, and the time box right beside it,
     /// at fixed widths so Start and End line up (the user's layout, 2026-09-25).
-    private func dateTime(_ date: Binding<Date>, calendarOpen: Binding<Bool>) -> some View {
+    private func dateTime(_ date: Binding<Date>, calendarOpen: Binding<Bool>, zone: TimeZone? = nil) -> some View {
         HStack(spacing: 6) {
-            dateBox(date, calendarOpen: calendarOpen)
+            dateBox(date, calendarOpen: calendarOpen, zone: zone)
             if !draft.isAllDay {
-                FieldBox { PlainDatePicker(date: date, elements: .hourMinute).fieldInset(-2.5) }
+                FieldBox { PlainDatePicker(date: date, elements: .hourMinute, timeZone: zone).fieldInset(-2.5) }
                     .frame(width: 76)
             }
         }
     }
 
-    private func dateBox(_ date: Binding<Date>, calendarOpen: Binding<Bool>) -> some View {
+    /// The zone a time is shown and typed in: its own when Time zones is on.
+    private func zoneShown(_ id: String?) -> TimeZone? {
+        draft.usesTimeZones && !draft.isAllDay ? WindowsTimeZone.zone(for: id) : nil
+    }
+
+    /// The zone beside Starts or Ends. Picking one keeps the time as typed, now in that zone.
+    private func zoneMenu(start: Bool) -> some View {
+        let current = (start ? draft.startTimeZone : draft.endTimeZone) ?? WindowsTimeZone.current ?? "UTC"
+        return PopUpMenu(items: WindowsTimeZone.choices.map { .init(id: $0.id, title: WindowsTimeZone.city(for: $0.id)) },
+                         selected: current, width: 96) { id in
+            let from = WindowsTimeZone.zone(for: current) ?? .current
+            let to = WindowsTimeZone.zone(for: id) ?? .current
+            if start {
+                store.editor?.startKeepingDuration = EventZones.sameClock(draft.start, from: from, to: to)
+                store.editor?.startTimeZone = id
+            } else {
+                store.editor?.end = EventZones.sameClock(draft.end, from: from, to: to)
+                store.editor?.endTimeZone = id
+            }
+        }
+        .boxed()
+        .help(WindowsTimeZone.label(for: current))
+    }
+
+    private func dateBox(_ date: Binding<Date>, calendarOpen: Binding<Bool>, zone: TimeZone? = nil) -> some View {
         FieldBox {
-            PlainDatePicker(date: date, elements: .yearMonthDay).fieldInset(-3.5)
+            PlainDatePicker(date: date, elements: .yearMonthDay, timeZone: zone).fieldInset(-3.5)
             Spacer(minLength: 0)
             Button { calendarOpen.wrappedValue.toggle() } label: {
                 Image(systemName: "calendar").foregroundStyle(.secondary)
@@ -454,7 +512,7 @@ struct EventEditorView: View {
                     Text("Changes apply to this occurrence only.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                } else if draft.isNew {
+                } else if draft.editsRepeat {
                     PopUpMenu(items: repeatItems, selected: repeatSelection, width: Self.menuWidth,
                               actions: ["other"], onSelect: pickRepeat)
                         .boxed()
@@ -476,7 +534,7 @@ struct EventEditorView: View {
                     Text("Never").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            if draft.isNew, draft.repeatPattern != nil { seriesEnd }
+            if draft.editsRepeat, draft.repeatPattern != nil { seriesEnd }
         }
     }
 
@@ -779,7 +837,20 @@ struct EventEditorView: View {
                 .font(.system(size: 11)).foregroundStyle(.orange)
         } else if let problem = draft.problem {
             Text(problem).font(.system(size: 11)).foregroundStyle(.orange)
+        } else if let note = seriesNote {
+            Text(note).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
         }
+    }
+
+    /// What saving does to a series or to a meeting not yet sent, said where Send is.
+    private var seriesNote: String? {
+        if let split = draft.splitFrom {
+            let day = split.lastDay.formatted(.dateTime.month(.abbreviated).day())
+            return "The series ends on \(day); this starts a new one."
+        }
+        if draft.editsSeries { return "Changes apply to every event in the series." }
+        if draft.invitationsUnsent { return "Not sent yet: Send invites everyone." }
+        return nil
     }
 
     // MARK: - Pieces

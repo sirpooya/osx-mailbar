@@ -36,6 +36,23 @@ enum Keys {
     static let calendarWorkEndHour = "mailbar.calendarWorkEndHour"
     /// An IANA zone the app runs in instead of the Mac's, or empty for the Mac's own.
     static let calendarTimeZone = "mailbar.calendarTimeZone"
+    /// Outlook's "Shorten events": new events end this many minutes early (0, 5 or 10).
+    static let calendarShortenMinutes = "mailbar.calendarShortenMinutes"
+
+    // System (M26)
+    /// The new-mail and mail-sent sounds: "none", "default" (the Mac's alert sound, new mail
+    /// only) or a name from /System/Library/Sounds (`MailSounds`).
+    static let newMailSound = "mailbar.newMailSound"
+    static let sentSound = "mailbar.sentSound"
+    /// What the menu bar number counts (`MenuBarCount`): "all", "selected" or "off".
+    static let menuBarCount = "mailbar.menuBarCount"
+    /// Whether today's events go to the widgets' file (`WidgetFeed`); off deletes it.
+    static let widgetEvents = "mailbar.widgetEvents"
+
+    // Search (2026-11-16)
+    /// Saved searches, JSON `[SavedSearch]`: a name, the typed query, the scope and the
+    /// criteria. The user's own configuration, never results.
+    static let savedSearches = "mailbar.savedSearches"
 
     static let pollMinuteChoices = [1, 2, 3, 5, 10]
 
@@ -44,6 +61,10 @@ enum Keys {
             pollMinutes: 2,
             notifyNewMail: true,
             eventReminders: true,
+            newMailSound: "default",
+            sentSound: "none",
+            menuBarCount: "all",
+            widgetEvents: true,
             // The user's OWA: the week runs Saturday to Friday, the work week Saturday to
             // Wednesday, working hours 9 to 17.
             calendarWeekStart: 7,
@@ -75,6 +96,12 @@ enum Keys {
     static func applyTimeZone(_ defaults: UserDefaults = .standard) {
         let chosen = defaults.string(forKey: calendarTimeZone).flatMap { TimeZone(identifier: $0) }
         NSTimeZone.default = chosen ?? NSTimeZone.system
+    }
+
+    /// 0, 5 or 10; anything else (a hand-edited plist) is 0.
+    static func shortenEventMinutes(_ defaults: UserDefaults = .standard) -> Int {
+        let minutes = defaults.integer(forKey: calendarShortenMinutes)
+        return [5, 10].contains(minutes) ? minutes : 0
     }
 
     /// Clamped so a hand-edited plist cannot make the app poll every second.

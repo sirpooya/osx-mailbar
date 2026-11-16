@@ -155,6 +155,10 @@ struct TodayDayView: View {
             ZStack(alignment: .topLeading) {
                 HourBackground(isWorkDay: Keys.calendarWorkDays().contains(calendar.component(.weekday, from: day)),
                                workHours: Keys.calendarWorkHours(), hourHeight: hourHeight)
+                // Outlook's My Day: open stretches of the work day, under the events.
+                if store.events(onDay: day, for: accountID) != nil {
+                    FreeTimeBands(events: events, day: day, hourHeight: hourHeight, width: width, calendar: calendar)
+                }
                 ForEach(EventLayout.place(events, on: day, calendar: calendar)) { placed in
                     let x = CGFloat(placed.column) / CGFloat(placed.columns) * (width - 6) + 3
                     let w = (width - 6) / CGFloat(placed.columns) - 2

@@ -14,6 +14,8 @@ struct MessageWebView: NSViewRepresentable {
     let html: String
     /// A search's words, marked in the body once it has loaded (`SearchHighlight`).
     var highlight: [String] = []
+    /// Find, text size and selection for the reader (M22); nil where none is needed.
+    var controller: ReaderWebController? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -29,12 +31,15 @@ struct MessageWebView: NSViewRepresentable {
         view.allowsBackForwardNavigationGestures = false
         view.allowsMagnification = true
         context.coordinator.highlight = highlight
+        context.coordinator.controller = controller
+        controller?.attach(view)
         context.coordinator.load(html, into: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.highlight = highlight
+        context.coordinator.controller = controller
         context.coordinator.load(html, into: view)
     }
 
@@ -49,6 +54,7 @@ struct MessageWebView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         private var loaded: String?
         var highlight: [String] = []
+        weak var controller: ReaderWebController?
 
         func load(_ html: String, into view: WKWebView) {
             guard html != loaded else { return }
@@ -58,13 +64,18 @@ struct MessageWebView: NSViewRepresentable {
             #endif
             // Measured afresh for every document ("Load images" reloads), so start from 1.
             view.pageZoom = 1
+            controller?.documentWillLoad()
             view.loadHTMLString(html, baseURL: nil)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task {
                 await fitToWidth(webView)
+                // The user's text size goes on top of the fit, and a find runs again on the
+                // new document ("Load images" reloads it).
+                let fit = webView.pageZoom
                 await mark(highlight, in: webView)
+                await controller?.documentDidFit(fitZoom: fit)
             }
         }
 

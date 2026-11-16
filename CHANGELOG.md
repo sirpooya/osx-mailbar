@@ -22,6 +22,53 @@ section when a release is cut.
 - Sent Items: pick it from the menu at the top left of the popover. Rows show who each message went to, as Outlook does.
 - Search looks in the folder you are viewing, Inbox or Sent Items, and marks the words it found in yellow in the list, the subject and the message itself.
 - The folder menu now also lists Flagged, Archive, Deleted Items and Junk Email. Archive is not offered inside Archive, and Delete is not offered inside Deleted Items, so nothing is ever removed for good.
+- Filter the mail list by Unread, Flagged, Has Attachments or To Me, and sort it by date, sender, subject, size or importance, from a menu beside search.
+- Mail is grouped under Today, Yesterday, the days of this week, Last Week and older headings.
+- Each message shows the sender's photo, or their initials on a colour.
+- Messages with attachments show their files under the preview; click one to preview it, right-click to save it.
+- Invitations show their time and place in the list, with Accept, Tentative and Decline buttons.
+- Replied, forwarded and high or low importance marks show on each message, and replying from Mailbar marks the original as replied.
+- Select several messages with Cmd or Shift click and act on them at once.
+- Undo after archiving, deleting, moving or marking junk.
+- Swipe a row to archive or delete it; choose the actions in Settings.
+- Open any mail folder from More Folders, pin favorites, and move mail to any folder.
+- Mark as Junk, Block Sender and Not Junk.
+- Empty Deleted Items and Junk Email, after a confirmation.
+- Unsubscribe from mailing lists.
+- Move to Inbox in Deleted Items.
+- Automatic Replies: turn out-of-office on, off or for a period from Settings, with a banner and Turn Off in Mailbar while they are on.
+- Mailbar warns when your password expires within 14 days, and Settings shows the date.
+- Settings shows how much of your mailbox is used, and Mailbar warns when it is over 90 percent full.
+- Activity Log in Settings lists the last failed requests per account, with Copy and Clear.
+- A Mailbar Focus filter keeps only the accounts you pick: the others stay quiet and leave the menu bar count.
+- Bcc, Always Cc or Bcc me, From an alias, and message options: importance, sensitivity, read and delivery receipts.
+- Check Names (⌘K) and @mentions in the message add people to To.
+- mailto: links open a new message in Mailbar.
+- Undo Send: a sent message waits 5 seconds (Settings: Off to 20) with Undo.
+- MailTips warn about outside recipients, automatic replies and large groups as you type.
+- Forward as Attachment, Redirect, Resend, and replies that quote only the selected text.
+- Drafts are kept in your server's Drafts folder as you type and can be reopened from Drafts.
+- Attach files, format text (bold, italic, underline, lists, links), signatures and templates.
+- Repeating events: edit or delete This Event, This and Following, or All Events.
+- Calendar event menu: Forward, Email Attendees and Export as .ics.
+- Your meetings show proposed new times with Accept Proposal, and how many accepted, declined or have not responded, also on the meeting email.
+- Shorten events in Settings ends new events 5 or 10 minutes early.
+- Time zones in the event form sets the start and end in different zones.
+- Send asks first when an event has no title, or a meeting has no location; Save Without Sending keeps a meeting unsent.
+- Deleting someone else's meeting offers Decline or Delete Without Notifying.
+- Add to Calendar on .ics and .vcs attachments.
+- The Today tab marks free time in your work hours.
+- Find in a message with Cmd+F, and make its text larger or smaller with Cmd+plus and Cmd+minus.
+- Invitations warn when they clash with, or sit right next to, another event.
+- Click any name in a message's header to see the person's contact card.
+- New-mail notifications have Mark as Read, Archive and Delete buttons.
+- Sounds for new mail and sent mail, chosen in Settings.
+- Choose what the menu bar count shows: all accounts, the selected account, or nothing.
+- Make Mailbar your default mail app from Settings.
+- Up Next and Agenda widgets show today's remaining events, with Join for online meetings.
+- Search where you need: This Folder, All Folders (optionally with Deleted Items) or your Online Archive, with the folder shown on each result.
+- Search Options and typed keywords (from:, to:, subject:, hasattachment:, received:), plus saved searches you can run again.
+- Search results now include matching events and people; open a person's card to write to them or search their mail.
 
 ### Changed
 - Schedule's name column is narrower, leaving more room for the hours; hover a cut name to read it whole, and a block's tooltip now gives its length.

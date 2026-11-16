@@ -21,8 +21,28 @@ struct MeetingInfoLines: View {
                 if !details.event.location.isEmpty || card.joinLink(bodyHTML: bodyHTML) != nil {
                     whereLine(details)
                 }
+                if let conflict = card.conflict { conflictLine(conflict) }
+                MeetingResponseCountsLine(card: card)
             }
         }
+    }
+
+    /// Outlook's infobar: another event at this time, or one ending as it starts (M22).
+    private func conflictLine(_ conflict: MeetingConflict) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: conflict.kind == .overlap ? "exclamationmark.triangle.fill" : "info.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(conflict.kind == .overlap ? Color.orange : Color.secondary)
+                .frame(width: 14)
+            Text(conflict.text)
+                .font(.system(size: 12))
+                .foregroundStyle(conflict.kind == .overlap ? Color.primary : Color.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .help(conflict.text)
     }
 
     private func whenLine(_ details: MeetingDetails) -> some View {
@@ -139,8 +159,9 @@ struct MeetingInfoLines: View {
     }
 }
 
-/// "Required: ✓ Sara Rahimi, ◷ Omid Karimi", each name with the answer the server holds for
-/// them, after Outlook's attendee line. Wraps onto a second line, then truncates.
+/// "Required: ● Sara Rahimi, ● Omid Karimi", each name with the answer the server holds for
+/// them, after Outlook's attendee line, and each a button opening the person's card (M22).
+/// Wraps onto more lines; a long list shows its first few until "+N more".
 struct MeetingAttendeeLines: View {
     @Bindable var card: MeetingCard
 
@@ -148,25 +169,44 @@ struct MeetingAttendeeLines: View {
         let required = card.attendees(optional: false)
         let optional = card.attendees(optional: true)
         VStack(alignment: .leading, spacing: 2) {
-            if !required.isEmpty { line(optional.isEmpty && required.count < 2 ? "Invited" : "Required", required) }
-            if !optional.isEmpty { line("Optional", optional) }
+            if !required.isEmpty { AttendeeLine(card: card, label: optional.isEmpty && required.count < 2 ? "Invited" : "Required", people: required) }
+            if !optional.isEmpty { AttendeeLine(card: card, label: "Optional", people: optional) }
         }
-    }
-
-    private func line(_ label: String, _ people: [EventDetail.Attendee]) -> some View {
-        people.enumerated().reduce(Text("\(label): ").foregroundStyle(.secondary)) { text, pair in
-            let (index, person) = pair
-            return text
-                + Text(index == 0 ? "" : ",  ")
-                + Text(Image(systemName: "circle.fill")).font(.system(size: 7)).baselineOffset(1)
-                    .foregroundStyle(MeetingText.color(card.status(of: person)))
-                + Text(" \(person.display)")
-        }
-        .font(.system(size: 11))
-        .lineLimit(2)
-        .truncationMode(.tail)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help(people.map { "\($0.display): \(card.status(of: $0).label)" }.joined(separator: "\n"))
+    }
+}
+
+private struct AttendeeLine: View {
+    @Bindable var card: MeetingCard
+    let label: String
+    let people: [EventDetail.Attendee]
+
+    @State private var expanded = false
+
+    var body: some View {
+        let shown = expanded ? people : Array(people.prefix(ReaderPeopleLine.collapsedCount))
+        let hidden = people.count - shown.count
+        ReaderFlowLayout(spacing: 0, lineSpacing: 2) {
+            Text("\(label): ").font(.system(size: 11)).foregroundStyle(.secondary)
+            ForEach(Array(shown.enumerated()), id: \.offset) { index, person in
+                HStack(spacing: 3) {
+                    Circle().fill(MeetingText.color(card.status(of: person))).frame(width: 6, height: 6)
+                        .help(card.status(of: person).label)
+                    HStack(spacing: 0) {
+                        PersonNameButton(name: person.display, address: person.address, accountID: card.accountID,
+                                         store: card.store, color: .primary)
+                        if index < shown.count - 1 || hidden > 0 {
+                            Text(", ").font(.system(size: 11)).foregroundStyle(.secondary).padding(.trailing, 3)
+                        }
+                    }
+                }
+            }
+            if hidden > 0 {
+                Button("+\(hidden) more") { expanded = true }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11))
+            }
+        }
     }
 }
 
@@ -227,11 +267,20 @@ struct MeetingAnswerBar: View {
         .frame(minHeight: 24)
     }
 
+    /// Full size when the three fit the popover's width, else compact, so the row never
+    /// widens the reader past it.
     private var buttons: some View {
-        HStack(spacing: 8) {
+        ViewThatFits(in: .horizontal) {
+            buttonRow(compact: false)
+            buttonRow(compact: true)
+        }
+    }
+
+    private func buttonRow(compact: Bool) -> some View {
+        HStack(spacing: compact ? 6 : 8) {
             ForEach(CalendarSOAP.Answer.allCases, id: \.self) { answer in
                 AnswerMenuButton(symbol: answer.symbol, title: answer.label,
-                                 help: "\(answer.label) and tell the organizer") {
+                                 help: "\(answer.label) and tell the organizer", compact: compact) {
                     Task { await card.answer(answer) }
                 } menu: {
                     Button("Send the Response Now") { Task { await card.answer(answer) } }

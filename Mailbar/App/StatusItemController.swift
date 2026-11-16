@@ -25,12 +25,29 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         configurePopover()
         updateIcon()
         observeStore()
+        // Account health (automatic replies, password, quota) and the Focus filter, 2026-11-16.
+        AccountHealth.shared.attach(store)
+        FocusFilterState.shared.loadCurrent()
 
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(applicationDidResignActive),
                                                name: NSApplication.didResignActiveNotification,
                                                object: nil)
+        // Settings' "Menu bar count" (M26) changes what the number counts.
+        _ = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification,
+                                                   object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.defaultsChanged() }
+        }
     }
+
+    private func defaultsChanged() {
+        let mode = MenuBarCount.current
+        guard mode != shownCountMode else { return }
+        shownCountMode = mode
+        updateIcon()
+    }
+
+    private var shownCountMode = MenuBarCount.current
 
     private func configureButton() {
         // A stable autosave name, never AppKit's generic "Item-N": visibility is persisted per
@@ -82,12 +99,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // difference between primary and secondary text; and the popover already closes when the
         // app resigns active, so it is only ever meant to be open while active.
         WindowActivation.claim()
+        #if DEBUG
+        // Screenshot runs open on the built-in display, not the user's external one.
+        if let anchor = QCScreen.anchor {
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        #else
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        #endif
         // Without this the popover opens behind the frontmost app's windows.
         popover.contentViewController?.view.window?.makeKey()
         store.popoverWindow = popover.contentViewController?.view.window
         // Opening is a check: the list should be current the moment it is looked at.
         onRefresh()
+        Task { await AccountHealth.shared.checkIfDue() }
         if store.showsFolderList { Task { await store.loadFolder() } }
     }
 
@@ -166,6 +193,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         store.pendingArchive = nil
         store.closeSearch()
         store.resetDay()
+        store.popoverClosed()
     }
 
     // MARK: - Icon
@@ -175,6 +203,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         withObservationTracking {
             _ = store.totalUnread
             _ = store.hasProblem
+            _ = store.selectedAccountID
+            _ = FocusFilterState.shared.keptAccounts
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.updateIcon()
@@ -185,7 +215,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     func updateIcon() {
         guard let button = statusItem.button else { return }
-        let count = store.totalUnread
+        let total = store.totalUnread
+        // What Settings says to count (M26): every account, the one shown, or nothing.
+        // A Focus filter's silenced accounts leave the count (2026-11-16).
+        let unread = FocusFilterState.shared.filter(Dictionary(uniqueKeysWithValues: store.accounts.accounts.map { ($0.id, store.unreadCount(for: $0.id)) }))
+        let count = MenuBarCount.current.count(unread: unread, selected: store.selectedAccount?.id)
         button.image = StatusItemIcon.image(dimmed: store.hasProblem && count == 0)
         // The count beside the glyph, in the bar's own font with fixed-width digits so 9 turning
         // into 10 does not shuffle the neighbouring icons more than it must.
@@ -195,7 +229,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         } else {
             button.title = ""
         }
-        let label = accessibilityLabel(count: count)
+        let label = accessibilityLabel(count: total)
         button.setAccessibilityLabel(label)
         button.toolTip = label
     }

@@ -20,6 +20,8 @@ struct EventDetailPanel: View {
             if let event = store.selectedEvent {
                 header(event)
                 if confirmingDelete { deleteConfirmation(event) }
+                if let action = store.askingSeries { SeriesChoiceBox(store: store, action: action, event: event) }
+                if store.askingInviteeDelete { InviteeDeleteBox(store: store, event: event) }
                 summary(event)
                 if store.canAnswerSelected { answerBar(event) }
             }
@@ -37,6 +39,11 @@ struct EventDetailPanel: View {
                 if hasPeople(detail) {
                     Divider().opacity(0.6).padding(.horizontal, Self.inset).padding(.top, 14)
                     people(detail)
+                }
+                if !store.proposals.isEmpty {
+                    ProposalList(store: store)
+                        .padding(.horizontal, Self.inset)
+                        .padding(.top, 12)
                 }
                 if !detail.files.isEmpty, let account = store.account {
                     AttachmentStrip(files: detail.files, accountID: account.id, store: store.mail)
@@ -85,10 +92,17 @@ struct EventDetailPanel: View {
             HStack(spacing: 6) {
                 // Edit and delete: the user's own appointments and the meetings they organized.
                 if store.canEditSelected {
-                    roundButton("pencil", help: "Edit") { store.startEditing() }
+                    roundButton("pencil", help: "Edit") { store.requestEdit() }
                         .disabled({ if case .loaded = store.detail { return false } else { return true } }())
-                    roundButton("trash", help: "Delete") { confirmingDelete = true }
+                    roundButton("trash", help: "Delete") {
+                        // A repeating event asks which part first (Outlook's sheet).
+                        if event.isRecurring { store.askingSeries = .delete } else { confirmingDelete = true }
+                    }
+                } else if store.canDeleteInvitation {
+                    // Someone else's meeting: decline and tell them, or delete quietly.
+                    roundButton("trash", help: "Delete") { store.askingInviteeDelete = true }
                 }
+                EventMoreMenu(store: store, event: event)
                 roundButton("xmark", help: "Close") { Task { await store.select(nil) } }
                     .keyboardShortcut(.cancelAction)
             }
@@ -133,9 +147,6 @@ struct EventDetailPanel: View {
         return VStack(alignment: .leading, spacing: 8) {
             Text(cancels ? "Cancel this meeting? Everyone invited is told." : "Delete this event?")
                 .font(.system(size: 12))
-            if event.isRecurring {
-                Text("Only this occurrence.").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
             HStack {
                 Button("Keep") { confirmingDelete = false }
                 Button(cancels ? "Cancel Meeting" : "Delete", role: .destructive) {
@@ -321,6 +332,15 @@ struct EventDetailPanel: View {
                             }
                         }
                     }
+                }
+            }
+            // Outlook's tracking line on the user's own meetings: who has answered how.
+            if event.isOrganizer, case .loaded(let detail) = store.detail,
+               let counts = ResponseCounts(attendees: detail.attendees, organizer: detail.organizerAddress).text {
+                detailRow {
+                    Image(systemName: "person.2").foregroundStyle(.secondary)
+                } content: {
+                    Text(counts).foregroundStyle(.secondary)
                 }
             }
             if event.isMeeting, !event.isOrganizer, !responseText(event.myResponse).isEmpty {

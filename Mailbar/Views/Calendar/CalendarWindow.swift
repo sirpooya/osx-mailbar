@@ -60,6 +60,7 @@ final class CalendarWindow: NSObject, NSWindowDelegate {
         self.window = window
         installSwipe()
         Task { await store.refresh() }
+        CalendarQC.apply(to: store)
     }
 
     /// The Dock icon was clicked: bring the calendar forward.

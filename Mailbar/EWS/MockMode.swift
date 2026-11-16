@@ -63,6 +63,13 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     private var addedFiles: [String: [(String, String, Int)]] = [:]
     private var removedFiles: Set<String> = []
     private var answers: [String: String] = [:]
+    /// Replied and forwarded marks the app set (PidTagLastVerbExecuted).
+    private var verbOverrides: [String: Int] = [:]
+    /// Where moves of M20 and M21 put mail beyond Archive and Deleted Items: into Junk, back
+    /// into the Inbox from elsewhere, and into custom folders by id. Newest first.
+    private var junked: [String] = []
+    private var restored: [String] = []
+    private var filed: [String: [String]] = [:]
 
     /// The mock calendar with every change so far applied. Call with the lock held.
     private func calendarEvents() -> [MockCalendar.Event] {
@@ -120,6 +127,9 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
     private(set) var sent: [String] = []
 
     var sentRequests: [String] { lock.withLock { sent } }
+
+    /// The pretend Drafts and Templates folders and MailTips (M23 to M25).
+    let compose = MockCompose()
 
     /// Messages delivered while the app runs, by account prefix. Only ever grows.
     private var arrived: [String: [MockFixtures.Message]] = [:]
@@ -191,6 +201,19 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         }
 
         return lock.withLock {
+            // Automatic replies, password expiry, mailbox size (MockAccountHealth).
+            if let reply = MockAccountHealth.shared.answer(request, isTeam: isTeam) { return ok(reply) }
+            if let reply = listActionReply(request, prefix: prefix) { return reply }
+            // The calendar extras: series masters, proposals, export (MockCalendarExtras).
+            if let extra = MockCalendar.extraResponse(to: request, events: calendarEvents()) {
+                sent.append(request)
+                return ok(extra)
+            }
+            // Drafts, templates and MailTips (M23 to M25) first; `MockCompose` says what is its.
+            if let reply = compose.answer(request, prefix: prefix) {
+                sent.append(request)
+                return ok(reply)
+            }
             if request.contains("<m:CreateItem") {
                 sent.append(request)
                 if request.contains("<t:CalendarItem>"), let fields = Self.calendarFields(in: request) {
@@ -205,6 +228,7 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                     event.charm = Self.charm(in: request)
                     event.requestsResponses = !request.contains("<t:IsResponseRequested>false</t:IsResponseRequested>")
                     event.allowsForwarding = !request.contains(#"PropertyName="DoNotForward" PropertyType="Boolean"/><t:Value>true</t:Value>"#)
+                    event.requestSent = !event.isMeeting || !request.contains(#"SendMeetingInvitations="SendToNone""#)
                     createdEvents.append(event)
                     return ok(MockCalendar.createdResponse(id: event.id))
                 }
@@ -286,6 +310,24 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             if request.contains("<m:Subscribe>") {
                 return ok(MockFixtures.subscribe)
             }
+            // Search across folders, the Online Archive, calendar search (`MockSearch`).
+            if let reply = MockSearch.reply(to: request, prefix: prefix, isTeam: isTeam, empty: mode == .empty, itemID: itemID,
+                                            mail: { folder in
+                                                // The same folders the plain FindItem below lists.
+                                                switch folder {
+                                                case "inbox": moved(restored, prefix) + inbox(prefix)
+                                                case "sentitems": sentItems(prefix)
+                                                case "deleteditems": moved(trashed, prefix)
+                                                case "junkemail": moved(junked, prefix) + junk(prefix)
+                                                case "\(prefix)-archive": moved(archived, prefix)
+                                                case _ where folder.hasPrefix("\(prefix)-folder-"):
+                                                    moved(filed[folder] ?? [], prefix) + folderNatives(folder, prefix)
+                                                default: []
+                                                }
+                                            },
+                                            events: { calendarEvents() }) {
+                return ok(reply)
+            }
             if request.contains("<m:GetFolder>") {
                 return ok(MockFixtures.getFolder(unread: mode == .empty ? 0 : inbox(prefix).filter { !$0.isRead }.count))
             }
@@ -296,29 +338,70 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 } else if request.contains(#"DistinguishedFolderId Id="deleteditems""#) {
                     messages = moved(trashed, prefix)
                 } else if request.contains(#"DistinguishedFolderId Id="junkemail""#) {
-                    messages = junk(prefix)
+                    messages = moved(junked, prefix) + junk(prefix)
                 } else if request.contains(#"<t:FolderId Id="\#(prefix)-archive"/>"#) {
                     messages = moved(archived, prefix)
+                } else if let folder = Self.firstMatch(#"<t:FolderId Id="(\#(prefix)-folder-[^"]+)"/>"#, in: request) {
+                    messages = moved(filed[folder] ?? [], prefix) + folderNatives(folder, prefix)
                 } else {
-                    messages = inbox(prefix)
-                    if request.contains("<t:IsEqualTo><t:ExtendedFieldURI PropertyTag=\"0x1090\"") {
-                        messages = messages.filter(\.isFlagged)
-                    }
+                    messages = moved(restored, prefix) + inbox(prefix)
                 }
                 if mode == .empty { messages = [] }
-                // Search: the query string (2013+) or the restriction constant (older servers),
+                // The restrictions the app sends: Flagged (the folder or the filter), and the
+                // Unread, Has Attachments and To Me filters, ANDed.
+                if request.contains("<t:IsEqualTo><t:ExtendedFieldURI PropertyTag=\"0x1090\"") {
+                    messages = messages.filter(\.isFlagged)
+                }
+                if request.contains(#"FieldURI="message:IsRead"/><t:FieldURIOrConstant><t:Constant Value="false""#) {
+                    messages = messages.filter { !$0.isRead }
+                }
+                if request.contains(#"FieldURI="item:HasAttachments"/><t:FieldURIOrConstant>"#) {
+                    messages = messages.filter(\.hasAttachments)
+                }
+                if request.contains(#"PropertyTag="0x0057" PropertyType="Boolean"/><t:FieldURIOrConstant>"#) {
+                    messages = messages.filter(\.toMe)
+                }
+                // Search: the query string (2013+) or the substring restriction (older servers),
                 // matched against sender, subject and preview the way Exchange's index would.
                 if let query = Self.firstMatch("<m:QueryString>([^<]*)</m:QueryString>", in: request)
-                    ?? Self.firstMatch(#"<t:Constant Value="([^"]*)"/>"#, in: request) {
+                    ?? Self.firstMatch(#"<t:Contains[^>]*><t:FieldURI[^>]*/><t:Constant Value="([^"]*)"/>"#, in: request) {
                     let needle = query.lowercased()
                     messages = messages.filter {
                         "\($0.sender) \($0.to ?? "") \($0.subject) \($0.preview)".lowercased().contains(needle)
                     }
                 }
+                // The orders the app asks for; each falls back to newest first, as the fixtures are.
+                let order = Self.firstMatch("<m:SortOrder>(.*?)</m:SortOrder>", in: request.replacingOccurrences(of: "\n", with: " ")) ?? ""
+                if order.contains("0x0C1A") {
+                    messages.sort { $0.sender.localizedStandardCompare($1.sender) == .orderedAscending }
+                } else if order.contains("0x0E04") {
+                    messages.sort { ($0.to ?? "").localizedStandardCompare($1.to ?? "") == .orderedAscending }
+                } else if order.contains("0x0E1D") {
+                    messages.sort { MailSort.normalized($0.subject).localizedStandardCompare(MailSort.normalized($1.subject)) == .orderedAscending }
+                } else if order.contains("item:Size") {
+                    messages.sort { $0.size > $1.size }
+                } else if order.contains("item:Importance") {
+                    let rank = ["High": 2, "Normal": 1, "Low": 0]
+                    messages.sort { (rank[$0.importance] ?? 1) > (rank[$1.importance] ?? 1) }
+                }
                 return ok(MockFixtures.findItem(messages))
             }
+            // A row's files and an invitation row's time: one GetItem for many items.
+            if request.contains("<m:GetItem>"), request.contains("<t:BaseShape>IdOnly</t:BaseShape>"),
+               request.contains(#"FieldURI="item:Attachments"/></t:AdditionalProperties>"#) || request.contains(#"FieldURI="calendar:MyResponseType""#) {
+                let all = inbox(prefix) + sentItems(prefix) + moved(archived + trashed + junked + restored + filed.values.flatMap { $0 }, prefix) + junk(prefix)
+                let wanted = Self.matches(#"ItemId Id="([^"]+)""#, in: request).compactMap { id in all.first { $0.id == id } }
+                if request.contains("calendar:MyResponseType") {
+                    let events = calendarEvents()
+                    return ok(MockFixtures.rowMeetings(wanted.compactMap { message in
+                        guard let event = message.event.flatMap({ id in events.first { $0.id == id } }) else { return nil }
+                        return (message, event, answers[event.id])
+                    }))
+                }
+                return ok(MockFixtures.attachmentLists(wanted))
+            }
             if request.contains("<m:GetItem>"), let itemID,
-               let message = (inbox(prefix) + sentItems(prefix) + moved(archived + trashed, prefix) + junk(prefix))
+               let message = (inbox(prefix) + sentItems(prefix) + moved(archived + trashed + junked + restored + filed.values.flatMap { $0 }, prefix) + junk(prefix))
                 .first(where: { $0.id == itemID }) {
                 if request.contains("meeting:AssociatedCalendarItemId") {
                     let event = message.event.flatMap { id in calendarEvents().first { $0.id == id } }
@@ -339,6 +422,10 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
                 }
                 if let flag = Self.firstMatch("<t:FlagStatus>(\\w+)</t:FlagStatus>", in: request) {
                     flagOverrides[itemID] = flag == "Flagged"
+                }
+                if let verb = Self.firstMatch(#"PropertyTag="0x1081" PropertyType="Integer"/><t:Value>(\d+)</t:Value>"#, in: request) {
+                    sent.append(request)
+                    verbOverrides[itemID] = Int(verb)
                 }
                 return ok(MockFixtures.success("UpdateItem"))
             }
@@ -383,6 +470,7 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
             guard !removed.contains(message.id) else { return nil }
             if let read = readOverrides[message.id] { message.isRead = read }
             if let flag = flagOverrides[message.id] { message.isFlagged = flag }
+            if let verb = verbOverrides[message.id] { message.verb = verb }
             return message
         }
     }
@@ -394,7 +482,104 @@ final class MockTransport: EWSTransport, @unchecked Sendable {
         removed = []
         defer { removed = saved }
         let all = inbox(prefix) + sentItems(prefix) + junk(prefix)
+            + MockFixtures.folderMail.keys.sorted().flatMap { folderNatives($0, prefix) }
         return ids.compactMap { id in all.first { $0.id == id } }
+    }
+
+    /// Mail that started in a custom folder. Call with the lock held.
+    private func folderNatives(_ folder: String, _ prefix: String) -> [MockFixtures.Message] {
+        (MockFixtures.folderMail[folder] ?? []).enumerated().compactMap { index, message in
+            var message = message
+            message.id = "\(folder)-\(index)"
+            guard message.id.hasPrefix(prefix), !removed.contains(message.id) else { return nil }
+            if let read = readOverrides[message.id] { message.isRead = read }
+            if let flag = flagOverrides[message.id] { message.isFlagged = flag }
+            return message
+        }
+    }
+
+    /// Moves, junk, emptying, the folder tree, counts and headers (M20, M21). Nil for any other
+    /// request. Call with the lock held.
+    private func listActionReply(_ request: String, prefix: String) -> (Data, Int)? {
+        let ids = Self.matches(#"<t:ItemId Id="([^"]+)""#, in: request)
+        let wellKnown = { (name: String) in MockFixtures.wellKnownID(name, prefix: prefix) }
+        let elsewhere = { self.archived + self.trashed + self.junked + self.restored + self.filed.values.flatMap { $0 } }
+        if request.contains("<m:MoveItem>") {
+            guard let folder = Self.firstMatch(#"<m:ToFolderId><t:(?:Distinguished)?FolderId Id="([^"]+)""#, in: request) else { return nil }
+            for id in ids { place(id, in: folder, prefix: prefix) }
+            return ok(MockFixtures.moved(ids, operation: "MoveItem"))
+        }
+        // Read and flag for many rows at once (M20): one ItemChange per item.
+        if request.contains("<m:UpdateItem"), request.components(separatedBy: "<t:ItemChange>").count > 2 {
+            let read = Self.firstMatch("<t:IsRead>(true|false)</t:IsRead>", in: request)
+            let flag = Self.firstMatch("<t:FlagStatus>(\\w+)</t:FlagStatus>", in: request)
+            for id in ids {
+                if let read { readOverrides[id] = read == "true" }
+                if let flag { flagOverrides[id] = flag == "Flagged" }
+            }
+            return ok(MockFixtures.success("UpdateItem"))
+        }
+        if request.contains("<m:MarkAsJunk") {
+            let junk = request.contains(#"IsJunk="true""#)
+            for id in ids { place(id, in: junk ? "junkemail" : "inbox", prefix: prefix) }
+            return ok(MockFixtures.moved(ids, operation: "MarkAsJunk"))
+        }
+        if request.contains("<m:EmptyFolder") {
+            if request.contains(#"Id="deleteditems""#) {
+                trashed = []
+            } else if request.contains(#"Id="junkemail""#) {
+                for message in moved(junked, prefix) + junk(prefix) { place(message.id, in: "deleteditems", prefix: prefix) }
+            }
+            return ok(MockFixtures.success("EmptyFolder"))
+        }
+        if request.contains("<m:FindFolder"), request.contains(#"Traversal="Deep""#),
+           !request.contains("archivemsgfolderroot") {
+            return ok(MockFixtures.findFolderTree(prefix: prefix))
+        }
+        if request.contains("<m:GetFolder>"), request.contains(#"DistinguishedFolderId Id="drafts""#) {
+            return ok(MockFixtures.getFolders(SOAP.wellKnownNames.map { (wellKnown($0), 0) }))
+        }
+        if request.contains("<m:GetFolder>"), request.contains("folder:TotalCount") {
+            let count = request.contains(#"Id="deleteditems""#) ? trashed.count : moved(junked, prefix).count + junk(prefix).count
+            return ok(MockFixtures.getFolders([(wellKnown("count"), mode == .empty ? 0 : count)]))
+        }
+        if request.contains("<m:GetItem>"), request.contains("item:InternetMessageHeaders"), let id = ids.first {
+            let all = inbox(prefix) + junk(prefix) + moved(elsewhere(), prefix)
+            let header = all.first { $0.id == id }.flatMap(MockFixtures.unsubscribeHeader(for:))
+            return ok(MockFixtures.headers(id: id, unsubscribe: header))
+        }
+        return nil
+    }
+
+    /// Takes an item out of wherever it is and puts it in `folder`, a distinguished name or a
+    /// folder id. Mail that started in that folder simply stops being removed. Lock held.
+    private func place(_ id: String, in folder: String, prefix: String) {
+        removed.insert(id)
+        archived.removeAll { $0 == id }
+        trashed.removeAll { $0 == id }
+        junked.removeAll { $0 == id }
+        restored.removeAll { $0 == id }
+        for key in filed.keys { filed[key]?.removeAll { $0 == id } }
+        let wellKnown = { (name: String) in MockFixtures.wellKnownID(name, prefix: prefix) }
+        let isJunkNative = id.hasPrefix("\(prefix)-junk-")
+        let isSentNative = id.hasPrefix("\(prefix)-sent-")
+        let isInboxNative = !isJunkNative && !isSentNative && !id.hasPrefix("\(prefix)-folder-")
+        switch folder {
+        case "inbox", wellKnown("inbox"):
+            if isInboxNative { removed.remove(id) } else { restored.insert(id, at: 0) }
+        case "junkemail", wellKnown("junkemail"):
+            if isJunkNative { removed.remove(id) } else { junked.insert(id, at: 0) }
+        case "deleteditems", wellKnown("deleteditems"):
+            trashed.insert(id, at: 0)
+        case "\(prefix)-archive":
+            archived.insert(id, at: 0)
+        default:
+            if id.hasPrefix("\(folder)-") || (isSentNative && folder == "sentitems") {
+                removed.remove(id)
+            } else {
+                filed[folder, default: []].insert(id, at: 0)
+            }
+        }
     }
 
     /// The fixture Junk Email. Call with the lock held.
@@ -448,6 +633,16 @@ enum MockFixtures {
         var event: String? = nil
         /// Sent Items only: the recipients' names, as `item:DisplayTo` lists them.
         var to: String? = nil
+        /// `item:Importance`: High, Normal or Low.
+        var importance = "Normal"
+        /// PidTagLastVerbExecuted: 102 replied, 103 replied to all, 104 forwarded.
+        var verb: Int? = nil
+        /// PidTagMessageToMe: the sample user is on the To line.
+        var toMe = true
+        /// `item:Size` in bytes.
+        var size = 18_000
+        /// The files beyond the body's own images: name, content type, bytes.
+        var files: [(String, String, Int)] = []
 
         var element: String {
             switch meetingClass {
@@ -463,7 +658,7 @@ enum MockFixtures {
         Message(sender: "People Operations", address: "people@example.com",
                 subject: "یادآوری: خودارزیابی نیم‌سال را هنوز ثبت نکرده‌اید | مهلت تا پایان هفته",
                 preview: "همکار گرامی سلام، دورهٔ ارزیابی عملکرد نیم‌سال آغاز شده است و فرم خودارزیابی شما هنوز تکمیل نشده است.",
-                hoursAgo: 1.5),
+                hoursAgo: 1.5, importance: "High", toMe: false, size: 42_000),
         Message(sender: "Omid Karimi", address: "omid@example.org",
                 subject: "Invitation: Quarterly planning",
                 preview: "Sunday 10:00 to 12:00, Room Blue. Planning for next quarter; bring your team's list.",
@@ -471,7 +666,7 @@ enum MockFixtures {
         Message(sender: "Build Server", address: "ci@example.com",
                 subject: "Nightly build 2417 passed",
                 preview: "All 312 tests passed in 14 minutes. No new warnings. Artifacts are attached to the run.",
-                hoursAgo: 5, isRead: true),
+                hoursAgo: 5, isRead: true, importance: "Low", toMe: false, size: 9_000),
         // An answer to the user's meeting, which Exchange sends with no preview: a two-line row.
         Message(sender: "Omid Karimi", address: "omid@example.org",
                 subject: "Accepted: Quarterly planning", preview: "",
@@ -483,7 +678,9 @@ enum MockFixtures {
         Message(sender: "Sara Rahimi", address: "sara.rahimi@example.com",
                 subject: "Design review notes and the updated spacing tokens",
                 preview: "Hi, attached are the notes from Tuesday. Two open points: the chip height on compact density, and whether the divider stays.",
-                hoursAgo: 26, isFlagged: true, hasAttachments: true),
+                hoursAgo: 26, isFlagged: true, hasAttachments: true, verb: 102, size: 1_240_000,
+                files: [("Review notes.txt", "text/plain", 92), ("Spacing tokens v3.pdf", "application/pdf", 1_180_000),
+                        ("Chip heights.sketch", "application/octet-stream", 640_000)]),
         Message(sender: "Sara Rahimi", address: "sara.rahimi@example.com",
                 subject: "Tentative: ds demo alignment",
                 preview: "I have a clash at six; would seven work?",
@@ -495,15 +692,16 @@ enum MockFixtures {
         Message(sender: "Travel Desk", address: "travel@example.com",
                 subject: "Your booking is confirmed",
                 preview: "Reference QX-4471. Check-in opens 24 hours before departure.",
-                hoursAgo: 24 * 5, isRead: true),
+                hoursAgo: 24 * 5, isRead: true, hasAttachments: true, size: 310_000,
+                files: [("Booking QX-4471.pdf", "application/pdf", 288_000)]),
         Message(sender: "Newsletter", address: "news@example.net",
                 subject: "This month in product: three launches and a retrospective",
                 preview: "Read the highlights, then the full write-up from each team.",
-                hoursAgo: 24 * 21, isRead: true),
+                hoursAgo: 24 * 21, isRead: true, toMe: false, size: 96_000),
         Message(sender: "Finance", address: "finance@example.com",
                 subject: "Year-end expense deadline",
                 preview: "Please submit remaining receipts before the books close.",
-                hoursAgo: 24 * 380, isRead: true),
+                hoursAgo: 24 * 380, isRead: true, verb: 104),
     ]
 
     /// What the sample user sent: plain replies, a Persian one, and a forward with a file.
@@ -515,7 +713,8 @@ enum MockFixtures {
         Message(sender: "Sample User", address: "sample.user@example.com",
                 subject: "گزارش ماهانهٔ تیم طراحی | شهریور",
                 preview: "سلام، گزارش شهریور پیوست است. خلاصه: سه مؤلفهٔ تازه و بازبینی رنگ‌ها.",
-                hoursAgo: 26, isRead: true, hasAttachments: true, to: "Omid Karimi; Narges Ahmadi"),
+                hoursAgo: 26, isRead: true, hasAttachments: true, to: "Omid Karimi; Narges Ahmadi",
+                files: [("گزارش شهریور.pdf", "application/pdf", 520_000)]),
         Message(sender: "Sample User", address: "sample.user@example.com",
                 subject: "FW: Year-end expense deadline",
                 preview: "Forwarding in case this did not reach the team list.",
@@ -591,6 +790,10 @@ enum MockFixtures {
                         <t:Flag><t:FlagStatus>\(message.isFlagged ? "Flagged" : "NotFlagged")</t:FlagStatus></t:Flag>
                         \(message.meetingClass.map { "<t:ItemClass>\($0)</t:ItemClass>" } ?? "")
                         \(message.to.map { "<t:DisplayTo>\(SOAP.escape($0))</t:DisplayTo>" } ?? "")
+                        <t:Importance>\(message.importance)</t:Importance>
+                        <t:Size>\(message.size)</t:Size>
+                        \(message.verb.map { #"<t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0x1081" PropertyType="Integer"/><t:Value>\#($0)</t:Value></t:ExtendedProperty>"# } ?? "")
+                        <t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0x0057" PropertyType="Boolean"/><t:Value>\(message.toMe)</t:Value></t:ExtendedProperty>
                       </t:\(message.element)>
             """
         }.joined(separator: "\n")
@@ -618,6 +821,40 @@ enum MockFixtures {
           </s:Body>
         </s:Envelope>
         """
+    }
+
+    /// Each item's files, as a `GetItem` of `item:Attachments` lists them: the body's inline
+    /// image first (which the app leaves out), then the fixture's own files.
+    static func attachmentLists(_ messages: [Message]) -> String {
+        let items = messages.map { message in
+            let files = message.files.enumerated().map { index, file in
+                """
+                <t:FileAttachment><t:AttachmentId Id="att-\(message.id)-\(index)"/>\
+                <t:Name>\(SOAP.escape(file.0))</t:Name><t:ContentType>\(file.1)</t:ContentType>\
+                <t:Size>\(file.2)</t:Size><t:IsInline>false</t:IsInline></t:FileAttachment>
+                """
+            }.joined()
+            return """
+                    <t:\(message.element)><t:ItemId Id="\(message.id)" ChangeKey="ck"/><t:Attachments>\
+            <t:FileAttachment><t:AttachmentId Id="att-photo"/><t:Name>photo.png</t:Name><t:ContentType>image/png</t:ContentType>\
+            <t:ContentId>photo@mock</t:ContentId><t:IsInline>true</t:IsInline></t:FileAttachment>\(files)</t:Attachments></t:\(message.element)>
+            """
+        }.joined(separator: "\n")
+        return MockCalendar.wrap("GetItem", "<m:Items>\n\(items)\n</m:Items>")
+    }
+
+    /// Each invitation's time, place and answer, from its mock event.
+    static func rowMeetings(_ rows: [(Message, MockCalendar.Event, String?)]) -> String {
+        let formatter = ISO8601DateFormatter()
+        let items = rows.map { message, event, answer in
+            """
+                    <t:MeetingRequest><t:ItemId Id="\(message.id)" ChangeKey="ck"/>\
+            <t:Start>\(formatter.string(from: event.start))</t:Start><t:End>\(formatter.string(from: event.end))</t:End>\
+            <t:IsAllDayEvent>\(event.isAllDay)</t:IsAllDayEvent><t:Location>\(SOAP.escape(event.location))</t:Location>\
+            <t:MyResponseType>\(answer ?? "NoResponseReceived")</t:MyResponseType></t:MeetingRequest>
+            """
+        }.joined(separator: "\n")
+        return MockCalendar.wrap("GetItem", "<m:Items>\n\(items)\n</m:Items>")
     }
 
     /// A meeting email's link to its event, absent once the event is gone.
@@ -695,6 +932,7 @@ enum MockFixtures {
                       </t:Attachments>
                       <t:DateTimeReceived>\(received)</t:DateTimeReceived>
                       <t:ToRecipients><t:Mailbox><t:Name>Sample User</t:Name><t:EmailAddress>sample.user@example.com</t:EmailAddress></t:Mailbox></t:ToRecipients>
+                      \(message.hasAttachments ? "<t:CcRecipients><t:Mailbox><t:Name>Omid Karimi</t:Name><t:EmailAddress>omid@example.org</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Ali Tavakoli</t:Name><t:EmailAddress>ali.tavakoli@example.com</t:EmailAddress></t:Mailbox></t:CcRecipients>" : "")
                       <t:From><t:Mailbox><t:Name>\(SOAP.escape(message.sender))</t:Name><t:EmailAddress>\(message.address)</t:EmailAddress></t:Mailbox></t:From>
                     </t:Message>
                   </m:Items>

@@ -13,7 +13,7 @@ final class MeetingCard {
     let accountID: UUID
     /// The user's own address, so their row among the attendees carries their real answer.
     let myAddress: String
-    @ObservationIgnored private let store: MailStore
+    @ObservationIgnored let store: MailStore
 
     enum Phase: Equatable {
         case loading
@@ -33,6 +33,9 @@ final class MeetingCard {
     var day = Calendar.current.startOfDay(for: Date())
     var dayEvents: [CalendarEvent]?
     var dayFailed = false
+    /// The events of the meeting's own day, kept when the preview moves to another day while a
+    /// new time is proposed, for the conflict line (M22).
+    var meetingDayEvents: [CalendarEvent]?
 
     /// "Add a note" was picked for this answer: the note field shows with a Send button.
     var noteFor: CalendarSOAP.Answer?
@@ -180,12 +183,50 @@ final class MeetingCard {
         dayFailed = false
         do {
             let events = try await store.client.calendarEvents(from: wanted, to: end, at: url, credential: credential)
+            let onDay = TodayAgenda.all(of: events, on: wanted)
+            if let meeting = details?.event, wanted == calendar.startOfDay(for: meeting.start) {
+                meetingDayEvents = onDay
+            }
             guard wanted == day else { return }
-            dayEvents = TodayAgenda.all(of: events, on: wanted)
+            dayEvents = onDay
         } catch {
             guard wanted == day else { return }
             dayFailed = true
         }
+    }
+
+    // MARK: - Conflicts (M22)
+
+    /// Another event on the calendar overlapping the invitation, else one touching it, after
+    /// Outlook's "Conflicts with" and "Adjacent to" infobar. Nil until the day is read.
+    var conflict: MeetingConflict? {
+        guard kind == .request, let details, let events = meetingDayEvents else { return nil }
+        return Self.conflict(for: details.event, among: events.filter { !isSameMeeting($0, details) })
+    }
+
+    /// The other events that overlap the meeting, then those that touch it. Free, working
+    /// elsewhere, cancelled and declined events never conflict.
+    nonisolated static func conflict(for meeting: CalendarEvent, among events: [CalendarEvent]) -> MeetingConflict? {
+        let blocking = events.filter { event in
+            !event.isCancelled && !["Free", "WorkingElsewhere"].contains(event.showAs) && event.myResponse != "Decline"
+        }
+        .sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        let overlapping = blocking.filter { $0.start < meeting.end && $0.end > meeting.start }
+        if let first = overlapping.first {
+            return MeetingConflict(kind: .overlap, event: first, more: overlapping.count - 1)
+        }
+        let touching = blocking.filter { $0.end == meeting.start || $0.start == meeting.end }
+        if let first = touching.first {
+            return MeetingConflict(kind: .adjacent, event: first, more: touching.count - 1)
+        }
+        return nil
+    }
+
+    /// The meeting's own copy in the day: the calendar's copy of a repeating meeting is its
+    /// series, whose occurrences have ids of their own, so a match on title and start counts.
+    private func isSameMeeting(_ event: CalendarEvent, _ details: MeetingDetails) -> Bool {
+        event.id == details.calendarItemID || event.id == details.event.id
+            || (event.subject == details.event.subject && event.start == details.event.start)
     }
 
     /// The day's events with the meeting itself drawn once: the calendar's copy of a repeating
@@ -194,10 +235,7 @@ final class MeetingCard {
     func previewEvents() -> (others: [CalendarEvent], meeting: CalendarEvent?) {
         guard let details else { return (dayEvents ?? [], nil) }
         let meeting = details.event
-        let others = (dayEvents ?? []).filter { event in
-            event.id != details.calendarItemID && event.id != meeting.id
-                && !(event.subject == meeting.subject && event.start == meeting.start)
-        }
+        let others = (dayEvents ?? []).filter { !isSameMeeting($0, details) }
         let onDay = Calendar.current.isDate(meeting.start, inSameDayAs: day)
             || (meeting.start < day && meeting.end > day)
         return (others, onDay ? meeting : nil)
@@ -334,6 +372,26 @@ extension CalendarSOAP.Answer {
         case .tentative: return "tentatively accepted"
         case .decline: return "declined"
         }
+    }
+}
+
+/// Another event at the invitation's time, or touching it (M22).
+struct MeetingConflict: Equatable {
+    enum Kind { case overlap, adjacent }
+    let kind: Kind
+    /// The first, by start.
+    let event: CalendarEvent
+    /// How many others besides it.
+    let more: Int
+
+    /// "Conflicts with Design sync, 10:00 to 11:00", "Adjacent to Core Weekly, 09:00 to 10:00",
+    /// with "and 2 more" when there are others.
+    var text: String {
+        let time = event.isAllDay ? "all day" : MeetingText.timeRange(event.start, event.end)
+        let title = event.subject.isEmpty ? "an event" : event.subject
+        let lead = kind == .overlap ? "Conflicts with" : "Adjacent to"
+        let tail = more > 0 ? ", and \(more) more" : ""
+        return "\(lead) \(title), \(time)\(tail)"
     }
 }
 

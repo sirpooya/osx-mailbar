@@ -20,6 +20,10 @@ struct AccountEditorView: View {
     let onCancel: () -> Void
 
     @State private var draft: Account
+    /// The account as saved, for Automatic Replies: it talks to the server with the saved
+    /// details, not half-typed ones.
+    private let saved: Account
+    @State private var showsAutoReplies = false
     /// Never loaded from the Keychain. Empty while editing means "keep the saved one".
     @State private var password = ""
     @State private var isWorking = false
@@ -55,6 +59,7 @@ struct AccountEditorView: View {
         self.onSave = onSave
         self.onCancel = onCancel
         _draft = State(initialValue: account)
+        saved = account
         _showsDetails = State(initialValue: !isNew)
     }
 
@@ -189,6 +194,14 @@ struct AccountEditorView: View {
                     Task { await test() }
                 }
                 .disabled(isWorking || validationProblem != nil)
+                if !isNew {
+                    // Outlook's Automatic Replies (2026-11-16), over this sheet.
+                    Button("Automatic Replies...") { showsAutoReplies = true }
+                        .disabled(!hasSavedPassword || saved.email.isEmpty)
+                        .sheet(isPresented: $showsAutoReplies) {
+                            AutoReplySheet(account: saved) { showsAutoReplies = false }
+                        }
+                }
             } else {
                 Button("Enter Server Details Manually") { showsDetails = true }
                     .buttonStyle(.link)

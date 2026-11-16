@@ -40,6 +40,10 @@ private struct SkeletonRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             Color.clear.frame(width: MessageRowView.Metrics.dotColumn, height: 1)
+            Circle()
+                .fill(Color.primary.opacity(0.09))
+                .frame(width: MessageRowView.Metrics.avatar, height: MessageRowView.Metrics.avatar)
+                .padding(.trailing, MessageRowView.Metrics.avatarSpacing - 6)
             VStack(alignment: .leading, spacing: MessageRowView.Metrics.lineSpacing + 3) {
                 line(fractions.0, height: 12)
                 HStack(spacing: 8) {
